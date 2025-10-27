@@ -47,8 +47,27 @@ async function waitForManualLogin(page: Page): Promise<SessionState> {
   );
   /* eslint-enable no-console */
 
+  let referenceUrl = page.url();
+
   for (let attempt = 1; attempt <= LOGIN_MAX_ATTEMPTS; attempt += 1) {
-    await page.waitForTimeout(LOGIN_CHECK_INTERVAL_MS);
+    const urlChanged = await page
+      .waitForURL(
+        (url) => url.toString() !== referenceUrl,
+        { timeout: LOGIN_CHECK_INTERVAL_MS, waitUntil: 'domcontentloaded' },
+      )
+      .then(() => true)
+      .catch(() => false);
+
+    if (urlChanged) {
+      /* eslint-disable no-console */
+      console.log('Se detectó una redirección posterior al inicio de sesión.');
+      console.log(`Nueva URL: ${page.url()}`);
+      /* eslint-enable no-console */
+
+      await page.waitForLoadState('networkidle').catch(() => page.waitForTimeout(1_000));
+      return SessionState.Authenticated;
+    }
+
     const state = await detectSessionState(page);
 
     if (state === SessionState.Authenticated) {
@@ -60,9 +79,14 @@ async function waitForManualLogin(page: Page): Promise<SessionState> {
 
     if (attempt < LOGIN_MAX_ATTEMPTS) {
       /* eslint-disable no-console */
-      console.log('No se detectó sesión iniciada. Esperando el siguiente intento...');
+      console.log(
+        `Intento ${attempt} sin éxito. Esperando ${LOGIN_CHECK_INTERVAL_MS / 1_000} segundos antes de volver a comprobar...`,
+      );
       /* eslint-enable no-console */
     }
+
+    referenceUrl = page.url();
+
   }
 
   /* eslint-disable no-console */

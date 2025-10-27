@@ -2,8 +2,8 @@
 # Trade API Robinhood Automation Toolkit
 
 This repository provides a TypeScript + Playwright scaffold for launching a visible Chromium/Chrome
-session that opens Robinhood, lets you authenticate manually, and keeps the session alive between
-runs by reusing a persistent browser profile.
+session that opens Robinhood, lets you authenticate manually, and removes any cached data as soon as
+the automation finishes.
 
 ## Prerequisites
 
@@ -32,18 +32,22 @@ through the login flow when needed.
 npm run start:robinhood
 ```
 
-1. A Chrome/Chromium window opens using a persistent profile stored at
-   `~/.robinhood-playwright-profile` (configurable in `src/config.ts`).
+1. A Chrome/Chromium window opens using a dedicated profile stored at
+   `~/.robinhood-playwright-profile` (configurable in `src/config.ts`). The directory is deleted
+   automatically when the automation closes the browser so no session or cache data remain on disk.
 2. If you are already authenticated, the script goes directly to the dashboard.
 3. Otherwise, follow the on-screen prompts to enter credentials and complete MFA manually. The
-   script will poll for an authenticated session every 10 seconds (up to 3 attempts). Once the
-   dashboard is detected, the workflow continues automatically.
+   script waits for a redirect away from the login page (up to 3 attempts, with 10-second intervals)
+   to confirm that you have successfully signed in before continuing.
+
 4. The automation navigates to the portfolio, watchlist, and opens dedicated tabs for the configured
    SPY/SPX modules. The browser remains visible until you close it manually.
 
 ### Resetting the Profile
 
-If the persistent session becomes invalid or corrupted, remove it with:
+Normally no manual cleanup is required because the profile directory is removed at the end of each
+run. If the process crashes or you enabled profile preservation in `src/config.ts`, remove the
+directory manually with:
 
 ```bash
 npm run clean:profile

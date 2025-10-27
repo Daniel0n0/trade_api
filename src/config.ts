@@ -7,12 +7,14 @@ export interface LaunchOptions {
   readonly userDataDir: string;
   readonly slowMo: number;
   readonly tracingEnabled: boolean;
+  readonly preserveUserDataDir: boolean;
 }
 
 export const defaultLaunchOptions: LaunchOptions = {
   userDataDir: join(homedir(), '.robinhood-playwright-profile'),
   slowMo: 75,
   tracingEnabled: true,
+  preserveUserDataDir: false,
 };
 
 export const WATCHLIST_PATH = '/watchlist';
