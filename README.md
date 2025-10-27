@@ -35,10 +35,11 @@ npm run start:robinhood
 1. A Chrome/Chromium window opens using a persistent profile stored at
    `~/.robinhood-playwright-profile` (configurable in `src/config.ts`).
 2. If you are already authenticated, the script goes directly to the dashboard.
-3. Otherwise, follow the on-screen prompts to enter credentials and complete MFA manually. When the
-dashboard is visible, return to the terminal and press **Enter** to continue.
-4. The automation navigates to the portfolio and watchlist pages, keeping the window visible until
-you close it manually.
+3. Otherwise, follow the on-screen prompts to enter credentials and complete MFA manually. The
+   script will poll for an authenticated session every 10 seconds (up to 3 attempts). Once the
+   dashboard is detected, the workflow continues automatically.
+4. The automation navigates to the portfolio, watchlist, and opens dedicated tabs for the configured
+   SPY/SPX modules. The browser remains visible until you close it manually.
 
 ### Resetting the Profile
 
