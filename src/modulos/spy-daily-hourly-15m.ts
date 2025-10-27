@@ -359,6 +359,79 @@ function extractSpySnapshot(options: EvaluateOptions): EvaluateResult {
   const normalizeText = (input: string | null | undefined): string =>
     (input ?? '').replace(/\s+/g, ' ').trim();
 
+  const detectFrameContainersByFooter = (
+    doc: Document,
+  ): {
+    sections: Array<{
+      key: FrameKey;
+      intervalLabel: string;
+      container: HTMLElement;
+      footer: HTMLElement;
+    }>;
+    byInterval: Record<FrameKey, HTMLElement | null>;
+  } => {
+    const footers = Array.from(
+      doc.querySelectorAll<HTMLElement>('[data-testid="chart_footer"]'),
+    );
+
+    const sections: Array<{
+      key: FrameKey;
+      intervalLabel: string;
+      container: HTMLElement;
+      footer: HTMLElement;
+    }> = [];
+
+    for (const footer of footers) {
+      const intervalContainer = footer.querySelector<HTMLElement>(
+        '[data-testid="footer_interval_toggle_container"]',
+      );
+      if (!intervalContainer) {
+        continue;
+      }
+
+      const selectedBtn =
+        intervalContainer.querySelector<HTMLElement>(
+          '[data-testid="footer_interval_toggle_item"][aria-checked="true"]',
+        ) ??
+        intervalContainer.querySelector<HTMLElement>(
+          '[data-testid="footer_interval_toggle_item"][disabled]',
+        );
+
+      if (!selectedBtn) {
+        continue;
+      }
+
+      const rawLabel = normalizeText(selectedBtn.textContent ?? '');
+      if (!rawLabel) {
+        continue;
+      }
+
+      const lower = rawLabel.toLowerCase();
+      const key: FrameKey =
+        lower === '1h' ? '1H' : lower === '15m' ? '15m' : '1D';
+
+      const containerCandidate = footer.closest('section,article,div');
+      const container =
+        containerCandidate instanceof HTMLElement ? containerCandidate : footer;
+
+      sections.push({ key, intervalLabel: rawLabel, container, footer });
+    }
+
+    const byInterval: Record<FrameKey, HTMLElement | null> = {
+      '1D': null,
+      '1H': null,
+      '15m': null,
+    };
+
+    for (const section of sections) {
+      if (!byInterval[section.key]) {
+        byInterval[section.key] = section.container;
+      }
+    }
+
+    return { sections, byInterval };
+  };
+
   const describeElement = (element: Element | null | undefined): string | undefined => {
     if (!element) {
       return undefined;
@@ -696,18 +769,33 @@ function extractSpySnapshot(options: EvaluateOptions): EvaluateResult {
     return result;
   }
 
+  const footerDetection = detectFrameContainersByFooter(document);
+
   for (const frame of frames) {
-    const container = findFrameContainer(body, frame);
+    const detectedContainer = footerDetection.byInterval[frame.key];
+    const container = detectedContainer ?? findFrameContainer(body, frame);
+    const detectionInfo = footerDetection.sections.find(
+      (section) => section.key === frame.key && section.container === container,
+    );
 
     if (!container) {
       result.frames.push({ key: frame.key, containerFound: false, metrics: [] });
       continue;
     }
 
+    const hintParts: string[] = [];
+    const descriptor = describeElement(container);
+    if (descriptor) {
+      hintParts.push(descriptor);
+    }
+    if (detectionInfo) {
+      hintParts.push(`footer_interval:${detectionInfo.intervalLabel}`);
+    }
+
     result.frames.push({
       key: frame.key,
       containerFound: true,
-      containerHint: describeElement(container),
+      containerHint: hintParts.length ? hintParts.join(' | ') : undefined,
       metrics: collectMetrics(container),
     });
   }
