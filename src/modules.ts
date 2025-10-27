@@ -1,6 +1,7 @@
 import type { BrowserContext } from 'playwright';
 
 import { MODULES } from './config.js';
+import { MODULE_RUNNERS } from './modulos/index.js';
 
 export async function openModuleTabs(context: BrowserContext): Promise<void> {
   for (const module of MODULES) {
@@ -21,5 +22,14 @@ export async function openModuleTabs(context: BrowserContext): Promise<void> {
     await page
       .waitForLoadState('networkidle', { timeout: 15_000 })
       .catch(() => page.waitForTimeout(2_000));
+
+    const runner = MODULE_RUNNERS[module.name];
+    if (runner) {
+      runner(page).catch((error: unknown) => {
+        /* eslint-disable no-console */
+        console.error(`Error al ejecutar el módulo "${module.name}":`, error);
+        /* eslint-enable no-console */
+      });
+    }
   }
 }
