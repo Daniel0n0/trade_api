@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium, type BrowserContext } from 'playwright';
 
@@ -35,6 +36,9 @@ export async function launchPersistentBrowser(
         await context.tracing.stop({ path: tracePath });
       }
       await context.close();
+      if (!options.preserveUserDataDir) {
+        await cleanupProfile(options.userDataDir);
+      }
     },
   };
 }
@@ -42,5 +46,15 @@ export async function launchPersistentBrowser(
 function ensureProfileDirectory(path: string): void {
   if (!existsSync(path)) {
     mkdirSync(path, { recursive: true });
+  }
+}
+
+async function cleanupProfile(path: string): Promise<void> {
+  try {
+    await rm(path, { recursive: true, force: true });
+  } catch (error) {
+    /* eslint-disable no-console */
+    console.warn(`No se pudo eliminar el directorio de perfil en ${path}:`, error);
+    /* eslint-enable no-console */
   }
 }

@@ -1,6 +1,7 @@
 import { launchPersistentBrowser } from './browser.js';
 import { ensureLoggedIn } from './login.js';
 import { navigateToPortfolio, navigateToWatchlist } from './nav.js';
+import { openModuleTabs } from './modules.js';
 import { SessionState } from './config.js';
 
 async function run(): Promise<void> {
@@ -12,6 +13,8 @@ async function run(): Promise<void> {
     if (sessionState !== SessionState.Authenticated) {
       throw new Error(`Unable to confirm authenticated session (state: ${sessionState}).`);
     }
+
+    await openModuleTabs(context);
 
     await navigateToPortfolio(page);
     await navigateToWatchlist(page);
