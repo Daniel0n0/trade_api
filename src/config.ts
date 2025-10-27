@@ -6,6 +6,8 @@ export const ROBINHOOD_ENTRY_URL = 'https://robinhood.com/us/en/';
 export const ROBINHOOD_LOGIN_URL = 'https://robinhood.com/login/';
 export const ROBINHOOD_HOME_URL =
   'https://robinhood.com/legend/layout?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT';
+export const ROBINHOOD_HOME_URL_GLOB = `${ROBINHOOD_HOME_URL}**` as const;
+export const ROBINHOOD_LOGIN_URL_GLOB = `${ROBINHOOD_LOGIN_URL}**` as const;
 export const LANDING_REDIRECT_TIMEOUT_MS = 2_000;
 export const HOME_REDIRECT_TIMEOUT_MS = 30_000;
 export const POST_AUTH_MODULE_DELAY_MS = 2_000;
@@ -38,7 +40,7 @@ export enum SessionState {
 export const SESSION_MARKERS = {
   dashboard: 'div[data-testid="homepage-dashboard"]',
   watchlist: '[data-testid="watchlist"]',
-  loginButton: 'button:has-text("Log In")',
+  loginButtonRole: { name: /log in/i } as const,
 };
 
 export interface ModuleDefinition {

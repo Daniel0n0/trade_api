@@ -1,3 +1,5 @@
+import type { Page } from 'playwright';
+
 import { launchPersistentBrowser } from './browser.js';
 import { ensureLoggedIn } from './login.js';
 import { navigateToPortfolio, navigateToWatchlist } from './nav.js';
@@ -7,6 +9,9 @@ import { SessionState } from './config.js';
 async function run(): Promise<void> {
   const { context, close } = await launchPersistentBrowser();
   const page = context.pages()[0] ?? (await context.newPage());
+
+  attachPageObservers(page);
+  context.on('page', attachPageObservers);
 
   try {
     const sessionState = await ensureLoggedIn(page);
@@ -38,6 +43,14 @@ async function handleError(error: unknown): Promise<void> {
   console.error(error);
   console.error('The browser context will now close. Review artifacts/trace-*.zip for debugging.');
   /* eslint-enable no-console */
+}
+
+function attachPageObservers(page: Page): void {
+  page.on('requestfailed', (request) => {
+    /* eslint-disable no-console */
+    console.warn(`Request failed [${request.failure()?.errorText ?? 'unknown'}]: ${request.url()}`);
+    /* eslint-enable no-console */
+  });
 }
 
 await run();

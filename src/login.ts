@@ -7,7 +7,9 @@ import {
   POST_AUTH_MODULE_DELAY_MS,
   ROBINHOOD_ENTRY_URL,
   ROBINHOOD_HOME_URL,
+  ROBINHOOD_HOME_URL_GLOB,
   ROBINHOOD_LOGIN_URL,
+  ROBINHOOD_LOGIN_URL_GLOB,
   SESSION_MARKERS,
   SessionState,
 } from './config.js';
@@ -19,32 +21,42 @@ export async function ensureLoggedIn(page: Page): Promise<SessionState> {
     return currentState;
   }
 
+  const loginRedirectWatcher = page
+    .waitForURL(ROBINHOOD_LOGIN_URL_GLOB, { timeout: LANDING_REDIRECT_TIMEOUT_MS })
+    .then(() => 'login' as const)
+    .catch(() => null);
+  const homeRedirectWatcher = page
+    .waitForURL(ROBINHOOD_HOME_URL_GLOB, { timeout: LANDING_REDIRECT_TIMEOUT_MS })
+    .then(() => 'home' as const)
+    .catch(() => null);
+
   await page.goto(ROBINHOOD_ENTRY_URL, { waitUntil: 'domcontentloaded' });
 
-  const redirectedFromLanding = await page
-    .waitForURL(
-      (url) => !url.toString().startsWith(ROBINHOOD_ENTRY_URL),
-      { timeout: LANDING_REDIRECT_TIMEOUT_MS, waitUntil: 'domcontentloaded' },
-    )
-    .then(() => true)
-    .catch(() => false);
+  const landingOutcome =
+    (await Promise.race([
+      loginRedirectWatcher,
+      homeRedirectWatcher,
+      page.waitForTimeout(LANDING_REDIRECT_TIMEOUT_MS).then(() => 'timeout' as const),
+    ])) ?? 'timeout';
 
-  if (redirectedFromLanding) {
-    currentState = await detectSessionState(page);
-    if (currentState === SessionState.Authenticated) {
-      await waitForHomeDashboard(page);
-      return currentState;
-    }
+  if (landingOutcome === 'home' || page.url().startsWith(ROBINHOOD_HOME_URL)) {
+    await waitForHomeDashboard(page);
+    return SessionState.Authenticated;
+  }
+
+  if (landingOutcome === 'login' || page.url().startsWith(ROBINHOOD_LOGIN_URL)) {
+    await ensureLoginScreenReady(page);
+    return waitForManualLogin(page);
   }
 
   await page.goto(ROBINHOOD_LOGIN_URL, { waitUntil: 'domcontentloaded' });
-
+  await ensureLoginScreenReady(page);
   return waitForManualLogin(page);
 }
 
 export async function detectSessionState(page: Page): Promise<SessionState> {
-  const loginButton = page.locator(SESSION_MARKERS.loginButton);
-  if (await loginButton.first().isVisible({ timeout: 2_000 }).catch(() => false)) {
+  const loginButton = page.getByRole('button', SESSION_MARKERS.loginButtonRole);
+  if (await loginButton.first().isVisible({ timeout: 3_000 }).catch(() => false)) {
     return SessionState.RequiresLogin;
   }
 
@@ -54,6 +66,11 @@ export async function detectSessionState(page: Page): Promise<SessionState> {
   }
 
   return SessionState.Unknown;
+}
+
+async function ensureLoginScreenReady(page: Page): Promise<void> {
+  const loginButton = page.getByRole('button', SESSION_MARKERS.loginButtonRole);
+  await loginButton.first().waitFor({ state: 'visible', timeout: 5_000 });
 }
 
 async function waitForManualLogin(page: Page): Promise<SessionState> {
@@ -66,19 +83,9 @@ async function waitForManualLogin(page: Page): Promise<SessionState> {
   );
   /* eslint-enable no-console */
 
-  if (!page.url().startsWith(ROBINHOOD_LOGIN_URL)) {
-    const state = await detectSessionState(page);
-    if (state === SessionState.Authenticated) {
-      return state;
-    }
-  }
-
   for (;;) {
-    const urlChanged = await page
-      .waitForURL(
-        (url) => !url.toString().startsWith(ROBINHOOD_LOGIN_URL),
-        { timeout: LOGIN_CHECK_INTERVAL_MS, waitUntil: 'domcontentloaded' },
-      )
+    const reachedHome = await page
+      .waitForURL(ROBINHOOD_HOME_URL_GLOB, { timeout: LOGIN_CHECK_INTERVAL_MS })
       .then(() => true)
       .catch((error: unknown) => {
         if (error instanceof Error && /Target closed/.test(error.message)) {
@@ -88,7 +95,7 @@ async function waitForManualLogin(page: Page): Promise<SessionState> {
         return false;
       });
 
-    if (urlChanged) {
+    if (reachedHome) {
       /* eslint-disable no-console */
       console.log('Se detectó una redirección posterior al inicio de sesión.');
       console.log(`Nueva URL: ${page.url()}`);
@@ -122,10 +129,7 @@ async function waitForHomeDashboard(page: Page): Promise<void> {
   /* eslint-enable no-console */
 
   const reachedHome = await page
-    .waitForURL(
-      (url) => url.toString().startsWith(ROBINHOOD_HOME_URL),
-      { timeout: HOME_REDIRECT_TIMEOUT_MS, waitUntil: 'domcontentloaded' },
-    )
+    .waitForURL(ROBINHOOD_HOME_URL_GLOB, { timeout: HOME_REDIRECT_TIMEOUT_MS })
     .then(() => true)
     .catch(() => false);
 
