@@ -86,6 +86,7 @@ async function waitForManualLogin(page: Page): Promise<SessionState> {
     }
 
     referenceUrl = page.url();
+
   }
 
   /* eslint-disable no-console */
