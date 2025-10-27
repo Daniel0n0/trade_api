@@ -410,9 +410,28 @@ function extractSpySnapshot(options: EvaluateOptions): EvaluateResult {
       const key: FrameKey =
         lower === '1h' ? '1H' : lower === '15m' ? '15m' : '1D';
 
-      const containerCandidate = footer.closest('section,article,div');
-      const container =
-        containerCandidate instanceof HTMLElement ? containerCandidate : footer;
+      const resolveContainer = (): HTMLElement | null => {
+        const preferSemantics = footer.closest('section,article');
+        if (
+          preferSemantics instanceof HTMLElement &&
+          preferSemantics !== footer
+        ) {
+          return preferSemantics;
+        }
+
+        const fallbackDiv = footer.closest('div');
+        if (fallbackDiv instanceof HTMLElement && fallbackDiv !== footer) {
+          return fallbackDiv;
+        }
+
+        const parent = footer.parentElement;
+        return parent instanceof HTMLElement ? parent : null;
+      };
+
+      const container = resolveContainer();
+      if (!container || container === footer || !container.contains(footer)) {
+        continue;
+      }
 
       sections.push({ key, intervalLabel: rawLabel, container, footer });
     }
@@ -790,6 +809,8 @@ function extractSpySnapshot(options: EvaluateOptions): EvaluateResult {
     }
     if (detectionInfo) {
       hintParts.push(`footer_interval:${detectionInfo.intervalLabel}`);
+    } else if (!detectedContainer) {
+      hintParts.push('footer_detection:fallback');
     }
 
     result.frames.push({
