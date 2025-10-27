@@ -28,7 +28,6 @@ export const WATCHLIST_PATH = '/watchlist';
 export const PORTFOLIO_PATH = '/account/overview';
 
 export const LOGIN_CHECK_INTERVAL_MS = 10_000;
-export const LOGIN_MAX_ATTEMPTS = 3;
 
 export enum SessionState {
   Unknown = 'unknown',

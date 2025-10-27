@@ -37,8 +37,8 @@ npm run start:robinhood
    automatically when the automation closes the browser so no session or cache data remain on disk.
 2. If you are already authenticated, the script goes directly to the dashboard.
 3. Otherwise, follow the on-screen prompts to enter credentials and complete MFA manually. The
-   script waits for a redirect away from the login page (up to 3 attempts, with 10-second intervals)
-   and confirms that the home dashboard at
+   script checks every 10 seconds for a redirect away from the login page and confirms that the home
+   dashboard at
    `https://robinhood.com/legend/layout?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT`
    has loaded before proceeding.
 4. After the dashboard is visible, the automation pauses for two seconds, opens dedicated tabs for

@@ -3,7 +3,6 @@ import type { Page } from 'playwright';
 import {
   LANDING_REDIRECT_TIMEOUT_MS,
   LOGIN_CHECK_INTERVAL_MS,
-  LOGIN_MAX_ATTEMPTS,
   HOME_REDIRECT_TIMEOUT_MS,
   POST_AUTH_MODULE_DELAY_MS,
   ROBINHOOD_ENTRY_URL,
@@ -62,8 +61,8 @@ async function waitForManualLogin(page: Page): Promise<SessionState> {
   console.log('\nManual login required.');
   console.log('Completa las credenciales y cualquier MFA en la ventana del navegador.');
   console.log(
-    `Se comprobará la redirección desde ${ROBINHOOD_LOGIN_URL} cada ${LOGIN_CHECK_INTERVAL_MS / 1_000} ` +
-      `segundos hasta ${LOGIN_MAX_ATTEMPTS} veces.`,
+    `Se comprobará la redirección desde ${ROBINHOOD_LOGIN_URL} cada ${LOGIN_CHECK_INTERVAL_MS / 1_000} segundos ` +
+      'hasta confirmar el inicio de sesión.',
   );
   /* eslint-enable no-console */
 
@@ -74,14 +73,20 @@ async function waitForManualLogin(page: Page): Promise<SessionState> {
     }
   }
 
-  for (let attempt = 1; attempt <= LOGIN_MAX_ATTEMPTS; attempt += 1) {
+  for (;;) {
     const urlChanged = await page
       .waitForURL(
         (url) => !url.toString().startsWith(ROBINHOOD_LOGIN_URL),
         { timeout: LOGIN_CHECK_INTERVAL_MS, waitUntil: 'domcontentloaded' },
       )
       .then(() => true)
-      .catch(() => false);
+      .catch((error: unknown) => {
+        if (error instanceof Error && /Target closed/.test(error.message)) {
+          throw error;
+        }
+
+        return false;
+      });
 
     if (urlChanged) {
       /* eslint-disable no-console */
@@ -93,20 +98,22 @@ async function waitForManualLogin(page: Page): Promise<SessionState> {
       return SessionState.Authenticated;
     }
 
-    if (attempt < LOGIN_MAX_ATTEMPTS) {
-      /* eslint-disable no-console */
-      console.log(
-        `Intento ${attempt} sin éxito. Esperando ${LOGIN_CHECK_INTERVAL_MS / 1_000} segundos antes de volver a comprobar...`,
-      );
-      /* eslint-enable no-console */
+    if (page.isClosed()) {
+      throw new Error('La ventana del navegador se cerró antes de confirmar el inicio de sesión.');
     }
+
+    const state = await detectSessionState(page);
+    if (state === SessionState.Authenticated) {
+      await waitForHomeDashboard(page);
+      return state;
+    }
+
+    /* eslint-disable no-console */
+    console.log(
+      `Aún no se confirma el inicio de sesión. Nueva comprobación en ${LOGIN_CHECK_INTERVAL_MS / 1_000} segundos...`,
+    );
+    /* eslint-enable no-console */
   }
-
-  /* eslint-disable no-console */
-  console.log('No se pudo confirmar el inicio de sesión tras los intentos configurados.');
-  /* eslint-enable no-console */
-
-  return detectSessionState(page);
 }
 
 async function waitForHomeDashboard(page: Page): Promise<void> {
