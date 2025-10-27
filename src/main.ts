@@ -18,6 +18,7 @@ async function run(): Promise<void> {
 
     await navigateToPortfolio(page);
     await navigateToWatchlist(page);
+    await openModuleTabs(context);
 
     /* eslint-disable no-console */
     console.log('Navigation complete. The browser will remain open until you close it manually.');
