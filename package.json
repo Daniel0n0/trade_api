@@ -1,0 +1,27 @@
+{
+  "name": "trade_api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start:robinhood": "tsx src/main.ts",
+    "clean:profile": "tsx scripts/clean-profile.ts",
+    "lint": "eslint \"src/**/*.ts\" \"scripts/**/*.ts\"",
+    "format": "prettier --write ."
+  },
+  "dependencies": {
+    "playwright": "^1.45.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^7.6.0",
+    "@typescript-eslint/parser": "^7.6.0",
+    "eslint": "^8.57.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-import-resolver-typescript": "^3.6.1",
+    "eslint-plugin-import": "^2.29.0",
+    "prettier": "^3.2.5",
+    "tsx": "^4.7.1",
+    "typescript": "^5.4.0"
+  }
+}
