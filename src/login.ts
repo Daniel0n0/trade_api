@@ -15,7 +15,7 @@ import {
 } from './config.js';
 
 export async function ensureLoggedIn(page: Page): Promise<SessionState> {
-  let currentState = await detectSessionState(page);
+  const currentState = await detectSessionState(page);
   if (currentState === SessionState.Authenticated) {
     await waitForHomeDashboard(page);
     return currentState;
