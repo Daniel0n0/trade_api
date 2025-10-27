@@ -1,22 +1,26 @@
 import type { Page } from 'playwright';
 
-import { ROBINHOOD_URL, SESSION_MARKERS, SessionState, WAIT_FOR_NETWORK_IDLE } from './config.js';
+import {
+  LOGIN_CHECK_INTERVAL_MS,
+  LOGIN_MAX_ATTEMPTS,
+  ROBINHOOD_URL,
+  SESSION_MARKERS,
+  SessionState,
+} from './config.js';
 
 export async function ensureLoggedIn(page: Page): Promise<SessionState> {
-  const currentState = await detectSessionState(page);
+  let currentState = await detectSessionState(page);
   if (currentState === SessionState.Authenticated) {
     return currentState;
   }
 
   await page.goto(ROBINHOOD_URL, { waitUntil: 'domcontentloaded' });
-
-  if ((await detectSessionState(page)) === SessionState.Authenticated) {
-    return SessionState.Authenticated;
+  currentState = await detectSessionState(page);
+  if (currentState === SessionState.Authenticated) {
+    return currentState;
   }
 
-  await promptForManualLogin(page);
-  await page.waitForTimeout(WAIT_FOR_NETWORK_IDLE);
-  return detectSessionState(page);
+  return waitForManualLogin(page);
 }
 
 export async function detectSessionState(page: Page): Promise<SessionState> {
@@ -33,23 +37,37 @@ export async function detectSessionState(page: Page): Promise<SessionState> {
   return SessionState.Unknown;
 }
 
-async function promptForManualLogin(page: Page): Promise<void> {
+async function waitForManualLogin(page: Page): Promise<SessionState> {
   /* eslint-disable no-console */
   console.log('\nManual login required.');
-  console.log('1. Complete the credentials and any MFA prompts in the visible browser window.');
-  console.log('2. Press Enter here once the dashboard is visible to continue.');
+  console.log('Completa las credenciales y cualquier MFA en la ventana del navegador.');
+  console.log(
+    `Se comprobará el estado de autenticación cada ${LOGIN_CHECK_INTERVAL_MS / 1_000} segundos ` +
+      `hasta ${LOGIN_MAX_ATTEMPTS} veces.`,
+  );
   /* eslint-enable no-console */
 
-  await page.waitForTimeout(1_000);
-  await waitForEnterKey();
-}
+  for (let attempt = 1; attempt <= LOGIN_MAX_ATTEMPTS; attempt += 1) {
+    await page.waitForTimeout(LOGIN_CHECK_INTERVAL_MS);
+    const state = await detectSessionState(page);
 
-async function waitForEnterKey(): Promise<void> {
-  await new Promise<void>((resolve) => {
-    process.stdin.resume();
-    process.stdin.once('data', () => {
-      process.stdin.pause();
-      resolve();
-    });
-  });
+    if (state === SessionState.Authenticated) {
+      /* eslint-disable no-console */
+      console.log('Sesión autenticada correctamente.');
+      /* eslint-enable no-console */
+      return state;
+    }
+
+    if (attempt < LOGIN_MAX_ATTEMPTS) {
+      /* eslint-disable no-console */
+      console.log('No se detectó sesión iniciada. Esperando el siguiente intento...');
+      /* eslint-enable no-console */
+    }
+  }
+
+  /* eslint-disable no-console */
+  console.log('No se pudo confirmar el inicio de sesión tras los intentos configurados.');
+  /* eslint-enable no-console */
+
+  return detectSessionState(page);
 }

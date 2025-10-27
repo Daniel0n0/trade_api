@@ -18,7 +18,8 @@ export const defaultLaunchOptions: LaunchOptions = {
 export const WATCHLIST_PATH = '/watchlist';
 export const PORTFOLIO_PATH = '/account/overview';
 
-export const WAIT_FOR_NETWORK_IDLE = 5_000;
+export const LOGIN_CHECK_INTERVAL_MS = 10_000;
+export const LOGIN_MAX_ATTEMPTS = 3;
 
 export enum SessionState {
   Unknown = 'unknown',
@@ -31,3 +32,32 @@ export const SESSION_MARKERS = {
   watchlist: '[data-testid="watchlist"]',
   loginButton: 'button:has-text("Log In")',
 };
+
+export interface ModuleDefinition {
+  readonly name: string;
+  readonly description: string;
+  readonly url: string;
+}
+
+export const MODULES: readonly ModuleDefinition[] = [
+  {
+    name: 'spy-daily-hourly-15m',
+    description: 'SPY con marcos de 1 día, 1 hora y 15 minutos',
+    url: 'https://robinhood.com/legend/layout/6bb41212-dbb4-4dc0-a0a7-7a75e4aaf9da?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT',
+  },
+  {
+    name: 'spy-5m-1m',
+    description: 'SPY con marcos de 5 minutos y 1 minuto',
+    url: 'https://robinhood.com/legend/layout/9a624e15-84c5-4a0e-8391-69f32b32d8d5?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT',
+  },
+  {
+    name: 'spy-options-chain',
+    description: 'SPY options chain',
+    url: 'https://robinhood.com/legend/layout/c59d5a8e-397f-421a-a6e4-8ffe753c3456?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT',
+  },
+  {
+    name: 'spx-options-chain',
+    description: 'SPX options chain',
+    url: 'https://robinhood.com/legend/layout/0413b972-f84e-4ce7-8eae-c0a50b96cc90?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT',
+  },
+];
