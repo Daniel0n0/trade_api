@@ -59,7 +59,7 @@ interface EvaluateFrameResult {
 }
 
 interface EvaluateResult {
-  readonly frames: readonly EvaluateFrameResult[];
+  frames: EvaluateFrameResult[];
 }
 
 const POLL_INTERVAL_MS = 5_000;
