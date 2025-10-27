@@ -16,6 +16,8 @@ type MetricKey =
   | 'obv'
   | 'aavwap1000';
 
+type LabelMatchType = 'text' | 'aria-label' | 'data-testid' | 'title';
+
 interface SerializedPattern {
   readonly source: string;
   readonly flags?: string;
@@ -44,6 +46,7 @@ interface EvaluateMetricResult {
   readonly key: MetricKey;
   readonly value: string | null;
   readonly labelText?: string;
+  readonly labelMatchType?: LabelMatchType;
   readonly valueSource?: string;
   readonly containerHint?: string;
 }
@@ -66,7 +69,7 @@ const createPattern = (pattern: RegExp): SerializedPattern => ({
   flags: pattern.flags,
 });
 
-const NUMBER_PATTERN = createPattern(/[-+]?\d[\d,.]*(?:\s*(?:k|m|b|mm|mill|millones))?/i);
+const NUMBER_PATTERN = createPattern(/[-+]?\d[\d,.]*(?:\s*(?:k|m|b|mm|mill|millones|%))?/i);
 const MACD_PATTERN = createPattern(/[-+]?\d[\d,.]*(?:\s*[,/]\s*[-+]?\d[\d,.]*){0,2}/);
 
 const TIMEFRAME_DEFINITIONS: readonly FrameDefinition[] = [
@@ -159,13 +162,15 @@ const METRIC_DEFINITIONS: readonly MetricDefinition[] = [
     labelPatterns: [
       createPattern(/volume/i),
       createPattern(/volumen/i),
+      createPattern(/^vol\.?$/i),
+      createPattern(/\bvol\.?\b/i),
     ],
     valuePatterns: [NUMBER_PATTERN],
   },
   {
     key: 'ema8',
     labelPatterns: [
-      createPattern(/ema\s*8/i),
+      createPattern(/ema[-\s]*8/i),
       createPattern(/ema8/i),
     ],
     valuePatterns: [NUMBER_PATTERN],
@@ -173,7 +178,7 @@ const METRIC_DEFINITIONS: readonly MetricDefinition[] = [
   {
     key: 'ema21',
     labelPatterns: [
-      createPattern(/ema\s*21/i),
+      createPattern(/ema[-\s]*21/i),
       createPattern(/ema21/i),
     ],
     valuePatterns: [NUMBER_PATTERN],
@@ -181,7 +186,7 @@ const METRIC_DEFINITIONS: readonly MetricDefinition[] = [
   {
     key: 'ema50',
     labelPatterns: [
-      createPattern(/ema\s*50/i),
+      createPattern(/ema[-\s]*50/i),
       createPattern(/ema50/i),
     ],
     valuePatterns: [NUMBER_PATTERN],
@@ -234,6 +239,9 @@ const INDICATOR_KEYWORDS: readonly string[] = [
   'obv',
   'vwap',
   'precio',
+  'spot',
+  'anchored',
+  'last',
 ];
 
 export async function runSpyDailyHourly15mModule(page: Page): Promise<void> {
@@ -297,7 +305,14 @@ export async function runSpyDailyHourly15mModule(page: Page): Promise<void> {
 
             const details: string[] = [];
             if (metric.labelText) {
-              details.push(`label="${metric.labelText}"`);
+              const labelDetail =
+                metric.labelMatchType && metric.labelMatchType !== 'text'
+                  ? `label(${metric.labelMatchType})="${metric.labelText}"`
+                  : `label="${metric.labelText}"`;
+              details.push(labelDetail);
+            }
+            if (!metric.labelText && metric.labelMatchType) {
+              details.push(`label(${metric.labelMatchType})`);
             }
             if (metric.valueSource) {
               details.push(`origen=${metric.valueSource}`);
@@ -378,6 +393,43 @@ function extractSpySnapshot(options: EvaluateOptions): EvaluateResult {
     return parts.join('');
   };
 
+  const getElementSources = (
+    element: HTMLElement,
+  ): { kind: LabelMatchType; value: string }[] => {
+    const sources: { kind: LabelMatchType; value: string }[] = [];
+
+    const textContent = normalizeText(element.textContent ?? '');
+    if (textContent) {
+      sources.push({ kind: 'text', value: textContent });
+    }
+
+    const ariaLabel = element.getAttribute('aria-label');
+    if (ariaLabel) {
+      const normalized = normalizeText(ariaLabel);
+      if (normalized) {
+        sources.push({ kind: 'aria-label', value: normalized });
+      }
+    }
+
+    const dataTestId = element.getAttribute('data-testid');
+    if (dataTestId) {
+      const trimmed = dataTestId.trim();
+      if (trimmed) {
+        sources.push({ kind: 'data-testid', value: trimmed });
+      }
+    }
+
+    const title = element.getAttribute('title');
+    if (title) {
+      const normalized = normalizeText(title);
+      if (normalized) {
+        sources.push({ kind: 'title', value: normalized });
+      }
+    }
+
+    return sources;
+  };
+
   const frames = options.frames.map((frame) => ({
     key: frame.key,
     patterns: frame.labelPatterns.map(makeRegExp).filter(Boolean) as RegExp[],
@@ -404,16 +456,35 @@ function extractSpySnapshot(options: EvaluateOptions): EvaluateResult {
     return count;
   };
 
-  const extractValueFromText = (text: string, patterns: readonly RegExp[]):
-    | { value: string; source: string }
-    | null => {
+  const extractValueFromText = (
+    text: string,
+    patterns: readonly RegExp[],
+    kind: LabelMatchType = 'text',
+  ): { value: string; source: string } | null => {
+    const snippet = text.slice(0, 120);
     for (const pattern of patterns) {
       const match = pattern.exec(text);
       if (match && match[0]) {
-        return { value: match[0], source: `texto:"${text.slice(0, 120)}"` };
+        return { value: match[0], source: `${kind}:"${snippet}"` };
       }
     }
     return null;
+  };
+
+  const attachElementContext = (
+    info: { value: string; source: string },
+    element: HTMLElement | null | undefined,
+  ): { value: string; source: string } => {
+    if (!element) {
+      return info;
+    }
+
+    const descriptor = describeElement(element);
+    if (!descriptor) {
+      return info;
+    }
+
+    return { value: info.value, source: `${info.source} en ${descriptor}` };
   };
 
   const collectAncestors = (element: HTMLElement, depth: number): HTMLElement[] => {
@@ -435,34 +506,31 @@ function extractSpySnapshot(options: EvaluateOptions): EvaluateResult {
     const queue: HTMLElement[] = [];
     const visited = new Set<HTMLElement>();
 
+    const enqueue = (element: Element | null | undefined): void => {
+      if (element instanceof HTMLElement && !visited.has(element)) {
+        queue.push(element);
+      }
+    };
+
     const parent = label.parentElement;
     if (parent) {
-      queue.push(parent);
-      if (parent.nextElementSibling instanceof HTMLElement) {
-        queue.push(parent.nextElementSibling);
-      }
-      if (parent.previousElementSibling instanceof HTMLElement) {
-        queue.push(parent.previousElementSibling);
-      }
+      enqueue(parent);
+      enqueue(parent.nextElementSibling);
+      enqueue(parent.previousElementSibling);
       for (const sibling of Array.from(parent.children)) {
         if (sibling instanceof HTMLElement && sibling !== label) {
-          queue.push(sibling);
+          enqueue(sibling);
         }
       }
     }
 
-    if (label.nextElementSibling instanceof HTMLElement) {
-      queue.push(label.nextElementSibling);
-    }
-    if (label.previousElementSibling instanceof HTMLElement) {
-      queue.push(label.previousElementSibling);
-    }
+    enqueue(label.nextElementSibling);
+    enqueue(label.previousElementSibling);
 
     for (const ancestor of collectAncestors(label, 2)) {
-      queue.push(ancestor);
-      if (ancestor.nextElementSibling instanceof HTMLElement) {
-        queue.push(ancestor.nextElementSibling);
-      }
+      enqueue(ancestor);
+      enqueue(ancestor.nextElementSibling);
+      enqueue(ancestor.previousElementSibling);
     }
 
     while (queue.length) {
@@ -472,47 +540,51 @@ function extractSpySnapshot(options: EvaluateOptions): EvaluateResult {
       }
       visited.add(candidate);
 
-      const candidateText = normalizeText(candidate.textContent ?? '');
-      if (!candidateText) {
-        queue.push(...Array.from(candidate.children).filter((child): child is HTMLElement => child instanceof HTMLElement));
-        continue;
+      for (const child of Array.from(candidate.children)) {
+        if (child instanceof HTMLElement && !visited.has(child)) {
+          queue.push(child);
+        }
       }
 
-      const extracted = extractValueFromText(candidateText, patterns);
-      if (extracted) {
-        return { value: extracted.value, source: describeElement(candidate) ?? 'valor vecino' };
+      const sources = getElementSources(candidate);
+      for (const source of sources) {
+        const extracted = extractValueFromText(source.value, patterns, source.kind);
+        if (extracted) {
+          return attachElementContext(extracted, candidate);
+        }
       }
-
-      queue.push(...Array.from(candidate.children).filter((child): child is HTMLElement => child instanceof HTMLElement));
     }
 
     return null;
   };
 
-  const findLabelElement = (root: HTMLElement, patterns: readonly RegExp[]): HTMLElement | null => {
-    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, {
-      acceptNode(node): number {
-        if (!(node instanceof HTMLElement)) {
-          return NodeFilter.FILTER_SKIP;
-        }
+  interface LabelSearchResult {
+    readonly element: HTMLElement;
+    readonly matchedText: string;
+    readonly matchType: LabelMatchType;
+  }
 
-        const text = normalizeText(node.textContent ?? '');
-        if (!text) {
-          return NodeFilter.FILTER_SKIP;
-        }
+  const findLabelElement = (
+    root: HTMLElement,
+    patterns: readonly RegExp[],
+  ): LabelSearchResult | null => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+    let current = walker.currentNode as HTMLElement | null;
 
-        for (const pattern of patterns) {
-          if (pattern.test(text)) {
-            return NodeFilter.FILTER_ACCEPT;
+    while (current) {
+      if (current instanceof HTMLElement) {
+        const sources = getElementSources(current);
+        for (const source of sources) {
+          if (patterns.some((pattern) => pattern.test(source.value))) {
+            return { element: current, matchedText: source.value, matchType: source.kind };
           }
         }
+      }
 
-        return NodeFilter.FILTER_SKIP;
-      },
-    });
+      current = walker.nextNode() as HTMLElement | null;
+    }
 
-    const node = walker.nextNode();
-    return (node as HTMLElement | null) ?? null;
+    return null;
   };
 
   const findStandaloneValue = (
@@ -525,14 +597,15 @@ function extractSpySnapshot(options: EvaluateOptions): EvaluateResult {
 
     while (current) {
       if (current instanceof HTMLElement) {
-        const text = normalizeText(current.textContent ?? '');
-        if (text) {
-          const hasLabel = labelPatterns.some((pattern) => pattern.test(text));
-          if (hasLabel) {
-            const extracted = extractValueFromText(text, valuePatterns);
-            if (extracted) {
-              return { value: extracted.value, source: describeElement(current) ?? 'valor directo' };
-            }
+        const sources = getElementSources(current);
+        const matchingSources = sources.filter((source) =>
+          labelPatterns.some((pattern) => pattern.test(source.value)),
+        );
+
+        for (const source of matchingSources) {
+          const extracted = extractValueFromText(source.value, valuePatterns, source.kind);
+          if (extracted) {
+            return attachElementContext(extracted, current);
           }
         }
       }
@@ -547,15 +620,24 @@ function extractSpySnapshot(options: EvaluateOptions): EvaluateResult {
     const results: EvaluateMetricResult[] = [];
 
     for (const metric of metrics) {
-      const labelElement = findLabelElement(container, metric.labelPatterns);
+      const labelMatch = findLabelElement(container, metric.labelPatterns);
       let labelText: string | undefined;
+      let labelMatchType: LabelMatchType | undefined;
       let valueInfo: { value: string; source: string } | null = null;
 
-      if (labelElement) {
-        labelText = normalizeText(labelElement.textContent ?? '');
-        valueInfo =
-          extractValueFromText(labelText, metric.valuePatterns) ??
-          findNeighborValue(labelElement, metric.valuePatterns);
+      if (labelMatch) {
+        labelText = labelMatch.matchedText;
+        labelMatchType = labelMatch.matchType;
+
+        const directExtraction = extractValueFromText(
+          labelMatch.matchedText,
+          metric.valuePatterns,
+          labelMatch.matchType,
+        );
+
+        valueInfo = directExtraction
+          ? attachElementContext(directExtraction, labelMatch.element)
+          : findNeighborValue(labelMatch.element, metric.valuePatterns);
       } else if (metric.allowStandaloneValue) {
         valueInfo = findStandaloneValue(container, metric.labelPatterns, metric.valuePatterns);
       }
@@ -564,6 +646,7 @@ function extractSpySnapshot(options: EvaluateOptions): EvaluateResult {
         key: metric.key,
         value: valueInfo?.value ?? null,
         labelText,
+        labelMatchType,
         valueSource: valueInfo?.source,
         containerHint: describeElement(container),
       });
