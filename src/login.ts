@@ -1,6 +1,7 @@
 import type { Page } from 'playwright';
 
 import {
+
   LANDING_REDIRECT_TIMEOUT_MS,
   LOGIN_CHECK_INTERVAL_MS,
   LOGIN_MAX_ATTEMPTS,
@@ -68,6 +69,7 @@ async function waitForManualLogin(page: Page): Promise<SessionState> {
       return state;
     }
   }
+
 
   for (let attempt = 1; attempt <= LOGIN_MAX_ATTEMPTS; attempt += 1) {
     const urlChanged = await page
