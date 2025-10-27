@@ -598,15 +598,21 @@ function extractSpySnapshot(options: EvaluateOptions): EvaluateResult {
     while (current) {
       if (current instanceof HTMLElement) {
         const sources = getElementSources(current);
-        const matchingSources = sources.filter((source) =>
-          labelPatterns.some((pattern) => pattern.test(source.value)),
-        );
-
-        for (const source of matchingSources) {
+        for (const source of sources) {
           const extracted = extractValueFromText(source.value, valuePatterns, source.kind);
-          if (extracted) {
-            return attachElementContext(extracted, current);
+          if (!extracted) {
+            continue;
           }
+
+          const hasLabelMatch = labelPatterns.some((pattern) => pattern.test(source.value));
+          const trimmed = source.value.trim();
+          const extractedTrimmed = extracted.value.trim();
+
+          if (!hasLabelMatch && trimmed !== extractedTrimmed) {
+            continue;
+          }
+
+          return attachElementContext(extracted, current);
         }
       }
 
