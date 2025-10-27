@@ -38,9 +38,12 @@ npm run start:robinhood
 2. If you are already authenticated, the script goes directly to the dashboard.
 3. Otherwise, follow the on-screen prompts to enter credentials and complete MFA manually. The
    script waits for a redirect away from the login page (up to 3 attempts, with 10-second intervals)
-   to confirm that you have successfully signed in before continuing.
-4. The automation navigates to the portfolio, watchlist, and opens dedicated tabs for the configured
-   SPY/SPX modules. The browser remains visible until you close it manually.
+   and confirms that the home dashboard at
+   `https://robinhood.com/legend/layout?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT`
+   has loaded before proceeding.
+4. After the dashboard is visible, the automation pauses for two seconds, opens dedicated tabs for
+   the configured SPY/SPX modules, and then visits the portfolio and watchlist pages. The browser
+   remains visible until you close it manually.
 
 ### Resetting the Profile
 

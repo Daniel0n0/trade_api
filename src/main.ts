@@ -14,6 +14,8 @@ async function run(): Promise<void> {
       throw new Error(`Unable to confirm authenticated session (state: ${sessionState}).`);
     }
 
+    await openModuleTabs(context);
+
     await navigateToPortfolio(page);
     await navigateToWatchlist(page);
     await openModuleTabs(context);

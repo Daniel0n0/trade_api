@@ -4,7 +4,11 @@ import { homedir } from 'node:os';
 export const ROBINHOOD_URL = 'https://robinhood.com/';
 export const ROBINHOOD_ENTRY_URL = 'https://robinhood.com/us/en/';
 export const ROBINHOOD_LOGIN_URL = 'https://robinhood.com/login/';
+export const ROBINHOOD_HOME_URL =
+  'https://robinhood.com/legend/layout?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT';
 export const LANDING_REDIRECT_TIMEOUT_MS = 2_000;
+export const HOME_REDIRECT_TIMEOUT_MS = 30_000;
+export const POST_AUTH_MODULE_DELAY_MS = 2_000;
 
 export interface LaunchOptions {
   readonly userDataDir: string;
