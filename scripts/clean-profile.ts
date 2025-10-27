@@ -6,7 +6,9 @@ function main(): void {
   const profilePath = defaultLaunchOptions.userDataDir;
 
   if (!existsSync(profilePath)) {
-    console.log(`No profile directory found at ${profilePath}.`);
+    console.log(
+      `No profile directory found at ${profilePath}. Los perfiles ahora se eliminan automáticamente tras cerrar el navegador.`,
+    );
     return;
   }
 
