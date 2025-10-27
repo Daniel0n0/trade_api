@@ -39,7 +39,6 @@ npm run start:robinhood
 3. Otherwise, follow the on-screen prompts to enter credentials and complete MFA manually. The
    script waits for a redirect away from the login page (up to 3 attempts, with 10-second intervals)
    to confirm that you have successfully signed in before continuing.
-
 4. The automation navigates to the portfolio, watchlist, and opens dedicated tabs for the configured
    SPY/SPX modules. The browser remains visible until you close it manually.
 

@@ -2,6 +2,9 @@ import { join } from 'node:path';
 import { homedir } from 'node:os';
 
 export const ROBINHOOD_URL = 'https://robinhood.com/';
+export const ROBINHOOD_ENTRY_URL = 'https://robinhood.com/us/en/';
+export const ROBINHOOD_LOGIN_URL = 'https://robinhood.com/login/';
+export const LANDING_REDIRECT_TIMEOUT_MS = 2_000;
 
 export interface LaunchOptions {
   readonly userDataDir: string;
