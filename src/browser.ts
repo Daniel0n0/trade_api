@@ -8,6 +8,7 @@ import { defaultLaunchOptions, type LaunchOptions } from './config.js';
 export interface BrowserResources {
   readonly context: BrowserContext;
   readonly close: () => Promise<void>;
+  readonly enableNetworkBlocking: () => void;
 }
 
 export type LaunchMode = 'bootstrap' | 'reuse';
@@ -57,12 +58,15 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
     args: ['--disable-blink-features=AutomationControlled'],
   });
 
+  const enableNetworkBlocking = configureNetworkBlocking(context, options.blockTrackingDomains);
+
   if (options.tracingEnabled) {
     await context.tracing.start({ screenshots: true, snapshots: true });
   }
 
   return {
     context,
+    enableNetworkBlocking,
     close: async () => {
       if (options.tracingEnabled) {
         const tracePath = join(process.cwd(), 'artifacts', `trace-${Date.now()}.zip`);
@@ -89,12 +93,15 @@ async function launchReusedContext(options: LaunchOptions, storageStatePath: str
     viewport: null,
   });
 
+  const enableNetworkBlocking = configureNetworkBlocking(context, options.blockTrackingDomains);
+
   if (options.tracingEnabled) {
     await context.tracing.start({ screenshots: true, snapshots: true });
   }
 
   return {
     context,
+    enableNetworkBlocking,
     close: async () => {
       if (options.tracingEnabled) {
         const tracePath = join(process.cwd(), 'artifacts', `trace-${Date.now()}.zip`);
@@ -103,5 +110,39 @@ async function launchReusedContext(options: LaunchOptions, storageStatePath: str
       await context.close();
       await browser.close();
     },
+  };
+}
+
+const TRACKING_DOMAIN_PATTERNS = [
+  'google-analytics',
+  'googletagmanager',
+  'sentry',
+  'usercentrics',
+];
+
+function configureNetworkBlocking(context: BrowserContext, shouldBlock: boolean): () => void {
+  if (!shouldBlock) {
+    return () => undefined;
+  }
+
+  let blockingEnabled = false;
+
+  void context.route('**/*', async (route) => {
+    if (!blockingEnabled) {
+      await route.continue();
+      return;
+    }
+
+    const requestUrl = route.request().url();
+    if (TRACKING_DOMAIN_PATTERNS.some((pattern) => requestUrl.includes(pattern))) {
+      await route.abort();
+      return;
+    }
+
+    await route.continue();
+  });
+
+  return () => {
+    blockingEnabled = true;
   };
 }

@@ -18,6 +18,7 @@ export interface LaunchOptions {
   readonly slowMo: number;
   readonly tracingEnabled: boolean;
   readonly preserveUserDataDir: boolean;
+  readonly blockTrackingDomains: boolean;
 }
 
 export const defaultLaunchOptions: LaunchOptions = {
@@ -25,6 +26,7 @@ export const defaultLaunchOptions: LaunchOptions = {
   slowMo: 75,
   tracingEnabled: true,
   preserveUserDataDir: false,
+  blockTrackingDomains: true,
 };
 
 export const WATCHLIST_PATH = '/watchlist';

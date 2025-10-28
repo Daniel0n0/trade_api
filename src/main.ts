@@ -1,6 +1,6 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Page } from 'playwright';
+import type { Frame, Page } from 'playwright';
 
 import { launchPersistentBrowser, type LaunchMode } from './browser.js';
 import { ensureLoggedIn } from './login.js';
@@ -17,7 +17,17 @@ async function run(): Promise<void> {
   const storageStatePath = join(process.cwd(), 'state.json');
   const mode: LaunchMode = existsSync(storageStatePath) ? 'reuse' : 'bootstrap';
 
-  const { context, close } = await launchPersistentBrowser({ mode, storageStatePath });
+  const disableNetworkBlockingEnv = (process.env.ROBINHOOD_DISABLE_NETWORK_BLOCKING ?? '').toLowerCase();
+  const blockTrackingDomains =
+    disableNetworkBlockingEnv === ''
+      ? undefined
+      : !['1', 'true', 'yes', 'on'].includes(disableNetworkBlockingEnv);
+
+  const { context, close, enableNetworkBlocking } = await launchPersistentBrowser({
+    mode,
+    storageStatePath,
+    ...(blockTrackingDomains === undefined ? {} : { blockTrackingDomains }),
+  });
   const page = context.pages()[0] ?? (await context.newPage());
 
   attachPageObservers(page);
@@ -52,6 +62,26 @@ async function run(): Promise<void> {
       throw new Error(
         `La sesión autenticada redirigió a una URL inesperada (${currentUrl}). Se esperaba legend/layout, home o dashboard.`,
       );
+    }
+
+    const legendLayoutPattern = /legend\/layout/;
+    if (legendLayoutPattern.test(currentUrl)) {
+      enableNetworkBlocking();
+    } else {
+      const handleFrameNavigated = (frame: Frame) => {
+        if (frame !== page.mainFrame()) {
+          return;
+        }
+
+        if (!legendLayoutPattern.test(frame.url())) {
+          return;
+        }
+
+        enableNetworkBlocking();
+        page.off('framenavigated', handleFrameNavigated);
+      };
+
+      page.on('framenavigated', handleFrameNavigated);
     }
 
     await openModuleTabs(context);
