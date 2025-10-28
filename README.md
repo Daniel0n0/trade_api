@@ -112,6 +112,7 @@ This repository currently serves as a placeholder for developing a Playwright-ba
    - Store credentials securely outside of the codebase (e.g., OS keychain, password manager).
    - Perform login manually and persist the authenticated profile in a dedicated user-data directory.
    - Handle captchas and sensitive prompts manually; avoid logging sensitive tokens or cookies.
+   - Prefer public market data feeds or official brokerage APIs (por ejemplo Alpaca o IBKR) para obtener señales, y limita la automatización en Robinhood a observación manual sin ejecución de órdenes.
 3. **Technical Architecture**
    - Stack: Node.js LTS, TypeScript, Playwright.
    - Provide a CLI entry point (e.g., `pnpm start:robinhood`) that creates or reuses a persistent browser context with `headless: false` and `viewport: null` to keep the window visible.
@@ -168,6 +169,19 @@ This repository currently serves as a placeholder for developing a Playwright-ba
     - Comprehensive README with setup instructions and login guidance.
     - Dedicated persistent profile directory (e.g., `~/.robinhood-profile`).
     - Optional `.env.example` template without embedded credentials.
+
+## Data Ingestion vs. Order Execution
+
+- Mantén desacoplados los componentes que generan señales (ingestión de datos) y los que actúan sobre ellas (ejecución de órdenes). La automatización de Robinhood debe limitarse a mostrar paneles bajo supervisión manual.
+- Ejecuta la ingestión de datos desde fuentes oficiales con APIs soportadas (por ejemplo, Alpaca o Interactive Brokers) en procesos separados o servicios que no tengan acceso a las credenciales de Robinhood.
+- Si necesitas enviar órdenes automáticas, hazlo únicamente con corredores que ofrezcan APIs oficiales y cumplan con requisitos regulatorios; evita usar Robinhood para scraping intensivo o ejecuciones no autorizadas.
+
+## Desactivar módulos de scraping
+
+Para usar únicamente la vista manual del navegador:
+
+1. Abre `src/config.ts` y deja el arreglo `MODULES` vacío (`export const MODULES: readonly ModuleDefinition[] = [];`) o comenta las entradas que no quieras abrir.
+2. Guarda los cambios y vuelve a ejecutar `npm run start:robinhood`; la CLI omitirá la apertura de pestañas adicionales y solo cargará el tablero principal para observación manual.
 
 
 
