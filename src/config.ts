@@ -4,9 +4,11 @@ import { homedir } from 'node:os';
 export const ROBINHOOD_URL = 'https://robinhood.com/';
 export const ROBINHOOD_ENTRY_URL = 'https://robinhood.com/us/en/';
 export const ROBINHOOD_LOGIN_URL = 'https://robinhood.com/login/';
-export const ROBINHOOD_HOME_URL =
-  'https://robinhood.com/legend/layout?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT';
+const ROBINHOOD_LEGEND_LAYOUT_BASE = 'https://robinhood.com/legend/layout';
+export const ROBINHOOD_HOME_URL = `${ROBINHOOD_LEGEND_LAYOUT_BASE}/`;
 export const ROBINHOOD_HOME_URL_GLOB = `${ROBINHOOD_HOME_URL}**` as const;
+export const isRobinhoodHomeUrl = (url: string): boolean =>
+  url.startsWith(ROBINHOOD_HOME_URL) || url === ROBINHOOD_LEGEND_LAYOUT_BASE;
 export const ROBINHOOD_LOGIN_URL_GLOB = `${ROBINHOOD_LOGIN_URL}**` as const;
 // Extended to allow for slower redirects in environments with higher latency.
 export const LANDING_REDIRECT_TIMEOUT_MS = 45_000;
