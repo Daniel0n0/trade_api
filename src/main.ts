@@ -1,9 +1,9 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Frame, Page } from 'playwright';
+import type { Page } from 'playwright';
 
 import { launchPersistentBrowser, type LaunchMode } from './browser.js';
-import { ensureLoggedIn } from './login.js';
+import { ensureLoggedIn, FALLBACK_STOCK_URL } from './login.js';
 import { navigateToPortfolio, navigateToWatchlist } from './nav.js';
 import { openModuleTabs } from './modules.js';
 import {
@@ -11,7 +11,6 @@ import {
   ROBINHOOD_HOME_URL,
   SessionState,
   HOME_REDIRECT_TIMEOUT_MS,
-  isRobinhoodHomeUrl,
 } from './config.js';
 
 async function run(): Promise<void> {
@@ -39,8 +38,8 @@ async function run(): Promise<void> {
       await verifyStoredSession(page);
     }
 
-    const sessionState = await ensureLoggedIn(page);
-    if (sessionState !== SessionState.Authenticated) {
+    const { state: sessionState, uiReady } = await ensureLoggedIn(page);
+    if (sessionState !== SessionState.Authenticated || uiReady === undefined) {
       throw new Error(`Unable to confirm authenticated session (state: ${sessionState}).`);
     }
 
@@ -58,31 +57,23 @@ async function run(): Promise<void> {
         .catch(() => undefined);
     }
 
-    const currentUrl = page.url();
-    if (!validEntryPattern.test(currentUrl)) {
+    const readyUrl = uiReady.url;
+    const readyFallback = uiReady.kind === 'fallback' && readyUrl.startsWith(FALLBACK_STOCK_URL);
+    if (!validEntryPattern.test(readyUrl) && !readyFallback) {
       throw new Error(
-        `La sesión autenticada redirigió a una URL inesperada (${currentUrl}). Se esperaba legend/layout, home o dashboard.`,
+        `La sesión autenticada redirigió a una URL inesperada (${readyUrl}). Se esperaba legend/layout, home, dashboard o la vista fallback estable.`,
       );
     }
 
-    if (isRobinhoodHomeUrl(currentUrl)) {
-      enableNetworkBlocking();
-    } else {
-      const handleFrameNavigated = (frame: Frame) => {
-        if (frame !== page.mainFrame()) {
-          return;
-        }
-
-        if (!isRobinhoodHomeUrl(frame.url())) {
-          return;
-        }
-
-        enableNetworkBlocking();
-        page.off('framenavigated', handleFrameNavigated);
-      };
-
-      page.on('framenavigated', handleFrameNavigated);
+    const currentUrl = page.url();
+    const currentFallback = uiReady.kind === 'fallback' && currentUrl.startsWith(FALLBACK_STOCK_URL);
+    if (!validEntryPattern.test(currentUrl) && !currentFallback) {
+      throw new Error(
+        `La sesión autenticada redirigió a una URL inesperada (${currentUrl}). Se esperaba legend/layout, home, dashboard o la vista fallback estable.`,
+      );
     }
+
+    enableNetworkBlocking();
 
     await openModuleTabs(context);
 
