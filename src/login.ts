@@ -6,8 +6,8 @@ import {
   HOME_REDIRECT_TIMEOUT_MS,
   POST_AUTH_MODULE_DELAY_MS,
   ROBINHOOD_ENTRY_URL,
-  ROBINHOOD_HOME_URL,
   ROBINHOOD_HOME_URL_GLOB,
+  isRobinhoodHomeUrl,
   ROBINHOOD_LOGIN_URL,
   ROBINHOOD_LOGIN_URL_GLOB,
   SESSION_MARKERS,
@@ -41,7 +41,7 @@ export async function ensureLoggedIn(page: Page): Promise<SessionState> {
       page.waitForTimeout(LANDING_REDIRECT_TIMEOUT_MS).then(() => 'timeout' as const),
     ])) ?? 'timeout';
 
-  if (landingOutcome === 'home' || page.url().startsWith(ROBINHOOD_HOME_URL)) {
+  if (landingOutcome === 'home' || isRobinhoodHomeUrl(page.url())) {
     await waitForHomeDashboard(page);
     return SessionState.Authenticated;
   }

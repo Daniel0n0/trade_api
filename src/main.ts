@@ -11,6 +11,7 @@ import {
   ROBINHOOD_HOME_URL,
   SessionState,
   HOME_REDIRECT_TIMEOUT_MS,
+  isRobinhoodHomeUrl,
 } from './config.js';
 
 async function run(): Promise<void> {
@@ -64,8 +65,7 @@ async function run(): Promise<void> {
       );
     }
 
-    const legendLayoutPattern = /legend\/layout/;
-    if (legendLayoutPattern.test(currentUrl)) {
+    if (isRobinhoodHomeUrl(currentUrl)) {
       enableNetworkBlocking();
     } else {
       const handleFrameNavigated = (frame: Frame) => {
@@ -73,7 +73,7 @@ async function run(): Promise<void> {
           return;
         }
 
-        if (!legendLayoutPattern.test(frame.url())) {
+        if (!isRobinhoodHomeUrl(frame.url())) {
           return;
         }
 
@@ -121,7 +121,8 @@ function attachPageObservers(page: Page): void {
 async function verifyStoredSession(page: Page): Promise<void> {
   const dashboardUrl = new URL('/dashboard', ROBINHOOD_URL).toString();
   const homeUrl = new URL('/home', ROBINHOOD_URL).toString();
-  const expectedUrls = [dashboardUrl, homeUrl, ROBINHOOD_HOME_URL];
+  const legendLayoutBaseUrl = ROBINHOOD_HOME_URL.replace(/\/$/, '');
+  const expectedUrls = [dashboardUrl, homeUrl, legendLayoutBaseUrl, ROBINHOOD_HOME_URL];
 
   await page.goto(dashboardUrl, { waitUntil: 'domcontentloaded' });
   let currentUrl = page.url();
