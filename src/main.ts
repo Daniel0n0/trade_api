@@ -1,22 +1,35 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Page } from 'playwright';
 
-import { launchPersistentBrowser } from './browser.js';
+import { launchPersistentBrowser, type LaunchMode } from './browser.js';
 import { ensureLoggedIn } from './login.js';
 import { navigateToPortfolio, navigateToWatchlist } from './nav.js';
 import { openModuleTabs } from './modules.js';
-import { SessionState } from './config.js';
+import { ROBINHOOD_URL, ROBINHOOD_HOME_URL, SessionState } from './config.js';
 
 async function run(): Promise<void> {
-  const { context, close } = await launchPersistentBrowser();
+  const storageStatePath = join(process.cwd(), 'state.json');
+  const mode: LaunchMode = existsSync(storageStatePath) ? 'reuse' : 'bootstrap';
+
+  const { context, close } = await launchPersistentBrowser({ mode, storageStatePath });
   const page = context.pages()[0] ?? (await context.newPage());
 
   attachPageObservers(page);
   context.on('page', attachPageObservers);
 
   try {
+    if (mode === 'reuse') {
+      await verifyStoredSession(page);
+    }
+
     const sessionState = await ensureLoggedIn(page);
     if (sessionState !== SessionState.Authenticated) {
       throw new Error(`Unable to confirm authenticated session (state: ${sessionState}).`);
+    }
+
+    if (mode === 'bootstrap') {
+      await context.storageState({ path: storageStatePath });
     }
 
     await openModuleTabs(context);
@@ -51,6 +64,26 @@ function attachPageObservers(page: Page): void {
     console.warn(`Request failed [${request.failure()?.errorText ?? 'unknown'}]: ${request.url()}`);
     /* eslint-enable no-console */
   });
+}
+
+async function verifyStoredSession(page: Page): Promise<void> {
+  const dashboardUrl = new URL('/dashboard', ROBINHOOD_URL).toString();
+  const homeUrl = new URL('/home', ROBINHOOD_URL).toString();
+  const expectedUrls = [dashboardUrl, homeUrl, ROBINHOOD_HOME_URL];
+
+  await page.goto(dashboardUrl, { waitUntil: 'domcontentloaded' });
+  let currentUrl = page.url();
+
+  if (!expectedUrls.some((expected) => currentUrl.startsWith(expected))) {
+    await page.goto(homeUrl, { waitUntil: 'domcontentloaded' });
+    currentUrl = page.url();
+  }
+
+  if (!expectedUrls.some((expected) => currentUrl.startsWith(expected))) {
+    throw new Error(
+      `El estado almacenado redirigió a una URL inesperada (${currentUrl}). Refresca state.json manualmente.`,
+    );
+  }
 }
 
 await run();

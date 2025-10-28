@@ -32,6 +32,25 @@ through the login flow when needed.
 npm run start:robinhood
 ```
 
+### Session bootstrap and reuse
+
+- On the first run the script launches a bootstrap browser profile that expects you to authenticate
+  manually. Once the home dashboard loads the Playwright context is serialized to `state.json` in the
+  repository root so subsequent executions can reuse the stored cookies.
+- When `state.json` is present, the CLI automatically spins up a fresh browser context that loads the
+  saved state before navigating to `/dashboard`. The run stops immediately if the page redirects to an
+  unexpected location so you can refresh the session.
+
+Refresh the storage state manually at any time with:
+
+```bash
+rm -f state.json && npm run start:robinhood
+```
+
+If Robinhood expires the session (for example after password changes or prolonged inactivity), delete
+`state.json` and run the command above again to rebuild it. The CLI will fall back to the manual
+bootstrap flow whenever the file is missing.
+
 1. A Chrome/Chromium window opens using a dedicated profile stored at
    `~/.robinhood-playwright-profile` (configurable in `src/config.ts`). The directory is deleted
    automatically when the automation closes the browser so no session or cache data remain on disk.
