@@ -64,6 +64,10 @@ bootstrap flow whenever the file is missing.
    the configured SPY/SPX modules, and then visits the portfolio and watchlist pages. The browser
    remains visible until you close it manually.
 
+> ℹ️ **Network blocking timing:** Tracking domains are blocked only after the script confirms that
+> the post-login UI is ready (either the home dashboard or the `/stocks/SPY` fallback view). This
+> avoids interrupting any critical requests that must run during the initial login sequence.
+
 ### Resetting the Profile
 
 Normally no manual cleanup is required because the profile directory is removed at the end of each

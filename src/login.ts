@@ -15,11 +15,21 @@ import {
   isRobinhoodHomeUrl,
 } from './config.js';
 
-export async function ensureLoggedIn(page: Page): Promise<SessionState> {
+export interface AuthenticatedUiCheckpoint {
+  readonly kind: 'home' | 'fallback';
+  readonly url: string;
+}
+
+export interface LoginResult {
+  readonly state: SessionState;
+  readonly uiReady?: AuthenticatedUiCheckpoint;
+}
+
+export async function ensureLoggedIn(page: Page): Promise<LoginResult> {
   const currentState = await detectSessionState(page);
   if (currentState === SessionState.Authenticated) {
-    await waitForHomeDashboard(page);
-    return currentState;
+    const uiReady = await waitForHomeDashboard(page);
+    return { state: currentState, uiReady };
   }
 
   const loginRedirectWatcher = page
@@ -42,8 +52,8 @@ export async function ensureLoggedIn(page: Page): Promise<SessionState> {
     ])) ?? 'timeout';
 
   if (landingOutcome === 'home' || isRobinhoodHomeUrl(page.url())) {
-    await waitForHomeDashboard(page);
-    return SessionState.Authenticated;
+    const uiReady = await waitForHomeDashboard(page);
+    return { state: SessionState.Authenticated, uiReady };
   }
 
   if (landingOutcome === 'login' || page.url().startsWith(ROBINHOOD_LOGIN_URL)) {
@@ -75,7 +85,7 @@ async function ensureLoginScreenReady(page: Page): Promise<void> {
   await loginButton.first().waitFor({ state: 'visible', timeout: 5_000 });
 }
 
-async function waitForManualLogin(page: Page): Promise<SessionState> {
+async function waitForManualLogin(page: Page): Promise<LoginResult> {
   /* eslint-disable no-console */
   console.log('\nManual login required.');
   console.log('Completa las credenciales y cualquier MFA en la ventana del navegador.');
@@ -103,8 +113,8 @@ async function waitForManualLogin(page: Page): Promise<SessionState> {
       console.log(`Nueva URL: ${page.url()}`);
       /* eslint-enable no-console */
 
-      await waitForHomeDashboard(page);
-      return SessionState.Authenticated;
+      const uiReady = await waitForHomeDashboard(page);
+      return { state: SessionState.Authenticated, uiReady };
     }
 
     if (page.isClosed()) {
@@ -113,8 +123,8 @@ async function waitForManualLogin(page: Page): Promise<SessionState> {
 
     const state = await detectSessionState(page);
     if (state === SessionState.Authenticated) {
-      await waitForHomeDashboard(page);
-      return state;
+      const uiReady = await waitForHomeDashboard(page);
+      return { state, uiReady };
     }
 
     /* eslint-disable no-console */
@@ -125,7 +135,7 @@ async function waitForManualLogin(page: Page): Promise<SessionState> {
   }
 }
 
-async function waitForHomeDashboard(page: Page): Promise<void> {
+async function waitForHomeDashboard(page: Page): Promise<AuthenticatedUiCheckpoint> {
   /* eslint-disable no-console */
   console.log('Esperando a que se cargue el home de Robinhood...');
   /* eslint-enable no-console */
@@ -138,15 +148,21 @@ async function waitForHomeDashboard(page: Page): Promise<void> {
 
   const homeDetected = await isAuthenticatedView(page, { timeout: HOME_REDIRECT_TIMEOUT_MS });
 
+  let checkpoint: AuthenticatedUiCheckpoint;
+
   if (!homeDetected) {
     /* eslint-disable no-console */
     console.log('No se detectó el home. Navegando a la vista estable /stocks/SPY como fallback...');
     /* eslint-enable no-console */
 
     await navigateToFallbackStock(page);
+    checkpoint = { kind: 'fallback', url: page.url() };
+  } else {
+    checkpoint = { kind: 'home', url: page.url() };
   }
 
   await page.waitForTimeout(POST_AUTH_MODULE_DELAY_MS);
+  return checkpoint;
 }
 
 const AUTHENTICATED_VIEW_SELECTORS = [
@@ -157,7 +173,7 @@ const AUTHENTICATED_VIEW_SELECTORS = [
   'text=/Buying Power|Net Account Value/i',
 ] as const;
 
-const FALLBACK_STOCK_URL = new URL('/stocks/SPY', ROBINHOOD_URL).toString();
+export const FALLBACK_STOCK_URL = new URL('/stocks/SPY', ROBINHOOD_URL).toString();
 
 const FALLBACK_STOCK_SELECTORS = [
   'role=heading[name=/SPY/i]',
