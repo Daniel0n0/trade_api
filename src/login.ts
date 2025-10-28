@@ -7,13 +7,13 @@ import {
   POST_AUTH_MODULE_DELAY_MS,
   ROBINHOOD_ENTRY_URL,
   ROBINHOOD_HOME_URL_GLOB,
-  isRobinhoodHomeUrl,
   ROBINHOOD_LOGIN_URL,
   ROBINHOOD_LOGIN_URL_GLOB,
+  ROBINHOOD_URL,
   SESSION_MARKERS,
   SessionState,
+  isRobinhoodHomeUrl,
 } from './config.js';
-import { waitForAny } from './waitForAny.js';
 
 export async function ensureLoggedIn(page: Page): Promise<SessionState> {
   const currentState = await detectSessionState(page);
@@ -63,13 +63,7 @@ export async function detectSessionState(page: Page): Promise<SessionState> {
     return SessionState.RequiresLogin;
   }
 
-  const headingLocator = page.getByRole('heading', SESSION_MARKERS.portfolioHeadingRole).first();
-  const accountValueLocator = page.getByText(SESSION_MARKERS.accountValueText, { exact: false }).first();
-  const homeVisible = await waitForAny(headingLocator, accountValueLocator, { timeout: 5_000 })
-    .then(() => true)
-    .catch(() => false);
-
-  if (homeVisible) {
+  if (await isAuthenticatedView(page)) {
     return SessionState.Authenticated;
   }
 
@@ -136,20 +130,103 @@ async function waitForHomeDashboard(page: Page): Promise<void> {
   console.log('Esperando a que se cargue el home de Robinhood...');
   /* eslint-enable no-console */
 
-  const reachedHome = await page
+  await page
     .waitForURL(ROBINHOOD_HOME_URL_GLOB, { timeout: HOME_REDIRECT_TIMEOUT_MS })
-    .then(() => true)
-    .catch(() => false);
-
-  if (!reachedHome) {
-    throw new Error('No se pudo confirmar la redirección al home de Robinhood tras iniciar sesión.');
-  }
+    .catch(() => null);
 
   await page.waitForLoadState('networkidle', { timeout: HOME_REDIRECT_TIMEOUT_MS });
-  await waitForAny(
-    page.getByRole('heading', SESSION_MARKERS.portfolioHeadingRole).first(),
-    page.getByText(SESSION_MARKERS.accountValueText, { exact: false }).first(),
-    { timeout: HOME_REDIRECT_TIMEOUT_MS },
-  );
+
+  const homeDetected = await isAuthenticatedView(page, { timeout: HOME_REDIRECT_TIMEOUT_MS });
+
+  if (!homeDetected) {
+    /* eslint-disable no-console */
+    console.log('No se detectó el home. Navegando a la vista estable /stocks/SPY como fallback...');
+    /* eslint-enable no-console */
+
+    await navigateToFallbackStock(page);
+  }
+
   await page.waitForTimeout(POST_AUTH_MODULE_DELAY_MS);
+}
+
+const AUTHENTICATED_VIEW_SELECTORS = [
+  'role=button[name=/account/i]',
+  'role=button[name=/log out/i]',
+  'role=menuitem[name=/log out/i]',
+  'role=heading[name=/portfolio|account|value/i]',
+  'text=/Buying Power|Net Account Value/i',
+] as const;
+
+const FALLBACK_STOCK_URL = new URL('/stocks/SPY', ROBINHOOD_URL).toString();
+
+const FALLBACK_STOCK_SELECTORS = [
+  'role=heading[name=/SPY/i]',
+  'text=/SPDR\\s+S&P\\s+500/i',
+  'text=/\\bSPY\\b/i',
+] as const;
+
+interface AuthenticatedViewOptions {
+  readonly timeout?: number;
+}
+
+type WaitForSelectorOptions = Parameters<Page['waitForSelector']>[1];
+type WaitForSelectorState = WaitForSelectorOptions extends { state?: infer State }
+  ? State
+  : Parameters<Page['waitForSelector']>[1] extends { state?: infer State }
+    ? State
+    : never;
+
+interface WaitForAnySelectorOptions {
+  readonly timeout?: number;
+  readonly state?: WaitForSelectorState;
+}
+
+async function isAuthenticatedView(
+  page: Page,
+  { timeout = 5_000 }: AuthenticatedViewOptions = {},
+): Promise<boolean> {
+  try {
+    await waitForAnySelector(page, AUTHENTICATED_VIEW_SELECTORS, { timeout });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function navigateToFallbackStock(page: Page): Promise<void> {
+  await page.goto(FALLBACK_STOCK_URL, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle', { timeout: HOME_REDIRECT_TIMEOUT_MS });
+  await waitForAnySelector(page, FALLBACK_STOCK_SELECTORS, { timeout: HOME_REDIRECT_TIMEOUT_MS });
+}
+
+async function waitForAnySelector(
+  page: Page,
+  selectors: readonly string[],
+  options: WaitForAnySelectorOptions = {},
+): Promise<string> {
+  if (selectors.length === 0) {
+    throw new Error('At least one selector must be provided.');
+  }
+
+  const { timeout = HOME_REDIRECT_TIMEOUT_MS, state = 'visible' } = options;
+
+  const watchers = selectors.map((selector) =>
+    page
+      .waitForSelector(selector, { timeout, state })
+      .then(() => selector)
+      .catch(() => null),
+  );
+
+  const winner = await Promise.race(watchers);
+  if (winner) {
+    return winner;
+  }
+
+  const resolved = await Promise.all(watchers);
+  const firstMatch = resolved.find((selector): selector is string => selector !== null);
+  if (firstMatch) {
+    return firstMatch;
+  }
+
+  throw new Error('None of the selectors became visible before the timeout elapsed.');
 }
