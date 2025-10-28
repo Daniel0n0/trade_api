@@ -8,8 +8,9 @@ export const ROBINHOOD_HOME_URL =
   'https://robinhood.com/legend/layout?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT';
 export const ROBINHOOD_HOME_URL_GLOB = `${ROBINHOOD_HOME_URL}**` as const;
 export const ROBINHOOD_LOGIN_URL_GLOB = `${ROBINHOOD_LOGIN_URL}**` as const;
-export const LANDING_REDIRECT_TIMEOUT_MS = 2_000;
-export const HOME_REDIRECT_TIMEOUT_MS = 30_000;
+// Extended to allow for slower redirects in environments with higher latency.
+export const LANDING_REDIRECT_TIMEOUT_MS = 45_000;
+export const HOME_REDIRECT_TIMEOUT_MS = 45_000;
 export const POST_AUTH_MODULE_DELAY_MS = 2_000;
 
 export interface LaunchOptions {
@@ -38,10 +39,12 @@ export enum SessionState {
 }
 
 export const SESSION_MARKERS = {
-  dashboard: 'div[data-testid="homepage-dashboard"]',
-  watchlist: '[data-testid="watchlist"]',
+  portfolioHeadingRole: { name: /portfolio|account|value/i } as const,
+  accountValueText: /Buying Power|Net Account Value/i,
+  watchlistHeadingRole: { name: /watchlist/i } as const,
+  watchlistText: /Watchlist|Lists/i,
   loginButtonRole: { name: /log in/i } as const,
-};
+} as const;
 
 export interface ModuleDefinition {
   readonly name: string;

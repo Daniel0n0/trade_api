@@ -13,6 +13,7 @@ import {
   SESSION_MARKERS,
   SessionState,
 } from './config.js';
+import { waitForAny } from './waitForAny.js';
 
 export async function ensureLoggedIn(page: Page): Promise<SessionState> {
   const currentState = await detectSessionState(page);
@@ -31,6 +32,7 @@ export async function ensureLoggedIn(page: Page): Promise<SessionState> {
     .catch(() => null);
 
   await page.goto(ROBINHOOD_ENTRY_URL, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle', { timeout: LANDING_REDIRECT_TIMEOUT_MS });
 
   const landingOutcome =
     (await Promise.race([
@@ -50,6 +52,7 @@ export async function ensureLoggedIn(page: Page): Promise<SessionState> {
   }
 
   await page.goto(ROBINHOOD_LOGIN_URL, { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle', { timeout: LANDING_REDIRECT_TIMEOUT_MS });
   await ensureLoginScreenReady(page);
   return waitForManualLogin(page);
 }
@@ -60,8 +63,13 @@ export async function detectSessionState(page: Page): Promise<SessionState> {
     return SessionState.RequiresLogin;
   }
 
-  const dashboardLocator = page.locator(SESSION_MARKERS.dashboard);
-  if (await dashboardLocator.first().isVisible({ timeout: 2_000 }).catch(() => false)) {
+  const headingLocator = page.getByRole('heading', SESSION_MARKERS.portfolioHeadingRole).first();
+  const accountValueLocator = page.getByText(SESSION_MARKERS.accountValueText, { exact: false }).first();
+  const homeVisible = await waitForAny(headingLocator, accountValueLocator, { timeout: 5_000 })
+    .then(() => true)
+    .catch(() => false);
+
+  if (homeVisible) {
     return SessionState.Authenticated;
   }
 
@@ -137,5 +145,11 @@ async function waitForHomeDashboard(page: Page): Promise<void> {
     throw new Error('No se pudo confirmar la redirección al home de Robinhood tras iniciar sesión.');
   }
 
+  await page.waitForLoadState('networkidle', { timeout: HOME_REDIRECT_TIMEOUT_MS });
+  await waitForAny(
+    page.getByRole('heading', SESSION_MARKERS.portfolioHeadingRole).first(),
+    page.getByText(SESSION_MARKERS.accountValueText, { exact: false }).first(),
+    { timeout: HOME_REDIRECT_TIMEOUT_MS },
+  );
   await page.waitForTimeout(POST_AUTH_MODULE_DELAY_MS);
 }
