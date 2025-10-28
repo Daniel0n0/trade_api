@@ -63,6 +63,10 @@ interface EvaluateResult {
 }
 
 const POLL_INTERVAL_MS = 5_000;
+const SNAPSHOT_MAX_ATTEMPTS = 3;
+const MODULE_LAYOUT_SEGMENT = '/legend/layout/6bb41212-dbb4-4dc0-a0a7-7a75e4aaf9da';
+const LAYOUT_READY_TIMEOUT_MS = 30_000;
+const SYMBOL_VISIBILITY_TIMEOUT_MS = 30_000;
 
 const createPattern = (pattern: RegExp): SerializedPattern => ({
   source: pattern.source,
@@ -253,6 +257,14 @@ export async function runSpyDailyHourly15mModule(page: Page): Promise<void> {
   /* eslint-enable no-console */
 
   await page.waitForLoadState('domcontentloaded');
+  await page.waitForURL((url) => url.toString().includes(MODULE_LAYOUT_SEGMENT), {
+    timeout: LAYOUT_READY_TIMEOUT_MS,
+    waitUntil: 'load',
+  });
+  await page.waitForSelector('text=/SPY|S&P 500/i', {
+    state: 'visible',
+    timeout: SYMBOL_VISIBILITY_TIMEOUT_MS,
+  });
 
   const previousValues = new Map<string, string | null>();
   const seenContainers = new Set<FrameKey>();
@@ -265,7 +277,12 @@ export async function runSpyDailyHourly15mModule(page: Page): Promise<void> {
     }
 
     try {
-      const snapshot = await page.evaluate<EvaluateResult | null, EvaluateOptions>(
+      let attempt = 1;
+      let fallbackTriggered = false;
+      let snapshot: EvaluateResult | null = null;
+
+      while (attempt <= SNAPSHOT_MAX_ATTEMPTS) {
+        snapshot = await page.evaluate<EvaluateResult | null, EvaluateOptions>(
         ({ frames, metrics, keywords }) => {
           const makeRegExp = (pattern: SerializedPattern): RegExp | null => {
             try {
@@ -750,7 +767,41 @@ export async function runSpyDailyHourly15mModule(page: Page): Promise<void> {
           metrics: METRIC_DEFINITIONS,
           keywords: INDICATOR_KEYWORDS,
         },
-      );
+        );
+
+        if (!snapshot) {
+          break;
+        }
+
+        const hasMissingContainers = snapshot.frames.some((frame) => !frame.containerFound);
+
+        if (!hasMissingContainers || attempt === SNAPSHOT_MAX_ATTEMPTS) {
+          if (fallbackTriggered) {
+            /* eslint-disable no-console */
+            if (hasMissingContainers) {
+              console.warn(
+                `${logPrefix} Fallback agotado tras ${attempt} intentos sin detectar todos los contenedores.`,
+              );
+            } else {
+              console.warn(
+                `${logPrefix} Fallback aplicado, contenedores detectados en el intento ${attempt}.`,
+              );
+            }
+            /* eslint-enable no-console */
+          }
+          break;
+        }
+
+        fallbackTriggered = true;
+        const delayMs = 1_000 * attempt;
+        /* eslint-disable no-console */
+        console.warn(
+          `${logPrefix} No se detectaron todos los contenedores (intento ${attempt}/${SNAPSHOT_MAX_ATTEMPTS}). Reintentando en ${delayMs} ms...`,
+        );
+        /* eslint-enable no-console */
+        await page.waitForTimeout(delayMs);
+        attempt += 1;
+      }
 
       if (!snapshot) {
         return;

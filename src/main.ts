@@ -6,7 +6,12 @@ import { launchPersistentBrowser, type LaunchMode } from './browser.js';
 import { ensureLoggedIn } from './login.js';
 import { navigateToPortfolio, navigateToWatchlist } from './nav.js';
 import { openModuleTabs } from './modules.js';
-import { ROBINHOOD_URL, ROBINHOOD_HOME_URL, SessionState } from './config.js';
+import {
+  ROBINHOOD_URL,
+  ROBINHOOD_HOME_URL,
+  SessionState,
+  HOME_REDIRECT_TIMEOUT_MS,
+} from './config.js';
 
 async function run(): Promise<void> {
   const storageStatePath = join(process.cwd(), 'state.json');
@@ -30,6 +35,23 @@ async function run(): Promise<void> {
 
     if (mode === 'bootstrap') {
       await context.storageState({ path: storageStatePath });
+    }
+
+    const validEntryPattern = /legend\/layout|home|dashboard/;
+    if (!validEntryPattern.test(page.url())) {
+      await page
+        .waitForURL(validEntryPattern, {
+          timeout: HOME_REDIRECT_TIMEOUT_MS,
+          waitUntil: 'domcontentloaded',
+        })
+        .catch(() => undefined);
+    }
+
+    const currentUrl = page.url();
+    if (!validEntryPattern.test(currentUrl)) {
+      throw new Error(
+        `La sesión autenticada redirigió a una URL inesperada (${currentUrl}). Se esperaba legend/layout, home o dashboard.`,
+      );
     }
 
     await openModuleTabs(context);
