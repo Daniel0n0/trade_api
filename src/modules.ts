@@ -75,7 +75,9 @@ async function ensureNoModalConsent(page: Page): Promise<void> {
   }
 }
 
-export async function openModuleTabs(context: BrowserContext): Promise<void> {
+export async function openModuleTabs(context: BrowserContext): Promise<Page[]> {
+  const openedPages: Page[] = [];
+
   for (const module of MODULES) {
     if (!module.url) {
       /* eslint-disable no-console */
@@ -85,6 +87,7 @@ export async function openModuleTabs(context: BrowserContext): Promise<void> {
     }
 
     const page = await context.newPage();
+    openedPages.push(page);
 
     /* eslint-disable no-console */
     console.log(`Abriendo módulo "${module.name}" (${module.description})...`);
@@ -105,4 +108,6 @@ export async function openModuleTabs(context: BrowserContext): Promise<void> {
       });
     }
   }
+
+  return openedPages;
 }
