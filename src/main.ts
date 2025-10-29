@@ -1,95 +1,35 @@
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import type { Page } from 'playwright';
+import { chromium } from 'playwright';
 
-import { launchPersistentBrowser, type LaunchMode } from './browser.js';
-import { ensureLoggedIn, FALLBACK_STOCK_URL } from './login.js';
-import { navigateToPortfolio, navigateToWatchlist } from './nav.js';
+import { ensureLoggedInByUrlFlow } from './sessionFlow.js';
 import { openModuleTabs } from './modules.js';
-import {
-  ROBINHOOD_URL,
-  ROBINHOOD_HOME_URL,
-  SessionState,
-  HOME_REDIRECT_TIMEOUT_MS,
-} from './config.js';
 
 async function run(): Promise<void> {
-  const storageStatePath = join(process.cwd(), 'state.json');
-  const mode: LaunchMode = existsSync(storageStatePath) ? 'reuse' : 'bootstrap';
-
-  const disableNetworkBlockingEnv = (process.env.ROBINHOOD_DISABLE_NETWORK_BLOCKING ?? '').toLowerCase();
-  const blockTrackingDomains =
-    disableNetworkBlockingEnv === ''
-      ? undefined
-      : !['1', 'true', 'yes', 'on'].includes(disableNetworkBlockingEnv);
-
-  const { context, close, enableNetworkBlocking } = await launchPersistentBrowser({
-    mode,
-    storageStatePath,
-    ...(blockTrackingDomains === undefined ? {} : { blockTrackingDomains }),
-  });
-  const page = context.pages()[0] ?? (await context.newPage());
+  const browser = await chromium.launch({ headless: false });
+  const context = await browser.newContext();
+  const page = await context.newPage();
 
   attachPageObservers(page);
   context.on('page', attachPageObservers);
 
   try {
-    if (mode === 'reuse') {
-      await verifyStoredSession(page);
+    const loggedIn = await ensureLoggedInByUrlFlow(page);
+
+    if (loggedIn) {
+      await openModuleTabs(context);
+      /* eslint-disable no-console */
+      console.log('Sesión detectada. Los módulos se ejecutan en nuevas pestañas.');
+      /* eslint-enable no-console */
+      await page.waitForEvent('close');
+    } else {
+      /* eslint-disable no-console */
+      console.error('No se detectó login después de 3 comprobaciones de 10 segundos.');
+      /* eslint-enable no-console */
     }
-
-    const { state: sessionState, uiReady } = await ensureLoggedIn(page);
-    if (sessionState !== SessionState.Authenticated || uiReady === undefined) {
-      throw new Error(`Unable to confirm authenticated session (state: ${sessionState}).`);
-    }
-
-    if (mode === 'bootstrap') {
-      await context.storageState({ path: storageStatePath });
-    }
-
-    const validEntryPattern = /legend\/layout|home|dashboard/;
-    if (!validEntryPattern.test(page.url())) {
-      await page
-        .waitForURL(validEntryPattern, {
-          timeout: HOME_REDIRECT_TIMEOUT_MS,
-          waitUntil: 'domcontentloaded',
-        })
-        .catch(() => undefined);
-    }
-
-    const readyUrl = uiReady.url;
-    const readyFallback = uiReady.kind === 'fallback' && readyUrl.startsWith(FALLBACK_STOCK_URL);
-    if (!validEntryPattern.test(readyUrl) && !readyFallback) {
-      throw new Error(
-        `La sesión autenticada redirigió a una URL inesperada (${readyUrl}). Se esperaba legend/layout, home, dashboard o la vista fallback estable.`,
-      );
-    }
-
-    const currentUrl = page.url();
-    const currentFallback = uiReady.kind === 'fallback' && currentUrl.startsWith(FALLBACK_STOCK_URL);
-    if (!validEntryPattern.test(currentUrl) && !currentFallback) {
-      throw new Error(
-        `La sesión autenticada redirigió a una URL inesperada (${currentUrl}). Se esperaba legend/layout, home, dashboard o la vista fallback estable.`,
-      );
-    }
-
-    enableNetworkBlocking();
-
-    await openModuleTabs(context);
-
-    await navigateToPortfolio(page);
-    await navigateToWatchlist(page);
-    await openModuleTabs(context);
-
-    /* eslint-disable no-console */
-    console.log('Navigation complete. The browser will remain open until you close it manually.');
-    /* eslint-enable no-console */
-
-    await page.waitForEvent('close');
   } catch (error) {
     await handleError(error);
   } finally {
-    await close();
+    await browser.close();
   }
 }
 
@@ -107,27 +47,6 @@ function attachPageObservers(page: Page): void {
     console.warn(`Request failed [${request.failure()?.errorText ?? 'unknown'}]: ${request.url()}`);
     /* eslint-enable no-console */
   });
-}
-
-async function verifyStoredSession(page: Page): Promise<void> {
-  const dashboardUrl = new URL('/dashboard', ROBINHOOD_URL).toString();
-  const homeUrl = new URL('/home', ROBINHOOD_URL).toString();
-  const legendLayoutBaseUrl = ROBINHOOD_HOME_URL.replace(/\/$/, '');
-  const expectedUrls = [dashboardUrl, homeUrl, legendLayoutBaseUrl, ROBINHOOD_HOME_URL];
-
-  await page.goto(dashboardUrl, { waitUntil: 'domcontentloaded' });
-  let currentUrl = page.url();
-
-  if (!expectedUrls.some((expected) => currentUrl.startsWith(expected))) {
-    await page.goto(homeUrl, { waitUntil: 'domcontentloaded' });
-    currentUrl = page.url();
-  }
-
-  if (!expectedUrls.some((expected) => currentUrl.startsWith(expected))) {
-    throw new Error(
-      `El estado almacenado redirigió a una URL inesperada (${currentUrl}). Refresca state.json manualmente.`,
-    );
-  }
 }
 
 await run();
