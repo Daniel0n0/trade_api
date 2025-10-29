@@ -5,8 +5,11 @@ import { ensureLoggedInByUrlFlow } from './sessionFlow.js';
 import { openModuleTabs } from './modules.js';
 
 async function run(): Promise<void> {
-  const browser = await chromium.launch({ headless: false });
-  const context = await browser.newContext();
+  const browser = await chromium.launch({
+    headless: false,
+    args: ['--start-maximized'],
+  });
+  const context = await browser.newContext({ viewport: null });
   const page = await context.newPage();
 
   attachPageObservers(page);
