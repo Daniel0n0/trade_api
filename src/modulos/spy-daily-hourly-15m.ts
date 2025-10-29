@@ -284,6 +284,10 @@ export async function runSpyDailyHourly15mModule(page: Page): Promise<void> {
       while (attempt <= SNAPSHOT_MAX_ATTEMPTS) {
         snapshot = await page.evaluate<EvaluateResult | null, EvaluateOptions>(
         ({ frames, metrics, keywords }) => {
+          const __name = <T extends (...args: unknown[]) => unknown>(
+            target: T,
+            _value?: string,
+          ): T => target;
           const makeRegExp = (pattern: SerializedPattern): RegExp | null => {
             try {
               return new RegExp(pattern.source, pattern.flags ?? '');
