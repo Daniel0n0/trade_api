@@ -121,6 +121,15 @@ function normalizeDxFeedRow(channel: number, row: DxFeedRow | undefined): Record
     };
   }
 
+  if (row?.eventType === 'TradeETH' || channel === 5) {
+    return {
+      ...base,
+      price: row?.price,
+      dayVolume: row?.dayVolume,
+      session: 'ETH',
+    };
+  }
+
   if (row?.eventType === 'Quote' || channel === 7) {
     return {
       ...base,
@@ -165,10 +174,10 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
       targetPath = writers.ch1 ?? (writers.ch1 = channelLogPath(perChannelPrefix, 1, 'candle'));
     } else if (channel === 3) {
       targetPath = writers.ch3 ?? (writers.ch3 = channelLogPath(perChannelPrefix, 3, 'trade'));
+    } else if (channel === 5) {
+      targetPath = writers.ch5 ?? (writers.ch5 = channelLogPath(perChannelPrefix, 5, 'tradeeth'));
     } else if (channel === 7) {
       targetPath = writers.ch7 ?? (writers.ch7 = channelLogPath(perChannelPrefix, 7, 'quote'));
-    } else if (channel === 5) {
-      targetPath = writers.ch5 ?? (writers.ch5 = channelLogPath(perChannelPrefix, 5));
     } else {
       targetPath = channelLogPath(perChannelPrefix, channel, label);
     }
