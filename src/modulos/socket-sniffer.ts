@@ -568,31 +568,23 @@ export async function runSocketSniffer(
 
   await exposeLogger(page, logPath, prefix);
 
-  const hookScript = buildHookScript();
+  const hookScript = `(${buildHookScript.toString()})({
+    wantedSymbols: ${JSON.stringify(symbols)},
+    maxTextLength: ${MAX_ENTRY_TEXT_LENGTH},
+    hookGuardFlag: ${JSON.stringify(HOOK_GUARD_FLAG)}
+  })`;
 
-  await page.addInitScript(hookScript, {
-    wantedSymbols: symbols,
-    maxTextLength: MAX_ENTRY_TEXT_LENGTH,
-    hookGuardFlag: HOOK_GUARD_FLAG,
-  });
-  await page.evaluate(hookScript, {
-    wantedSymbols: symbols,
-    maxTextLength: MAX_ENTRY_TEXT_LENGTH,
-    hookGuardFlag: HOOK_GUARD_FLAG,
-  });
-  await page.evaluate(hookScript, {
-    wantedSymbols: symbols,
-    maxTextLength: MAX_ENTRY_TEXT_LENGTH,
-    hookGuardFlag: HOOK_GUARD_FLAG,
-  });
+  await page.addInitScript(hookScript);
+  await page.evaluate(hookScript);
+  // Serializa la función y los parámetros para ejecutarla correctamente en el contexto del navegador
+  const hookScriptString = `(${buildHookScript.toString()})({
+    wantedSymbols: ${JSON.stringify(symbols)},
+    maxTextLength: ${MAX_ENTRY_TEXT_LENGTH},
+    hookGuardFlag: ${JSON.stringify(HOOK_GUARD_FLAG)}
+  })`;
 
-  try {
-    await page.reload({ waitUntil: 'domcontentloaded' });
-  } catch (error) {
-    /* eslint-disable no-console */
-    console.warn('[socket-sniffer] No se pudo recargar la página automáticamente:', error);
-    /* eslint-enable no-console */
-  }
+  await page.addInitScript(hookScriptString);
+  await page.evaluate(hookScriptString);
 
   page.once('close', () => {
     /* eslint-disable no-console */
