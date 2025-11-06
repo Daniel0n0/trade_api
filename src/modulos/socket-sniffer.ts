@@ -66,6 +66,11 @@ function createLogPath(prefix: string): string {
   return path.join(ensureArtifactsDir(), `${prefix}.jsonl`);
 }
 
+function channelLogPath(basePrefix: string, channel: number, label?: string): string {
+  const name = label ? `${basePrefix}-ch${channel}-${label}.jsonl` : `${basePrefix}-ch${channel}.jsonl`;
+  return path.join(ensureArtifactsDir(), name);
+}
+
 function normaliseSymbols(input: readonly string[]): readonly string[] {
   return input.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean);
 }
