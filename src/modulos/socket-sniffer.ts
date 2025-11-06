@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Page } from 'playwright';
+import type { Page, WebSocket as PlaywrightWebSocket } from 'playwright';
 
 import { RotatingWriter, type RotatePolicy } from './rotating-writer.js';
 import { BarAggregator } from './timebar.js';
@@ -20,6 +20,25 @@ const ROTATE_POLICY: RotatePolicy = {
 type SocketSnifferOptions = {
   readonly symbols?: readonly string[];
   readonly logPrefix?: string;
+};
+
+type PlaywrightWebSocketFrame = {
+  readonly payload: string;
+};
+
+type SnifferBindingEntry = {
+  readonly kind: string;
+  readonly url: string;
+  readonly text: string;
+  readonly parsed?: unknown;
+};
+
+type SnifferMessageEntry = SnifferBindingEntry & {
+  readonly kind: 'ws-message';
+};
+
+type PageWithSnifferBinding = Page & {
+  socketSnifferLog?: (entry: SnifferBindingEntry) => void;
 };
 
 type LogEntry = Serializable & {
@@ -188,7 +207,7 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
   const baseName = path.basename(logPath, '.jsonl');
 
   const generalWriter = new RotatingWriter(path.join(baseDir, `${baseName}.jsonl`), ROTATE_POLICY);
-  const VERBOSE = true; // DEBUG: habilita log detallado temporalmente
+  const VERBOSE = false; // Cambiado a false para reducir ruido por defecto
 
   const channelWriters = new Map<string, RotatingWriter>();
   let closed = false;
@@ -203,11 +222,20 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
     return writer;
   };
 
-  const candleCsv = new RotatingWriter(
-    path.join(baseDir, `${perChannelPrefix}-candle.csv`),
-    ROTATE_POLICY,
-    't,open,high,low,close,volume,symbol',
-  );
+  const createCsvWriter = (suffix: string, header: string) =>
+    new RotatingWriter(path.join(baseDir, `${perChannelPrefix}-${suffix}.csv`), ROTATE_POLICY, header);
+
+  const candleCsvByTimeframe = new Map<string, RotatingWriter>();
+  const getCandleCsv = (timeframe: string) => {
+    const key = timeframe || 'general';
+    let writer = candleCsvByTimeframe.get(key);
+    if (!writer) {
+      const suffix = key === 'general' ? 'candle' : `candle-${key}`;
+      writer = createCsvWriter(suffix, 't,open,high,low,close,volume,symbol');
+      candleCsvByTimeframe.set(key, writer);
+    }
+    return writer;
+  };
 
   const quoteCsv = new RotatingWriter(
     path.join(baseDir, `${perChannelPrefix}-quote.csv`),
@@ -325,8 +353,26 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
         if (!Number.isFinite(t)) {
           continue;
         }
+        const timeframe = (() => {
+          const eventSymbol = row?.eventSymbol;
+          if (typeof eventSymbol !== 'string') {
+            return 'general';
+          }
+          const match = eventSymbol.match(/\{=([^,}]+)/);
+          if (!match) {
+            return 'general';
+          }
+          const raw = match[1]?.trim().toLowerCase();
+          if (!raw) {
+            return 'general';
+          }
+          if (raw === 'm') {
+            return '1m';
+          }
+          return raw.replace(/[^0-9a-z]+/g, '') || 'general';
+        })();
         const line = `${t},${row?.open ?? ''},${row?.high ?? ''},${row?.low ?? ''},${row?.close ?? ''},${row?.volume ?? ''},${row?.eventSymbol ?? ''}`;
-        candleCsv.write(line);
+        getCandleCsv(timeframe).write(line);
       }
 
       if (channel === 7 || row?.eventType === 'Quote') {
@@ -428,7 +474,9 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
     }
 
     generalWriter.close();
-    candleCsv.close();
+    for (const writer of candleCsvByTimeframe.values()) {
+      writer.close();
+    }
     quoteCsv.close();
     bars1mCsv.close();
     bars5mCsv.close();
@@ -498,7 +546,9 @@ function buildHookScript() {
         globalObject.__socketHookInstalled = true;
         console.log('[socket-sniffer][HOOK] instalado en', location.href);
         globalObject.socketSnifferLog?.({ kind: 'hook-installed', href: location.href });
-      } catch {}
+      } catch (error) {
+        void error;
+      }
 
       try {
         globalObject.socketSnifferLog?.({ kind: 'hook-installed', href: window.location.href });
@@ -561,7 +611,8 @@ function buildHookScript() {
         const OriginalWebSocket = window.WebSocket;
         const originalSend = OriginalWebSocket.prototype.send;
 
-        const shouldKeepByUrl = (_url: string): boolean => true;
+        const shouldKeepByUrl = (socketUrl: string): boolean =>
+          /^wss:\/\/.*robinhood\.com/i.test(socketUrl);
 
         const wrapMessage = (url: string, text: string | null, parsed: unknown, kind: 'ws-message' | 'ws-send') => {
           const entry: Serializable = { kind, url, text: truncate(text) };
@@ -701,42 +752,52 @@ export async function runSocketSniffer(
 
   await exposeLogger(page, logPath, prefix);
 
+  const pageWithSniffer = page as PageWithSnifferBinding;
   const ctx = page.context();
 
-// Handler común
-  const onWs = (ws: any) => {
-    const url: string = ws.url?.() ?? ws.url?.() ?? ws.url ?? '';
+  // Handler común
+  const onWs = (ws: PlaywrightWebSocket) => {
+    const url = ws.url();
     console.log('[socket-sniffer] WS detectado:', url);
 
     // Acepta cualquier wss de robinhood; filtramos por contenido más adelante
     if (!/^wss:\/\/.*robinhood\.com/i.test(url)) return;
 
-    ws.on('framereceived', (frame: any) => {
+    ws.on('framereceived', async (frame: PlaywrightWebSocketFrame) => {
       try {
         const text = frame.payload;
         let parsed: unknown;
         if (typeof text === 'string' && text.startsWith('{')) {
           parsed = JSON.parse(text);
         }
-        void page.evaluate((e) => (window as any).socketSnifferLog?.(e), {
-  kind: 'ws-message',
-  url,
-  text,
-  parsed,
-});
+        if (!page.isClosed()) {
+          try {
+            await page.evaluate(
+              (entry: SnifferMessageEntry) => {
+                const target = window as typeof window & {
+                  socketSnifferLog?: (value: SnifferBindingEntry) => void;
+                };
+                target.socketSnifferLog?.(entry);
+              },
+              { kind: 'ws-message', url, text, parsed },
+            );
+          } catch (error) {
+            console.warn('[socket-sniffer] page.evaluate fallo:', error);
+          }
+        }
       } catch (err) {
         console.error('[socket-sniffer] frame rx error:', err);
       }
     });
 
-    ws.on('framesent', (frame: any) => {
+    ws.on('framesent', (frame: PlaywrightWebSocketFrame) => {
       try {
         const text = frame.payload;
         let parsed: unknown;
         if (typeof text === 'string' && text.startsWith('{')) {
           parsed = JSON.parse(text);
         }
-        (page as any).socketSnifferLog?.({ kind: 'ws-send', url, text, parsed });
+        pageWithSniffer.socketSnifferLog?.({ kind: 'ws-send', url, text, parsed });
       } catch (err) {
         console.error('[socket-sniffer] frame tx error:', err);
       }
@@ -744,9 +805,9 @@ export async function runSocketSniffer(
   };
 
   // Escucha en page Y en context (hay sockets que no emite `page`)
-  page.on('websocket', onWs as any);
+  page.on('websocket', onWs);
   ctx.on('page', (p: Page) => {
-    p.on('websocket', onWs as any);
+    p.on('websocket', onWs);
   });
 
 
@@ -795,17 +856,25 @@ export async function runSocketSniffer(
   }
 
   const hookActive = await page.evaluate(
-    (flag) => Boolean(((window as unknown) as { [key: string]: unknown })[flag]),
+    (flag) => {
+      const target = window as typeof window & { [key: string]: unknown };
+      return Boolean(target[flag]);
+    },
     HOOK_GUARD_FLAG,
   );
 
   // Verifica también los frames secundarios
-  for (const frame of page.frames()) {
-    try {
-      const active = await frame.evaluate(() => !!(window as any).__socketHookInstalled);
-      console.log('[socket-sniffer] Hook activo (frame):', frame.url(), active);
-    } catch {}
-  }
+    for (const frame of page.frames()) {
+      try {
+        const active = await frame.evaluate(() => {
+          const target = window as typeof window & { __socketHookInstalled?: boolean };
+          return Boolean(target.__socketHookInstalled);
+        });
+        console.log('[socket-sniffer] Hook activo (frame):', frame.url(), active);
+      } catch (error) {
+        void error;
+      }
+    }
 
   /* eslint-disable no-console */
   console.log('[socket-sniffer] Hook activo:', hookActive);
