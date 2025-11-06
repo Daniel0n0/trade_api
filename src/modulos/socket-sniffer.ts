@@ -642,6 +642,52 @@ export async function runSocketSniffer(
 
   await exposeLogger(page, logPath, prefix);
 
+  // --- Hook WebSockets a nivel de Playwright ---
+  page.on('websocket', (ws) => {
+    const url = ws.url();
+    console.log('[socket-sniffer] WebSocket detectado en navegador:', url);
+
+    // Filtra solo el socket de mercado de Robinhood
+    if (!/socketdx\.feed\.robinhood\.com/i.test(url)) return;
+
+    ws.on('framereceived', (frame) => {
+      try {
+        const text = frame.payload;
+        let parsed: unknown;
+        if (typeof text === 'string' && text.startsWith('{')) {
+          parsed = JSON.parse(text);
+        }
+        (page as any).socketSnifferLog?.({
+          kind: 'ws-message',
+          url,
+          text,
+          parsed,
+        });
+      } catch (err) {
+        console.error('[socket-sniffer] Error parseando frame:', err);
+      }
+    });
+
+    ws.on('framesent', (frame) => {
+      try {
+        const text = frame.payload;
+        let parsed: unknown;
+        if (typeof text === 'string' && text.startsWith('{')) {
+          parsed = JSON.parse(text);
+        }
+        (page as any).socketSnifferLog?.({
+          kind: 'ws-send',
+          url,
+          text,
+          parsed,
+        });
+      } catch (err) {
+        console.error('[socket-sniffer] Error parseando frame:', err);
+      }
+    });
+  });
+
+
   const hookScriptString = `(${buildHookScript.toString()})({
     wantedSymbols: ${JSON.stringify(symbols)},
     maxTextLength: ${MAX_ENTRY_TEXT_LENGTH},
