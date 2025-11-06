@@ -459,6 +459,13 @@ function buildHookScript() {
         const OriginalWebSocket = window.WebSocket;
         const originalSend = OriginalWebSocket.prototype.send;
 
+        const shouldKeepByUrl = (url: string): boolean => {
+          return (
+            url.includes('dxfedex.com/realtime') ||
+            url.includes('api.robinhood.com/marketdata/streaming/legend')
+          );
+        };
+
         const wrapMessage = (url: string, text: string | null, parsed: unknown, kind: 'ws-message' | 'ws-send') => {
           const entry: Serializable = { kind, url, text: truncate(text) };
           if (parsed !== undefined) {
@@ -494,6 +501,10 @@ function buildHookScript() {
               }
             }
 
+            if (!shouldKeepByUrl(url)) {
+              return;
+            }
+
             if (parsed && !shouldKeep(parsed)) {
               return;
             }
@@ -526,7 +537,10 @@ function buildHookScript() {
             }
           }
 
-          wrapMessage((this as { url?: string }).url ?? '', text, parsed, 'ws-send');
+          const url = (this as { url?: string }).url ?? '';
+          if (shouldKeepByUrl(url)) {
+            wrapMessage(url, text, parsed, 'ws-send');
+          }
           return originalSend.apply(this, [data]);
         };
       })();
