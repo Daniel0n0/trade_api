@@ -54,21 +54,39 @@ type DxFeedRow = {
   readonly [key: string]: unknown;
 };
 
-function ensureArtifactsDir(): string {
-  const dir = path.join(process.cwd(), 'artifacts');
+function safeDirName(input: string | undefined): string {
+  if (!input) {
+    return 'GENERAL';
+  }
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return 'GENERAL';
+  }
+  return trimmed
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-');
+}
+
+function currentDateFolder(): string {
+  const now = new Date();
+  const year = String(now.getFullYear());
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function ensureDataDir(asset?: string): string {
+  const dir = path.join(process.cwd(), 'data', safeDirName(asset), currentDateFolder());
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
   return dir;
 }
 
-function createLogPath(prefix: string): string {
-  return path.join(ensureArtifactsDir(), `${prefix}.jsonl`);
-}
-
-function channelLogPath(basePrefix: string, channel: number, label?: string): string {
-  const name = label ? `${basePrefix}-ch${channel}-${label}.jsonl` : `${basePrefix}-ch${channel}.jsonl`;
-  return path.join(ensureArtifactsDir(), name);
+function createLogPath(prefix: string, asset?: string): string {
+  return path.join(ensureDataDir(asset), `${prefix}.jsonl`);
 }
 
 function normaliseSymbols(input: readonly string[]): readonly string[] {
@@ -146,6 +164,7 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
   const baseName = path.basename(logPath, '.jsonl');
 
   const generalWriter = new RotatingWriter(path.join(baseDir, `${baseName}.jsonl`), ROTATE_POLICY);
+  const VERBOSE = false;
 
   const channelWriters = new Map<string, RotatingWriter>();
   let closed = false;
@@ -196,6 +215,8 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
     const payload: LogEntry = { ts: Date.now(), ...entry };
     generalWriter.write(JSON.stringify(payload));
   };
+
+  writeGeneral({ kind: 'boot', msg: 'socket-sniffer up' });
 
   const flushBars = (now: number) => {
     const closed1 = agg1m.drainClosed(now);
@@ -279,6 +300,11 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
   await page.exposeFunction('socketSnifferLog', (entry: Serializable) => {
     try {
       writeGeneral(entry);
+      if (VERBOSE) {
+        /* eslint-disable no-console */
+        console.log('[socket-sniffer] Recibido entry:', JSON.stringify(entry));
+        /* eslint-enable no-console */
+      }
 
       const parsed = (entry as { parsed?: unknown } | undefined)?.parsed;
       if (entry?.['kind'] === 'ws-message' && isFeedDataPayload(parsed)) {
@@ -441,6 +467,13 @@ function buildHookScript() {
         const OriginalWebSocket = window.WebSocket;
         const originalSend = OriginalWebSocket.prototype.send;
 
+        const shouldKeepByUrl = (url: string): boolean => {
+          return (
+            url.includes('dxfedex.com/realtime') ||
+            url.includes('api.robinhood.com/marketdata/streaming/legend')
+          );
+        };
+
         const wrapMessage = (url: string, text: string | null, parsed: unknown, kind: 'ws-message' | 'ws-send') => {
           const entry: Serializable = { kind, url, text: truncate(text) };
           if (parsed !== undefined) {
@@ -476,6 +509,10 @@ function buildHookScript() {
               }
             }
 
+            if (!shouldKeepByUrl(url)) {
+              return;
+            }
+
             if (parsed && !shouldKeep(parsed)) {
               return;
             }
@@ -508,7 +545,10 @@ function buildHookScript() {
             }
           }
 
-          wrapMessage((this as { url?: string }).url ?? '', text, parsed, 'ws-send');
+          const url = (this as { url?: string }).url ?? '';
+          if (shouldKeepByUrl(url)) {
+            wrapMessage(url, text, parsed, 'ws-send');
+          }
           return originalSend.apply(this, [data]);
         };
       })();
@@ -552,7 +592,8 @@ export async function runSocketSniffer(
 ): Promise<string> {
   const symbols = normaliseSymbols(options.symbols ?? DEFAULT_SYMBOLS);
   const prefix = options.logPrefix?.trim() || DEFAULT_PREFIX;
-  const logPath = createLogPath(prefix);
+  const primarySymbol = symbols[0];
+  const logPath = createLogPath(prefix, primarySymbol ?? prefix);
   const logDir = path.dirname(logPath);
   const logBaseName = path.basename(logPath, '.jsonl');
   const logPattern = path.join(logDir, `${logBaseName}-*.jsonl`);
@@ -568,15 +609,6 @@ export async function runSocketSniffer(
 
   await exposeLogger(page, logPath, prefix);
 
-  const hookScript = `(${buildHookScript.toString()})({
-    wantedSymbols: ${JSON.stringify(symbols)},
-    maxTextLength: ${MAX_ENTRY_TEXT_LENGTH},
-    hookGuardFlag: ${JSON.stringify(HOOK_GUARD_FLAG)}
-  })`;
-
-  await page.addInitScript(hookScript);
-  await page.evaluate(hookScript);
-  // Serializa la función y los parámetros para ejecutarla correctamente en el contexto del navegador
   const hookScriptString = `(${buildHookScript.toString()})({
     wantedSymbols: ${JSON.stringify(symbols)},
     maxTextLength: ${MAX_ENTRY_TEXT_LENGTH},
@@ -585,6 +617,16 @@ export async function runSocketSniffer(
 
   await page.addInitScript(hookScriptString);
   await page.evaluate(hookScriptString);
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+
+  const hookActive = await page.evaluate(
+    (flag) => Boolean((window as { [key: string]: unknown })[flag]),
+    HOOK_GUARD_FLAG,
+  );
+  /* eslint-disable no-console */
+  console.log('[socket-sniffer] Hook activo:', hookActive);
+  /* eslint-enable no-console */
 
   page.once('close', () => {
     /* eslint-disable no-console */
