@@ -164,6 +164,7 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
   const baseName = path.basename(logPath, '.jsonl');
 
   const generalWriter = new RotatingWriter(path.join(baseDir, `${baseName}.jsonl`), ROTATE_POLICY);
+  const VERBOSE = false;
 
   const channelWriters = new Map<string, RotatingWriter>();
   let closed = false;
@@ -214,6 +215,8 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
     const payload: LogEntry = { ts: Date.now(), ...entry };
     generalWriter.write(JSON.stringify(payload));
   };
+
+  writeGeneral({ kind: 'boot', msg: 'socket-sniffer up' });
 
   const flushBars = (now: number) => {
     const closed1 = agg1m.drainClosed(now);
@@ -299,6 +302,11 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
       // Log explícito para depuración
       console.log('[socket-sniffer] Recibido entry:', JSON.stringify(entry));
       writeGeneral(entry);
+      if (VERBOSE) {
+        /* eslint-disable no-console */
+        console.log('[socket-sniffer] Recibido entry:', JSON.stringify(entry));
+        /* eslint-enable no-console */
+      }
 
       const parsed = (entry as { parsed?: unknown } | undefined)?.parsed;
       if (entry?.['kind'] === 'ws-message' && isFeedDataPayload(parsed)) {
@@ -606,15 +614,6 @@ export async function runSocketSniffer(
 
   await exposeLogger(page, logPath, prefix);
 
-  const hookScript = `(${buildHookScript.toString()})({
-    wantedSymbols: ${JSON.stringify(symbols)},
-    maxTextLength: ${MAX_ENTRY_TEXT_LENGTH},
-    hookGuardFlag: ${JSON.stringify(HOOK_GUARD_FLAG)}
-  })`;
-
-  await page.addInitScript(hookScript);
-  await page.evaluate(hookScript);
-  // Serializa la función y los parámetros para ejecutarla correctamente en el contexto del navegador
   const hookScriptString = `(${buildHookScript.toString()})({
     wantedSymbols: ${JSON.stringify(symbols)},
     maxTextLength: ${MAX_ENTRY_TEXT_LENGTH},
@@ -623,6 +622,16 @@ export async function runSocketSniffer(
 
   await page.addInitScript(hookScriptString);
   await page.evaluate(hookScriptString);
+
+  await page.reload({ waitUntil: 'domcontentloaded' });
+
+  const hookActive = await page.evaluate(
+    (flag) => Boolean((window as { [key: string]: unknown })[flag]),
+    HOOK_GUARD_FLAG,
+  );
+  /* eslint-disable no-console */
+  console.log('[socket-sniffer] Hook activo:', hookActive);
+  /* eslint-enable no-console */
 
   page.once('close', () => {
     /* eslint-disable no-console */
