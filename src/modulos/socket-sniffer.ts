@@ -18,6 +18,40 @@ type LogEntry = Serializable & {
   readonly ts: number;
 };
 
+type ChannelWriters = {
+  ch1?: string;
+  ch3?: string;
+  ch5?: string;
+  ch7?: string;
+};
+
+type DxFeedRow = {
+  readonly eventType?: string;
+  readonly eventSymbol?: string;
+  readonly symbol?: string;
+  readonly time?: number;
+  readonly eventTime?: number;
+  readonly open?: number;
+  readonly high?: number;
+  readonly low?: number;
+  readonly close?: number;
+  readonly volume?: number;
+  readonly vwap?: number;
+  readonly count?: number;
+  readonly sequence?: number;
+  readonly impliedVolatility?: number;
+  readonly openInterest?: number;
+  readonly price?: number;
+  readonly dayVolume?: number;
+  readonly bidPrice?: number;
+  readonly bidSize?: number;
+  readonly bidTime?: number;
+  readonly askPrice?: number;
+  readonly askSize?: number;
+  readonly askTime?: number;
+  readonly [key: string]: unknown;
+};
+
 function timestampString(): string {
   const date = new Date();
   const pad = (value: number) => value.toString().padStart(2, '0');
@@ -43,19 +77,120 @@ function createLogPath(prefix: string): string {
   return path.join(ensureArtifactsDir(), `${prefix}-${timestampString()}.jsonl`);
 }
 
+function channelLogPath(basePrefix: string, channel: number, label?: string): string {
+  const name = label ? `${basePrefix}-ch${channel}-${label}.jsonl` : `${basePrefix}-ch${channel}.jsonl`;
+  return path.join(ensureArtifactsDir(), name);
+}
+
 function normaliseSymbols(input: readonly string[]): readonly string[] {
   return input.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean);
 }
 
-async function exposeLogger(page: Page, logPath: string): Promise<void> {
+// Convierte el payload de dxFeed a una fila más plana según canal/eventType
+function normalizeDxFeedRow(channel: number, row: DxFeedRow | undefined): Record<string, unknown> {
+  const sym = row?.eventSymbol ?? row?.symbol ?? undefined;
+  const base = {
+    ts: Date.now(),
+    symbol: sym,
+    channel,
+    eventType: row?.eventType,
+    eventTime: row?.time ?? row?.eventTime,
+  };
+
+  if (row?.eventType === 'Candle' || channel === 1) {
+    return {
+      ...base,
+      open: row?.open,
+      high: row?.high,
+      low: row?.low,
+      close: row?.close,
+      volume: row?.volume,
+      vwap: row?.vwap,
+      count: row?.count,
+      sequence: row?.sequence,
+      impliedVolatility: row?.impliedVolatility,
+      openInterest: row?.openInterest,
+    };
+  }
+
+  if (row?.eventType === 'Trade' || channel === 3) {
+    return {
+      ...base,
+      price: row?.price,
+      dayVolume: row?.dayVolume,
+    };
+  }
+
+  if (row?.eventType === 'Quote' || channel === 7) {
+    return {
+      ...base,
+      bidPrice: row?.bidPrice,
+      bidSize: row?.bidSize,
+      bidTime: row?.bidTime,
+      askPrice: row?.askPrice,
+      askSize: row?.askSize,
+      askTime: row?.askTime,
+    };
+  }
+
+  return { ...base, raw: row };
+}
+
+function isFeedDataPayload(value: unknown): value is { type: 'FEED_DATA'; channel?: number | string; data?: unknown } {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  return (value as { type?: unknown }).type === 'FEED_DATA';
+}
+
+async function exposeLogger(page: Page, logPath: string, perChannelPrefix: string): Promise<void> {
+  const writers: ChannelWriters = {};
+
+  const writeLine = (filePath: string, obj: Record<string, unknown>) => {
+    fs.appendFileSync(filePath, `${JSON.stringify(obj)}\n`, 'utf8');
+  };
+
   const writeEntry = (entry: Serializable) => {
     const payload: LogEntry = { ts: Date.now(), ...entry };
-    fs.appendFileSync(logPath, `${JSON.stringify(payload)}\n`, 'utf8');
+    writeLine(logPath, payload);
+  };
+
+  const writeChannelRows = (channel: number, rows: readonly DxFeedRow[], label?: string) => {
+    if (!rows?.length) {
+      return;
+    }
+
+    let targetPath: string;
+    if (channel === 1) {
+      targetPath = writers.ch1 ?? (writers.ch1 = channelLogPath(perChannelPrefix, 1, 'candle'));
+    } else if (channel === 3) {
+      targetPath = writers.ch3 ?? (writers.ch3 = channelLogPath(perChannelPrefix, 3, 'trade'));
+    } else if (channel === 7) {
+      targetPath = writers.ch7 ?? (writers.ch7 = channelLogPath(perChannelPrefix, 7, 'quote'));
+    } else if (channel === 5) {
+      targetPath = writers.ch5 ?? (writers.ch5 = channelLogPath(perChannelPrefix, 5));
+    } else {
+      targetPath = channelLogPath(perChannelPrefix, channel, label);
+    }
+
+    for (const row of rows) {
+      const flat = normalizeDxFeedRow(channel, row);
+      writeLine(targetPath, flat);
+    }
   };
 
   await page.exposeFunction('socketSnifferLog', (entry: Serializable) => {
     try {
       writeEntry(entry);
+
+      const parsed = (entry as { parsed?: unknown } | undefined)?.parsed;
+      if (entry?.['kind'] === 'ws-message' && isFeedDataPayload(parsed)) {
+        const channel = Number(parsed.channel);
+        const dataRows = Array.isArray(parsed.data) ? (parsed.data as DxFeedRow[]) : [];
+        if (!Number.isNaN(channel) && dataRows.length) {
+          writeChannelRows(channel, dataRows);
+        }
+      }
     } catch (error) {
       /* eslint-disable no-console */
       console.error('[socket-sniffer] Error al escribir log:', error);
@@ -256,7 +391,7 @@ export async function runSocketSniffer(
   );
   /* eslint-enable no-console */
 
-  await exposeLogger(page, logPath);
+  await exposeLogger(page, logPath, prefix);
 
   const hookScript = buildHookScript();
   await page.addInitScript(hookScript, symbols, MAX_ENTRY_TEXT_LENGTH, HOOK_GUARD_FLAG);
