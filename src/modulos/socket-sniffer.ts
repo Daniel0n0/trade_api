@@ -54,21 +54,39 @@ type DxFeedRow = {
   readonly [key: string]: unknown;
 };
 
-function ensureArtifactsDir(): string {
-  const dir = path.join(process.cwd(), 'artifacts');
+function safeDirName(input: string | undefined): string {
+  if (!input) {
+    return 'GENERAL';
+  }
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return 'GENERAL';
+  }
+  return trimmed
+    .toUpperCase()
+    .replace(/[^A-Z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-');
+}
+
+function currentDateFolder(): string {
+  const now = new Date();
+  const year = String(now.getFullYear());
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function ensureDataDir(asset?: string): string {
+  const dir = path.join(process.cwd(), 'data', safeDirName(asset), currentDateFolder());
   if (!fs.existsSync(dir)) {
     fs.mkdirSync(dir, { recursive: true });
   }
   return dir;
 }
 
-function createLogPath(prefix: string): string {
-  return path.join(ensureArtifactsDir(), `${prefix}.jsonl`);
-}
-
-function channelLogPath(basePrefix: string, channel: number, label?: string): string {
-  const name = label ? `${basePrefix}-ch${channel}-${label}.jsonl` : `${basePrefix}-ch${channel}.jsonl`;
-  return path.join(ensureArtifactsDir(), name);
+function createLogPath(prefix: string, asset?: string): string {
+  return path.join(ensureDataDir(asset), `${prefix}.jsonl`);
 }
 
 function normaliseSymbols(input: readonly string[]): readonly string[] {
@@ -552,7 +570,8 @@ export async function runSocketSniffer(
 ): Promise<string> {
   const symbols = normaliseSymbols(options.symbols ?? DEFAULT_SYMBOLS);
   const prefix = options.logPrefix?.trim() || DEFAULT_PREFIX;
-  const logPath = createLogPath(prefix);
+  const primarySymbol = symbols[0];
+  const logPath = createLogPath(prefix, primarySymbol ?? prefix);
   const logDir = path.dirname(logPath);
   const logBaseName = path.basename(logPath, '.jsonl');
   const logPattern = path.join(logDir, `${logBaseName}-*.jsonl`);
