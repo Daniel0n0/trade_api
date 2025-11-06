@@ -691,7 +691,7 @@ export async function runSocketSniffer(
   });
 
 
-  // --- Hook WebSockets a nivel de Playwright ---
+  // --- Hook WebSockets a nivel de Playwright ---'''
   page.on('websocket', (ws) => {
     const url = ws.url();
     console.log('[socket-sniffer] WebSocket detectado en navegador:', url);
