@@ -642,6 +642,50 @@ export async function runSocketSniffer(
 
   await exposeLogger(page, logPath, prefix);
 
+  const ctx = page.context();
+
+// Handler común
+  const onWs = (ws: any) => {
+    const url: string = ws.url?.() ?? ws.url?.() ?? ws.url ?? '';
+    console.log('[socket-sniffer] WS detectado:', url);
+
+    // Acepta cualquier wss de robinhood; filtramos por contenido más adelante
+    if (!/^wss:\/\/.*robinhood\.com/i.test(url)) return;
+
+    ws.on('framereceived', (frame: any) => {
+      try {
+        const text = frame.payload;
+        let parsed: unknown;
+        if (typeof text === 'string' && text.startsWith('{')) {
+          parsed = JSON.parse(text);
+        }
+        (page as any).socketSnifferLog?.({ kind: 'ws-message', url, text, parsed });
+      } catch (err) {
+        console.error('[socket-sniffer] frame rx error:', err);
+      }
+    });
+
+    ws.on('framesent', (frame: any) => {
+      try {
+        const text = frame.payload;
+        let parsed: unknown;
+        if (typeof text === 'string' && text.startsWith('{')) {
+          parsed = JSON.parse(text);
+        }
+        (page as any).socketSnifferLog?.({ kind: 'ws-send', url, text, parsed });
+      } catch (err) {
+        console.error('[socket-sniffer] frame tx error:', err);
+      }
+    });
+  };
+
+  // Escucha en page Y en context (hay sockets que no emite `page`)
+  page.on('websocket', onWs as any);
+  ctx.on('page', (p: Page) => {
+    p.on('websocket', onWs as any);
+  });
+
+
   // --- Hook WebSockets a nivel de Playwright ---
   page.on('websocket', (ws) => {
     const url = ws.url();

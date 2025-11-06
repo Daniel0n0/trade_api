@@ -50,13 +50,68 @@ async function cleanupProfile(path: string): Promise<void> {
 async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserResources> {
   ensureProfileDirectory(options.userDataDir);
 
-  const context = await chromium.launchPersistentContext(options.userDataDir, {
+  // const context = await chromium.launchPersistentContext(options.userDataDir, {
+  //   headless: false,
+  //   slowMo: options.slowMo,
+  //   viewport: null,
+  //   channel: process.platform === 'darwin' ? 'chrome' : undefined,
+  //   args: ['--disable-blink-features=AutomationControlled'],
+  // });
+
+  // Primera vez (interactiva):
+  const browser = await chromium.launch({
     headless: false,
     slowMo: options.slowMo,
-    viewport: null,
     channel: process.platform === 'darwin' ? 'chrome' : undefined,
     args: ['--disable-blink-features=AutomationControlled'],
   });
+  const context = await browser.newContext({ storageState: undefined });
+  const page = await context.newPage();
+
+  try {
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send('Network.enable');
+
+    cdp.on('Network.webSocketCreated', (e: any) => {
+      console.log('[socket-sniffer][CDP] WS creado:', e.url);
+    });
+
+    cdp.on('Network.webSocketFrameReceived', (e: any) => {
+      try {
+        const url = e.request?.url || '';
+        const text = e.response?.payloadData ?? '';
+        let parsed: unknown;
+        if (typeof text === 'string' && text.startsWith('{')) {
+          parsed = JSON.parse(text);
+        }
+        (page as any).socketSnifferLog?.({ kind: 'ws-message', url, text, parsed });
+      } catch (err) {
+        console.error('[socket-sniffer][CDP] rx error:', err);
+      }
+    });
+
+    cdp.on('Network.webSocketFrameSent', (e: any) => {
+      try {
+        const url = e.request?.url || '';
+        const text = e.response?.payloadData ?? '';
+        let parsed: unknown;
+        if (typeof text === 'string' && text.startsWith('{')) {
+          parsed = JSON.parse(text);
+        }
+        (page as any).socketSnifferLog?.({ kind: 'ws-send', url, text, parsed });
+      } catch (err) {
+        console.error('[socket-sniffer][CDP] tx error:', err);
+      }
+    });
+  } catch (err) {
+    console.warn('[socket-sniffer] CDP no disponible:', err);
+  }
+
+
+  await page.goto('https://robinhood.com/login', { waitUntil: 'domcontentloaded' });
+  // -> loguéate manualmente
+  await page.waitForURL(/robinhood\.com\/(home|account|legend)/, { timeout: 120_000 });
+  await context.storageState({ path: 'state/robinhood.json' });
 
   const enableNetworkBlocking = configureNetworkBlocking(context, options.blockTrackingDomains);
 
@@ -73,6 +128,7 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
         await context.tracing.stop({ path: tracePath });
       }
       await context.close();
+      await browser.close();
       if (!options.preserveUserDataDir) {
         await cleanupProfile(options.userDataDir);
       }
@@ -89,9 +145,9 @@ async function launchReusedContext(options: LaunchOptions, storageStatePath: str
   });
 
   const context = await browser.newContext({
-    storageState: storageStatePath,
-    viewport: null,
+    storageState: 'state/robinhood.json',
   });
+  const page = await context.newPage();
 
   const enableNetworkBlocking = configureNetworkBlocking(context, options.blockTrackingDomains);
 
