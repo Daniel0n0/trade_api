@@ -134,12 +134,7 @@ function buildHookScript() {
         const OriginalWebSocket = window.WebSocket;
         const originalSend = OriginalWebSocket.prototype.send;
 
-        const wrapMessage = (
-          url: string,
-          text: string | null,
-          parsed: unknown,
-          kind: 'ws-message' | 'ws-send',
-        ) => {
+        const wrapMessage = (url: string, text: string | null, parsed: unknown, kind: 'ws-message' | 'ws-send') => {
           const entry: Serializable = { kind, url, text: truncate(text) };
           if (parsed !== undefined) {
             entry.parsed = parsed as Serializable;
