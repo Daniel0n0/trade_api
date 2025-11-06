@@ -1,7 +1,3 @@
-import { existsSync, rmSync } from 'node:fs';
-
-import { defaultLaunchOptions } from '../src/config.js';
-
 function main(): void {
   // const profilePath = defaultLaunchOptions.userDataDir;
 
