@@ -259,18 +259,8 @@ export async function runSocketSniffer(
   await exposeLogger(page, logPath);
 
   const hookScript = buildHookScript();
-  const hookScriptWrapper = function(arg: (string | number | readonly string[])[]) {
-    const [wantedSymbols, maxTextLength, hookGuardFlag] = arg as [readonly string[], number, string];
-    return (buildHookScript() as any)(wantedSymbols, maxTextLength, hookGuardFlag);
-  };
-  await page.addInitScript(hookScriptWrapper, [symbols, MAX_ENTRY_TEXT_LENGTH, HOOK_GUARD_FLAG]);
-  await page.evaluate(
-    (args) => {
-      const [wantedSymbols, maxTextLength, hookGuardFlag] = args as [readonly string[], number, string];
-      (buildHookScript() as any)(wantedSymbols, maxTextLength, hookGuardFlag);
-    },
-    [symbols, MAX_ENTRY_TEXT_LENGTH, HOOK_GUARD_FLAG]
-  );
+  await page.addInitScript(hookScript, symbols, MAX_ENTRY_TEXT_LENGTH, HOOK_GUARD_FLAG);
+  await page.evaluate(hookScript, symbols, MAX_ENTRY_TEXT_LENGTH, HOOK_GUARD_FLAG);
 
   try {
     await page.reload({ waitUntil: 'domcontentloaded' });
