@@ -30,6 +30,7 @@ type DxFeedRow = {
   readonly eventType?: string;
   readonly eventSymbol?: string;
   readonly symbol?: string;
+  readonly eventFlags?: number | string;
   readonly time?: number;
   readonly eventTime?: number;
   readonly open?: number;
@@ -256,6 +257,31 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
     }
   };
 
+  const parseFiniteNumber = (value: unknown): number | null => {
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : null;
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return null;
+      }
+      if (trimmed.toLowerCase() === 'nan') {
+        return null;
+      }
+      const parsed = Number(trimmed);
+      return Number.isFinite(parsed) ? parsed : null;
+    }
+    return null;
+  };
+
+  const hasInvalidNumeric = (value: unknown): boolean => {
+    if (value === undefined || value === null) {
+      return false;
+    }
+    return parseFiniteNumber(value) === null;
+  };
+
   const writeChannelRows = (channel: number, rows: readonly DxFeedRow[]) => {
     if (!rows?.length) {
       return;
@@ -277,6 +303,22 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
     for (const row of rows) {
       const currentNow = Date.now();
       lastNow = currentNow;
+      const isCandle = channel === 1 || row?.eventType === 'Candle';
+      if (isCandle) {
+        const flagsValue = parseFiniteNumber(row?.eventFlags);
+        const invalidFlags = flagsValue === 18;
+        const invalidValue =
+          hasInvalidNumeric(row?.open) ||
+          hasInvalidNumeric(row?.high) ||
+          hasInvalidNumeric(row?.low) ||
+          hasInvalidNumeric(row?.close) ||
+          hasInvalidNumeric(row?.volume);
+
+        if (invalidFlags || invalidValue) {
+          continue;
+        }
+      }
+
       const flat = normalizeDxFeedRow(channel, row);
       writer.write(JSON.stringify(flat));
 
@@ -293,27 +335,40 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
       }
 
       if (channel === 3 || row?.eventType === 'Trade') {
-        const ts = Number(row?.time ?? currentNow);
-        const price = Number(row?.price);
-        const dayVolume = Number(row?.dayVolume);
-        const trade = { price, dayVolume, ts };
-        agg1m.addTrade(trade);
-        agg5m.addTrade(trade);
-        agg15m.addTrade(trade);
+        const tsCandidate = row?.time ?? row?.eventTime;
+        const ts = parseFiniteNumber(tsCandidate);
+        const price = parseFiniteNumber(row?.price);
+        if (ts !== null && price !== null) {
+          const dayVolume = parseFiniteNumber(row?.dayVolume) ?? undefined;
+          const trade = { price, dayVolume, ts };
+          agg1m.addTrade(trade);
+          agg5m.addTrade(trade);
+          agg15m.addTrade(trade);
+        }
       } else if (channel === 5 || row?.eventType === 'TradeETH') {
-        const ts = Number(row?.time ?? currentNow);
-        const price = Number(row?.price);
-        const dayVolume = Number(row?.dayVolume);
-        const trade = { price, dayVolume, ts };
-        agg1m.addTrade(trade);
-        agg5m.addTrade(trade);
-        agg15m.addTrade(trade);
+        const tsCandidate = row?.time ?? row?.eventTime;
+        const ts = parseFiniteNumber(tsCandidate);
+        const price = parseFiniteNumber(row?.price);
+        if (ts !== null && price !== null) {
+          const dayVolume = parseFiniteNumber(row?.dayVolume) ?? undefined;
+          const trade = { price, dayVolume, ts };
+          agg1m.addTrade(trade);
+          agg5m.addTrade(trade);
+          agg15m.addTrade(trade);
+        }
       } else if (channel === 7 || row?.eventType === 'Quote') {
-        const ts = Number(row?.bidTime ?? row?.askTime ?? currentNow);
-        const quote = { bidPrice: row?.bidPrice, askPrice: row?.askPrice, ts };
-        agg1m.addQuote(quote);
-        agg5m.addQuote(quote);
-        agg15m.addQuote(quote);
+        const tsCandidate = row?.bidTime ?? row?.askTime;
+        const ts = parseFiniteNumber(tsCandidate);
+        if (ts !== null) {
+          const quote = {
+            bidPrice: parseFiniteNumber(row?.bidPrice) ?? undefined,
+            askPrice: parseFiniteNumber(row?.askPrice) ?? undefined,
+            ts,
+          };
+          agg1m.addQuote(quote);
+          agg5m.addQuote(quote);
+          agg15m.addQuote(quote);
+        }
       }
     }
 
@@ -688,52 +743,6 @@ export async function runSocketSniffer(
   page.on('websocket', onWs as any);
   ctx.on('page', (p: Page) => {
     p.on('websocket', onWs as any);
-  });
-
-
-  // --- Hook WebSockets a nivel de Playwright ---'''
-  page.on('websocket', (ws) => {
-    const url = ws.url();
-    console.log('[socket-sniffer] WebSocket detectado en navegador:', url);
-
-    // Filtra solo el socket de mercado de Robinhood
-    if (!/socketdx\.feed\.robinhood\.com/i.test(url)) return;
-
-    ws.on('framereceived', (frame) => {
-      try {
-        const text = frame.payload;
-        let parsed: unknown;
-        if (typeof text === 'string' && text.startsWith('{')) {
-          parsed = JSON.parse(text);
-        }
-        void page.evaluate((e) => (window as any).socketSnifferLog?.(e), {
-          kind: 'ws-message',
-          url,
-          text,
-          parsed,
-        });
-      } catch (err) {
-        console.error('[socket-sniffer] Error parseando frame:', err);
-      }
-    });
-
-    ws.on('framesent', (frame) => {
-      try {
-        const text = frame.payload;
-        let parsed: unknown;
-        if (typeof text === 'string' && text.startsWith('{')) {
-          parsed = JSON.parse(text);
-        }
-        (page as any).socketSnifferLog?.({
-          kind: 'ws-send',
-          url,
-          text,
-          parsed,
-        });
-      } catch (err) {
-        console.error('[socket-sniffer] Error parseando frame:', err);
-      }
-    });
   });
 
 
