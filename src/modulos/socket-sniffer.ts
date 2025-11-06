@@ -626,7 +626,7 @@ export async function runSocketSniffer(
   await page.reload({ waitUntil: 'domcontentloaded' });
 
   const hookActive = await page.evaluate(
-    (flag) => Boolean((window as { [key: string]: unknown })[flag]),
+    (flag) => Boolean(((window as unknown) as { [key: string]: unknown })[flag]),
     HOOK_GUARD_FLAG,
   );
   /* eslint-disable no-console */
