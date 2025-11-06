@@ -30,7 +30,7 @@ type DxFeedRow = {
   readonly eventType?: string;
   readonly eventSymbol?: string;
   readonly symbol?: string;
-  readonly eventFlags?: number | string;
+  readonly eventFlags?: number;
   readonly time?: number;
   readonly eventTime?: number;
   readonly open?: number;
@@ -275,13 +275,6 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
     return null;
   };
 
-  const hasInvalidNumeric = (value: unknown): boolean => {
-    if (value === undefined || value === null) {
-      return false;
-    }
-    return parseFiniteNumber(value) === null;
-  };
-
   const writeChannelRows = (channel: number, rows: readonly DxFeedRow[]) => {
     if (!rows?.length) {
       return;
@@ -305,16 +298,21 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
       lastNow = currentNow;
       const isCandle = channel === 1 || row?.eventType === 'Candle';
       if (isCandle) {
-        const flagsValue = parseFiniteNumber(row?.eventFlags);
-        const invalidFlags = flagsValue === 18;
-        const invalidValue =
-          hasInvalidNumeric(row?.open) ||
-          hasInvalidNumeric(row?.high) ||
-          hasInvalidNumeric(row?.low) ||
-          hasInvalidNumeric(row?.close) ||
-          hasInvalidNumeric(row?.volume);
+        const ef = Number(row?.eventFlags ?? 0);
+        const o = Number(row?.open);
+        const h = Number(row?.high);
+        const l = Number(row?.low);
+        const c = Number(row?.close);
+        const v = Number(row?.volume);
+        const invalid =
+          ef === 18 ||
+          !Number.isFinite(o) ||
+          !Number.isFinite(h) ||
+          !Number.isFinite(l) ||
+          !Number.isFinite(c) ||
+          !Number.isFinite(v);
 
-        if (invalidFlags || invalidValue) {
+        if (invalid) {
           continue;
         }
       }
@@ -323,13 +321,19 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
       writer.write(JSON.stringify(flat));
 
       if (channel === 1 || row?.eventType === 'Candle') {
-        const t = Number(row?.time ?? row?.eventTime ?? currentNow);
+        const t = Number(row?.time ?? row?.eventTime);
+        if (!Number.isFinite(t)) {
+          continue;
+        }
         const line = `${t},${row?.open ?? ''},${row?.high ?? ''},${row?.low ?? ''},${row?.close ?? ''},${row?.volume ?? ''},${row?.eventSymbol ?? ''}`;
         candleCsv.write(line);
       }
 
       if (channel === 7 || row?.eventType === 'Quote') {
-        const t = Number(row?.bidTime ?? row?.askTime ?? currentNow);
+        const t = Number(row?.bidTime ?? row?.askTime);
+        if (!Number.isFinite(t)) {
+          continue;
+        }
         const line = `${t},${row?.bidPrice ?? ''},${row?.bidSize ?? ''},${row?.askPrice ?? ''},${row?.askSize ?? ''},${row?.eventSymbol ?? ''}`;
         quoteCsv.write(line);
       }

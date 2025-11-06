@@ -210,5 +210,7 @@ function configureNetworkBlocking(context: BrowserContext, shouldBlock: boolean)
 
   return () => {
     blockingEnabled = true;
+    // eslint-disable-next-line no-console
+    console.log('[network-blocking] ACTIVADO (usercentrics/gtm/ga/sentry)');
   };
 }
