@@ -299,14 +299,13 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
 
   await page.exposeFunction('socketSnifferLog', (entry: Serializable) => {
     try {
-      // Log explícito para depuración
-      console.log('[socket-sniffer] Recibido entry:', JSON.stringify(entry));
-      writeGeneral(entry);
       if (VERBOSE) {
         /* eslint-disable no-console */
-        console.log('[socket-sniffer] Recibido entry:', JSON.stringify(entry));
+        console.log('[socket-sniffer] entry:', JSON.stringify(entry));
         /* eslint-enable no-console */
       }
+
+      writeGeneral(entry);
 
       const parsed = (entry as { parsed?: unknown } | undefined)?.parsed;
       if (entry?.['kind'] === 'ws-message' && isFeedDataPayload(parsed)) {
@@ -470,9 +469,10 @@ function buildHookScript() {
         const originalSend = OriginalWebSocket.prototype.send;
 
         const shouldKeepByUrl = (url: string): boolean => {
+          const u = url.toLowerCase();
           return (
-            url.includes('dxfedex.com/realtime') ||
-            url.includes('api.robinhood.com/marketdata/streaming/legend')
+            /dx(link|feed).*realtime/.test(u) ||
+            u.includes('api.robinhood.com/marketdata/streaming/legend')
           );
         };
 
@@ -620,7 +620,7 @@ export async function runSocketSniffer(
     hookGuardFlag: ${JSON.stringify(HOOK_GUARD_FLAG)}
   })`;
 
-  await page.addInitScript(hookScriptString);
+  await page.context().addInitScript(hookScriptString);
   await page.evaluate(hookScriptString);
 
   await page.reload({ waitUntil: 'domcontentloaded' });
