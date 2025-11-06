@@ -142,9 +142,19 @@ function buildHookScript() {
           safeLog(entry);
         };
 
-        window.WebSocket = function patchedWebSocket(this: WebSocket, ...args: ConstructorParameters<typeof WebSocket>) {
+        const normaliseUrl = (arg: unknown): string => {
+          if (typeof arg === 'string') {
+            return arg;
+          }
+          if (arg instanceof URL) {
+            return arg.toString();
+          }
+          return '';
+        };
+
+        function PatchedWebSocket(this: WebSocket, ...args: ConstructorParameters<typeof WebSocket>) {
           const ws = new OriginalWebSocket(...args);
-          const url = (args && args[0]) || '';
+          const url = normaliseUrl(args?.[0]);
 
           ws.addEventListener('message', (event) => {
             let parsed: unknown;
@@ -167,9 +177,15 @@ function buildHookScript() {
           });
 
           return ws;
-        } as typeof WebSocket;
+        }
 
-        window.WebSocket.prototype.send = function patchedSend(this: WebSocket, data: Parameters<WebSocket['send']>[0]) {
+        PatchedWebSocket.prototype = OriginalWebSocket.prototype;
+        window.WebSocket = PatchedWebSocket as unknown as typeof WebSocket;
+
+        OriginalWebSocket.prototype.send = function patchedSend(
+          this: WebSocket,
+          data: Parameters<WebSocket['send']>[0],
+        ) {
           let text: string | null = null;
           let parsed: unknown;
 
