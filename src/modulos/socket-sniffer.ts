@@ -296,6 +296,8 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
 
   await page.exposeFunction('socketSnifferLog', (entry: Serializable) => {
     try {
+      // Log explícito para depuración
+      console.log('[socket-sniffer] Recibido entry:', JSON.stringify(entry));
       writeGeneral(entry);
 
       const parsed = (entry as { parsed?: unknown } | undefined)?.parsed;
@@ -559,19 +561,22 @@ function buildHookScript() {
           } else if (request instanceof URL) {
             url = request.toString();
           }
-          const response = await originalFetch(...args);
-
           try {
-            if (/quotes\/historicals|instruments|options/i.test(url)) {
-              const clone = response.clone();
-              const text = await clone.text();
-              safeLog({ kind: 'http', url, text: truncate(text) });
+            const response = await originalFetch(...args);
+            try {
+              if (/quotes\/historicals|instruments|options/i.test(url)) {
+                const clone = response.clone();
+                const text = await clone.text();
+                safeLog({ kind: 'http', url, text: truncate(text) });
+              }
+            } catch (error) {
+              void error;
             }
+            return response;
           } catch (error) {
-            void error;
+            safeLog({ kind: 'http-error', url, error: error instanceof Error ? error.message : String(error) });
+            throw error;
           }
-
-          return response;
         };
       })();
     }
