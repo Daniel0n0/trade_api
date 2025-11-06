@@ -3,6 +3,22 @@ import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium, type BrowserContext } from 'playwright';
 
+type WebSocketFrameEvent = {
+  readonly request?: { readonly url?: string };
+  readonly response?: { readonly payloadData?: string };
+};
+
+type WebSocketCreatedEvent = {
+  readonly url?: string;
+};
+
+type SnifferLogEntry = {
+  readonly kind: 'ws-message';
+  readonly url: string;
+  readonly text: string;
+  readonly parsed?: unknown;
+};
+
 import { defaultLaunchOptions, type LaunchOptions } from './config.js';
 
 export interface BrowserResources {
@@ -72,11 +88,11 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Network.enable');
 
-    cdp.on('Network.webSocketCreated', (e: any) => {
+    cdp.on('Network.webSocketCreated', (e: WebSocketCreatedEvent) => {
       console.log('[socket-sniffer][CDP] WS creado:', e.url);
     });
 
-    cdp.on('Network.webSocketFrameReceived', (e: any) => {
+    cdp.on('Network.webSocketFrameReceived', async (e: WebSocketFrameEvent) => {
       try {
         const url = e.request?.url || '';
         const text = e.response?.payloadData ?? '';
@@ -84,18 +100,32 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
         if (typeof text === 'string' && text.startsWith('{')) {
           parsed = JSON.parse(text);
         }
-        void page.evaluate((e) => (window as any).socketSnifferLog?.(e), {
-          kind: 'ws-message',
-          url,
-          text,
-          parsed,
-        });
+        if (!page.isClosed()) {
+          try {
+            await page.evaluate(
+              (entry: SnifferLogEntry) => {
+                const target = window as typeof window & {
+                  socketSnifferLog?: (value: SnifferLogEntry) => void;
+                };
+                target.socketSnifferLog?.(entry);
+              },
+              {
+                kind: 'ws-message',
+                url,
+                text,
+                parsed,
+              },
+            );
+          } catch (error) {
+            console.warn('[socket-sniffer][CDP] page.evaluate fallo:', error);
+          }
+        }
       } catch (err) {
         console.error('[socket-sniffer][CDP] rx error:', err);
       }
     });
 
-    cdp.on('Network.webSocketFrameSent', (e: any) => {
+    cdp.on('Network.webSocketFrameSent', async (e: WebSocketFrameEvent) => {
       try {
         const url = e.request?.url || '';
         const text = e.response?.payloadData ?? '';
@@ -103,12 +133,26 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
         if (typeof text === 'string' && text.startsWith('{')) {
           parsed = JSON.parse(text);
         }
-        void page.evaluate((e) => (window as any).socketSnifferLog?.(e), {
-          kind: 'ws-message',
-          url,
-          text,
-          parsed,
-        });
+        if (!page.isClosed()) {
+          try {
+            await page.evaluate(
+              (entry: SnifferLogEntry) => {
+                const target = window as typeof window & {
+                  socketSnifferLog?: (value: SnifferLogEntry) => void;
+                };
+                target.socketSnifferLog?.(entry);
+              },
+              {
+                kind: 'ws-message',
+                url,
+                text,
+                parsed,
+              },
+            );
+          } catch (error) {
+            console.warn('[socket-sniffer][CDP] page.evaluate fallo:', error);
+          }
+        }
       } catch (err) {
         console.error('[socket-sniffer][CDP] tx error:', err);
       }
@@ -124,6 +168,10 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
   await context.storageState({ path: 'state/robinhood.json' });
 
   const enableNetworkBlocking = configureNetworkBlocking(context, options.blockTrackingDomains);
+
+  if (options.blockTrackingDomains) {
+    enableNetworkBlocking();
+  }
 
   if (options.tracingEnabled) {
     await context.tracing.start({ screenshots: true, snapshots: true });
@@ -155,11 +203,14 @@ async function launchReusedContext(options: LaunchOptions, storageStatePath: str
   });
 
   const context = await browser.newContext({
-    storageState: 'state/robinhood.json',
+    storageState: storageStatePath,
   });
-  const page = await context.newPage();
 
   const enableNetworkBlocking = configureNetworkBlocking(context, options.blockTrackingDomains);
+
+  if (options.blockTrackingDomains) {
+    enableNetworkBlocking();
+  }
 
   if (options.tracingEnabled) {
     await context.tracing.start({ screenshots: true, snapshots: true });
@@ -184,6 +235,9 @@ const TRACKING_DOMAIN_PATTERNS = [
   'googletagmanager',
   'sentry',
   'usercentrics',
+  'usercentrics.eu',
+  'crumbs.robinhood',
+  'nummus.robinhood',
 ];
 
 function configureNetworkBlocking(context: BrowserContext, shouldBlock: boolean): () => void {
