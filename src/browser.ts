@@ -84,7 +84,12 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
         if (typeof text === 'string' && text.startsWith('{')) {
           parsed = JSON.parse(text);
         }
-        (page as any).socketSnifferLog?.({ kind: 'ws-message', url, text, parsed });
+        void page.evaluate((e) => (window as any).socketSnifferLog?.(e), {
+          kind: 'ws-message',
+          url,
+          text,
+          parsed,
+        });
       } catch (err) {
         console.error('[socket-sniffer][CDP] rx error:', err);
       }
@@ -98,7 +103,12 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
         if (typeof text === 'string' && text.startsWith('{')) {
           parsed = JSON.parse(text);
         }
-        (page as any).socketSnifferLog?.({ kind: 'ws-send', url, text, parsed });
+        void page.evaluate((e) => (window as any).socketSnifferLog?.(e), {
+          kind: 'ws-message',
+          url,
+          text,
+          parsed,
+        });
       } catch (err) {
         console.error('[socket-sniffer][CDP] tx error:', err);
       }

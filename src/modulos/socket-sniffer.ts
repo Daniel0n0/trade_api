@@ -659,7 +659,12 @@ export async function runSocketSniffer(
         if (typeof text === 'string' && text.startsWith('{')) {
           parsed = JSON.parse(text);
         }
-        (page as any).socketSnifferLog?.({ kind: 'ws-message', url, text, parsed });
+        void page.evaluate((e) => (window as any).socketSnifferLog?.(e), {
+  kind: 'ws-message',
+  url,
+  text,
+  parsed,
+});
       } catch (err) {
         console.error('[socket-sniffer] frame rx error:', err);
       }
@@ -701,7 +706,7 @@ export async function runSocketSniffer(
         if (typeof text === 'string' && text.startsWith('{')) {
           parsed = JSON.parse(text);
         }
-        (page as any).socketSnifferLog?.({
+        void page.evaluate((e) => (window as any).socketSnifferLog?.(e), {
           kind: 'ws-message',
           url,
           text,
