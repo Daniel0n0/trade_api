@@ -372,7 +372,8 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
 
 function buildHookScript() {
   return (
-    (wantedSymbols: readonly string[], maxTextLength: number, hookGuardFlag: string) => {
+    (params: { wantedSymbols: readonly string[]; maxTextLength: number; hookGuardFlag: string }) => {
+      const { wantedSymbols, maxTextLength, hookGuardFlag } = params;
       const globalObject = window as typeof window & {
         socketSnifferLog?: (entry: Serializable) => void;
         [key: string]: unknown;
@@ -568,8 +569,22 @@ export async function runSocketSniffer(
   await exposeLogger(page, logPath, prefix);
 
   const hookScript = buildHookScript();
-  await page.addInitScript(hookScript, symbols, MAX_ENTRY_TEXT_LENGTH, HOOK_GUARD_FLAG);
-  await page.evaluate(hookScript, symbols, MAX_ENTRY_TEXT_LENGTH, HOOK_GUARD_FLAG);
+
+  await page.addInitScript(hookScript, {
+    wantedSymbols: symbols,
+    maxTextLength: MAX_ENTRY_TEXT_LENGTH,
+    hookGuardFlag: HOOK_GUARD_FLAG,
+  });
+  await page.evaluate(hookScript, {
+    wantedSymbols: symbols,
+    maxTextLength: MAX_ENTRY_TEXT_LENGTH,
+    hookGuardFlag: HOOK_GUARD_FLAG,
+  });
+  await page.evaluate(hookScript, {
+    wantedSymbols: symbols,
+    maxTextLength: MAX_ENTRY_TEXT_LENGTH,
+    hookGuardFlag: HOOK_GUARD_FLAG,
+  });
 
   try {
     await page.reload({ waitUntil: 'domcontentloaded' });
