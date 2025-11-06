@@ -5,6 +5,16 @@ import type { Page, WebSocket as PlaywrightWebSocket } from 'playwright';
 import { RotatingWriter, type RotatePolicy } from './rotating-writer.js';
 import { BarAggregator } from './timebar.js';
 
+// cerca de arriba (imports), no hace falta importar Buffer explícitamente
+const toText = (p: unknown): string => {
+  if (typeof p === 'string') return p;
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore - Buffer existe en runtime Node y en types al tener node:fs
+  if (typeof Buffer !== 'undefined' && p && Buffer.isBuffer?.(p)) return (p as Buffer).toString('utf8');
+  // último recurso: intenta convertir a string
+  return p == null ? '' : String(p);
+};
+
 type Serializable = Record<string, unknown>;
 
 const DEFAULT_PREFIX = 'socket';
@@ -22,9 +32,9 @@ type SocketSnifferOptions = {
   readonly logPrefix?: string;
 };
 
-type PlaywrightWebSocketFrame = {
-  readonly payload: string;
-};
+// type PlaywrightWebSocketFrame = {
+//   readonly payload: string;
+// };
 
 type SnifferBindingEntry = {
   readonly kind: string;
@@ -763,9 +773,18 @@ export async function runSocketSniffer(
     // Acepta cualquier wss de robinhood; filtramos por contenido más adelante
     if (!/^wss:\/\/.*robinhood\.com/i.test(url)) return;
 
-    ws.on('framereceived', async (frame: PlaywrightWebSocketFrame) => {
+    ws.on('framereceived', async (frame) => {
       try {
-        const text = frame.payload;
+        let text: string;
+        if (typeof frame.payload === 'string') {
+          text = frame.payload;
+        } else if (typeof Buffer !== 'undefined' && Buffer.isBuffer?.(frame.payload)) {
+          text = (frame.payload as Buffer).toString('utf8');
+        } else if (frame.payload && typeof (frame.payload as any).toString === 'function') {
+          text = (frame.payload as any).toString();
+        } else {
+          text = String(frame.payload ?? '');
+        }
         let parsed: unknown;
         if (typeof text === 'string' && text.startsWith('{')) {
           parsed = JSON.parse(text);
@@ -773,13 +792,13 @@ export async function runSocketSniffer(
         if (!page.isClosed()) {
           try {
             await page.evaluate(
-              (entry: SnifferMessageEntry) => {
+              (entry) => {
                 const target = window as typeof window & {
-                  socketSnifferLog?: (value: SnifferBindingEntry) => void;
+                  socketSnifferLog?: (value: { kind: 'ws-message'; url: string; text: string; parsed?: unknown }) => void;
                 };
                 target.socketSnifferLog?.(entry);
               },
-              { kind: 'ws-message', url, text, parsed },
+              { kind: 'ws-message' as const, url, text, parsed },
             );
           } catch (error) {
             console.warn('[socket-sniffer] page.evaluate fallo:', error);
@@ -790,14 +809,19 @@ export async function runSocketSniffer(
       }
     });
 
-    ws.on('framesent', (frame: PlaywrightWebSocketFrame) => {
+    ws.on('framesent', (frame) => {
       try {
         const text = frame.payload;
         let parsed: unknown;
         if (typeof text === 'string' && text.startsWith('{')) {
           parsed = JSON.parse(text);
         }
-        pageWithSniffer.socketSnifferLog?.({ kind: 'ws-send', url, text, parsed });
+        (page as unknown as { socketSnifferLog?: (e: any) => void }).socketSnifferLog?.({
+          kind: 'ws-message',
+          url,
+          text,            // <-- ahora siempre string
+          parsed,
+        } as const);
       } catch (err) {
         console.error('[socket-sniffer] frame tx error:', err);
       }

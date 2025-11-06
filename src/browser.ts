@@ -3,6 +3,7 @@ import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium, type BrowserContext } from 'playwright';
 
+// Añade tipos oficiales si quieres máxima precisión
 type WebSocketFrameEvent = {
   readonly request?: { readonly url?: string };
   readonly response?: { readonly payloadData?: string };
@@ -103,18 +104,14 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
         if (!page.isClosed()) {
           try {
             await page.evaluate(
-              (entry: SnifferLogEntry) => {
+              (entry) => {
                 const target = window as typeof window & {
-                  socketSnifferLog?: (value: SnifferLogEntry) => void;
+                  socketSnifferLog?: (value: { kind: 'ws-message'; url: string; text: string; parsed?: unknown }) => void;
                 };
                 target.socketSnifferLog?.(entry);
               },
-              {
-                kind: 'ws-message',
-                url,
-                text,
-                parsed,
-              },
+              // 👇 fuerza el literal
+              { kind: 'ws-message' as const, url, text, parsed },
             );
           } catch (error) {
             console.warn('[socket-sniffer][CDP] page.evaluate fallo:', error);
@@ -136,18 +133,13 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
         if (!page.isClosed()) {
           try {
             await page.evaluate(
-              (entry: SnifferLogEntry) => {
+              (entry) => {
                 const target = window as typeof window & {
-                  socketSnifferLog?: (value: SnifferLogEntry) => void;
+                  socketSnifferLog?: (value: { kind: 'ws-message'; url: string; text: string; parsed?: unknown }) => void;
                 };
                 target.socketSnifferLog?.(entry);
               },
-              {
-                kind: 'ws-message',
-                url,
-                text,
-                parsed,
-              },
+              { kind: 'ws-message' as const, url, text, parsed },
             );
           } catch (error) {
             console.warn('[socket-sniffer][CDP] page.evaluate fallo:', error);
