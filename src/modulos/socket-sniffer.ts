@@ -434,6 +434,13 @@ function buildHookScript() {
       }
 
       globalObject[guardKey] = true;
+
+      try {
+        globalObject.__socketHookInstalled = true;
+        console.log('[socket-sniffer][HOOK] instalado en', location.href);
+        globalObject.socketSnifferLog?.({ kind: 'hook-installed', href: location.href });
+      } catch {}
+
       try {
         globalObject.socketSnifferLog?.({ kind: 'hook-installed', href: window.location.href });
       } catch (error) {
@@ -669,10 +676,29 @@ export async function runSocketSniffer(
 
   await page.reload({ waitUntil: 'domcontentloaded' });
 
+  // --- Fuerza la inyección en todos los frames activos ---
+  for (const frame of page.frames()) {
+    try {
+      await frame.evaluate(hookScriptString);
+      console.log('[socket-sniffer] Hook forzado en frame:', frame.url());
+    } catch (err) {
+      console.warn('[socket-sniffer] No se pudo inyectar en frame:', frame.url());
+    }
+  }
+
   const hookActive = await page.evaluate(
     (flag) => Boolean(((window as unknown) as { [key: string]: unknown })[flag]),
     HOOK_GUARD_FLAG,
   );
+
+  // Verifica también los frames secundarios
+  for (const frame of page.frames()) {
+    try {
+      const active = await frame.evaluate(() => !!(window as any).__socketHookInstalled);
+      console.log('[socket-sniffer] Hook activo (frame):', frame.url(), active);
+    } catch {}
+  }
+
   /* eslint-disable no-console */
   console.log('[socket-sniffer] Hook activo:', hookActive);
   /* eslint-enable no-console */
