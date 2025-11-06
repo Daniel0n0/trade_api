@@ -775,27 +775,29 @@ export async function runSocketSniffer(
 
     ws.on('framereceived', async (frame) => {
       try {
-        let text: string;
-        if (typeof frame.payload === 'string') {
-          text = frame.payload;
-        } else if (typeof Buffer !== 'undefined' && Buffer.isBuffer?.(frame.payload)) {
-          text = (frame.payload as Buffer).toString('utf8');
-        } else if (frame.payload && typeof (frame.payload as any).toString === 'function') {
-          text = (frame.payload as any).toString();
-        } else {
-          text = String(frame.payload ?? '');
-        }
+        const text = toText(frame.payload);
+        // if (typeof frame.payload === 'string') {
+        //   text = frame.payload;
+        // } else if (typeof Buffer !== 'undefined' && Buffer.isBuffer?.(frame.payload)) {
+        //   text = (frame.payload as Buffer).toString('utf8');
+        // } else if (frame.payload && typeof (frame.payload as any).toString === 'function') {
+        //   text = (frame.payload as any).toString();
+        // } else {
+        //   text = String(frame.payload ?? '');
+        // }
         let parsed: unknown;
         if (typeof text === 'string' && text.startsWith('{')) {
-          parsed = JSON.parse(text);
+          try {
+            parsed = JSON.parse(text);
+          } catch {
+            parsed = undefined;
+          }
         }
         if (!page.isClosed()) {
           try {
             await page.evaluate(
-              (entry) => {
-                const target = window as typeof window & {
-                  socketSnifferLog?: (value: { kind: 'ws-message'; url: string; text: string; parsed?: unknown }) => void;
-                };
+              (entry: { kind: string; url: string; text: string; parsed?: unknown }) => {
+                const target = window as unknown as { socketSnifferLog?: (v: any) => void };
                 target.socketSnifferLog?.(entry);
               },
               { kind: 'ws-message' as const, url, text, parsed },
@@ -811,17 +813,28 @@ export async function runSocketSniffer(
 
     ws.on('framesent', (frame) => {
       try {
-        const text = frame.payload;
+        const text = toText(frame.payload);
         let parsed: unknown;
         if (typeof text === 'string' && text.startsWith('{')) {
-          parsed = JSON.parse(text);
+          try {
+            parsed = JSON.parse(text);
+          } catch {
+            parsed = undefined;
+          }
         }
-        (page as unknown as { socketSnifferLog?: (e: any) => void }).socketSnifferLog?.({
-          kind: 'ws-message',
+        // (page as unknown as { socketSnifferLog?: (e: any) => void }).socketSnifferLog?.({
+        //   kind: 'ws-message',
+        //   url,
+        //   text,            // <-- ahora siempre string
+        //   parsed,
+        // } as const);
+        // preferible llamar al binding local directamente (no evaluar en la página)
+        pageWithSniffer.socketSnifferLog?.({
+          kind: 'ws-message' as const,
           url,
-          text,            // <-- ahora siempre string
+          text,
           parsed,
-        } as const);
+        });
       } catch (err) {
         console.error('[socket-sniffer] frame tx error:', err);
       }

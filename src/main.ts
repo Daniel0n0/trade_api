@@ -48,10 +48,23 @@ async function handleError(error: unknown): Promise<void> {
 }
 
 function attachPageObservers(page: Page): void {
-  page.on('requestfailed', (request) => {
-    /* eslint-disable no-console */
-    console.warn(`Request failed [${request.failure()?.errorText ?? 'unknown'}]: ${request.url()}`);
-    /* eslint-enable no-console */
+  page.on('requestfailed', (req) => {
+    const url = req.url();
+    const err = req.failure()?.errorText ?? '';
+    // Ignora abortos y bloqueos esperados
+    const benign =
+      err.includes('ERR_ABORTED') ||
+      err.includes('ERR_BLOCKED_BY_RESPONSE') ||
+      err.includes('ERR_BLOCKED_BY_ORB') ||
+      url.includes('usercentrics') ||
+      url.includes('googletagmanager') ||
+      url.includes('google-analytics') ||
+      url.includes('sentry') ||
+      url.includes('crumbs.robinhood') ||
+      url.includes('nummus.robinhood');
+
+    if (benign) return;
+    console.warn(`Request failed [${err}]: ${url}`);
   });
 }
 
