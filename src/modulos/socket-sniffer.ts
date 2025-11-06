@@ -7,7 +7,6 @@ import { BarAggregator } from './timebar.js';
 
 type Serializable = Record<string, unknown>;
 
-const DEFAULT_SYMBOLS = ['SPY'];
 const DEFAULT_PREFIX = 'socket';
 const MAX_ENTRY_TEXT_LENGTH = 200_000;
 const HOOK_GUARD_FLAG = '__socketSnifferHooked__';
@@ -152,11 +151,35 @@ function normalizeDxFeedRow(channel: number, row: DxFeedRow | undefined): Record
   return { ...base, raw: row };
 }
 
-function isFeedDataPayload(value: unknown): value is { type: 'FEED_DATA'; channel?: number | string; data?: unknown } {
-  if (!value || typeof value !== 'object') {
-    return false;
+function extractFeed(parsed: unknown): { channel: number; data: unknown[] } | null {
+  if (!parsed) {
+    return null;
   }
-  return (value as { type?: unknown }).type === 'FEED_DATA';
+
+  const payload = (parsed as { payload?: unknown })?.payload ?? parsed;
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const payloadRecord = payload as Record<string, unknown>;
+  const channelRaw =
+    payloadRecord.channel ?? payloadRecord.ch ?? payloadRecord.c ??
+    (payloadRecord.payload && (payloadRecord.payload as Record<string, unknown>).channel);
+  const dataRaw =
+    payloadRecord.data ?? payloadRecord.d ??
+    (payloadRecord.payload && (payloadRecord.payload as Record<string, unknown>).data);
+
+  const channel = Number(channelRaw);
+  if (!Number.isFinite(channel)) {
+    return null;
+  }
+
+  const data = Array.isArray(dataRaw) ? dataRaw : null;
+  if (!data) {
+    return null;
+  }
+
+  return { channel, data };
 }
 
 async function exposeLogger(page: Page, logPath: string, perChannelPrefix: string): Promise<void> {
@@ -164,7 +187,7 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
   const baseName = path.basename(logPath, '.jsonl');
 
   const generalWriter = new RotatingWriter(path.join(baseDir, `${baseName}.jsonl`), ROTATE_POLICY);
-  const VERBOSE = false;
+  const VERBOSE = true; // DEBUG: habilita log detallado temporalmente
 
   const channelWriters = new Map<string, RotatingWriter>();
   let closed = false;
@@ -299,21 +322,19 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
 
   await page.exposeFunction('socketSnifferLog', (entry: Serializable) => {
     try {
-      // Log explícito para depuración
-      console.log('[socket-sniffer] Recibido entry:', JSON.stringify(entry));
-      writeGeneral(entry);
       if (VERBOSE) {
         /* eslint-disable no-console */
-        console.log('[socket-sniffer] Recibido entry:', JSON.stringify(entry));
+        console.log('[socket-sniffer] entry:', JSON.stringify(entry));
         /* eslint-enable no-console */
       }
 
+      writeGeneral(entry);
+
       const parsed = (entry as { parsed?: unknown } | undefined)?.parsed;
-      if (entry?.['kind'] === 'ws-message' && isFeedDataPayload(parsed)) {
-        const channel = Number(parsed.channel);
-        const dataRows = Array.isArray(parsed.data) ? (parsed.data as DxFeedRow[]) : [];
-        if (!Number.isNaN(channel) && dataRows.length) {
-          writeChannelRows(channel, dataRows);
+      if (entry?.['kind'] === 'ws-message') {
+        const feed = extractFeed(parsed);
+        if (feed && feed.data.length) {
+          writeChannelRows(feed.channel, feed.data as DxFeedRow[]);
         }
       }
     } catch (error) {
@@ -413,6 +434,11 @@ function buildHookScript() {
       }
 
       globalObject[guardKey] = true;
+      try {
+        globalObject.socketSnifferLog?.({ kind: 'hook-installed', href: window.location.href });
+      } catch (error) {
+        void error;
+      }
 
       const upperSymbols = new Set(
         (wantedSymbols ?? [])
@@ -469,12 +495,7 @@ function buildHookScript() {
         const OriginalWebSocket = window.WebSocket;
         const originalSend = OriginalWebSocket.prototype.send;
 
-        const shouldKeepByUrl = (url: string): boolean => {
-          return (
-            url.includes('dxfedex.com/realtime') ||
-            url.includes('api.robinhood.com/marketdata/streaming/legend')
-          );
-        };
+        const shouldKeepByUrl = (_url: string): boolean => true;
 
         const wrapMessage = (url: string, text: string | null, parsed: unknown, kind: 'ws-message' | 'ws-send') => {
           const entry: Serializable = { kind, url, text: truncate(text) };
@@ -595,7 +616,7 @@ export async function runSocketSniffer(
   page: Page,
   options: SocketSnifferOptions = {},
 ): Promise<string> {
-  const symbols = normaliseSymbols(options.symbols ?? DEFAULT_SYMBOLS);
+  const symbols = normaliseSymbols(options.symbols ?? []);
   const prefix = options.logPrefix?.trim() || DEFAULT_PREFIX;
   const primarySymbol = symbols[0];
   const logPath = createLogPath(prefix, primarySymbol ?? prefix);
@@ -620,8 +641,31 @@ export async function runSocketSniffer(
     hookGuardFlag: ${JSON.stringify(HOOK_GUARD_FLAG)}
   })`;
 
-  await page.addInitScript(hookScriptString);
+  await page.context().addInitScript(hookScriptString);
   await page.evaluate(hookScriptString);
+
+  page.context().on('page', async (p) => {
+    try {
+      await p.evaluate(hookScriptString);
+      p.on('framenavigated', async (f) => {
+        try {
+          await f.evaluate(hookScriptString);
+        } catch (error) {
+          void error;
+        }
+      });
+    } catch (error) {
+      void error;
+    }
+  });
+
+  page.on('framenavigated', async (f) => {
+    try {
+      await f.evaluate(hookScriptString);
+    } catch (error) {
+      void error;
+    }
+  });
 
   await page.reload({ waitUntil: 'domcontentloaded' });
 
