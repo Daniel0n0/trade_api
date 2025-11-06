@@ -1,4 +1,4 @@
-import type { BrowserContext, Page } from 'playwright';
+import type { Page } from 'playwright';
 import { chromium } from 'playwright';
 
 import { ensureLoggedInByUrlFlow } from './sessionFlow.js';
@@ -7,7 +7,8 @@ import { openModuleTabs } from './modules.js';
 async function run(): Promise<void> {
   const browser = await chromium.launch({
     headless: false,
-    args: ['--start-maximized'],
+    devtools: true,
+    args: ['--start-maximized', '--auto-open-devtools-for-tabs'],
   });
   const context = await browser.newContext({ viewport: null });
   const page = await context.newPage();
@@ -19,11 +20,13 @@ async function run(): Promise<void> {
     const loggedIn = await ensureLoggedInByUrlFlow(page);
 
     if (loggedIn) {
-      const modulePages = await openModuleTabs(context);
+      await openModuleTabs(context);
       /* eslint-disable no-console */
-      console.log('Sesión detectada. Los módulos se ejecutan en nuevas pestañas.');
+      console.log(
+        'Sesión detectada. El módulo 5m-1m queda abierto sin automatización para inspección manual.',
+      );
+      console.log('El navegador permanecerá abierto hasta que detengas el proceso manualmente.');
       /* eslint-enable no-console */
-      await waitForModuleLifecycle(modulePages);
     } else {
       /* eslint-disable no-console */
       console.error('No se detectó login después de 3 comprobaciones de 10 segundos.');
@@ -31,18 +34,16 @@ async function run(): Promise<void> {
     }
   } catch (error) {
     await handleError(error);
-  } finally {
-    await closeAllPages(context);
-    await context.close().catch(() => undefined);
-    await browser.close().catch(() => undefined);
   }
+
+  await waitForDebuggerSession();
 }
 
 async function handleError(error: unknown): Promise<void> {
   /* eslint-disable no-console */
   console.error('Automation encountered an error.');
   console.error(error);
-  console.error('The browser context will now close. Review artifacts/trace-*.zip for debugging.');
+  console.error('El navegador permanecerá abierto para que puedas revisar el estado manualmente.');
   /* eslint-enable no-console */
 }
 
@@ -52,28 +53,6 @@ function attachPageObservers(page: Page): void {
     console.warn(`Request failed [${request.failure()?.errorText ?? 'unknown'}]: ${request.url()}`);
     /* eslint-enable no-console */
   });
-}
-
-async function waitForModuleLifecycle(modulePages: readonly Page[]): Promise<void> {
-  const closings = modulePages.map(
-    (modulePage) =>
-      new Promise<void>((resolve) => {
-        modulePage.once('close', () => resolve());
-      }),
-  );
-
-  const { promise: signalPromise, cleanup } = createSignalPromise();
-
-  try {
-    if (closings.length === 0) {
-      await signalPromise;
-      return;
-    }
-
-    await Promise.race([Promise.all(closings), signalPromise]);
-  } finally {
-    cleanup();
-  }
 }
 
 function createSignalPromise(): { promise: Promise<void>; cleanup: () => void } {
@@ -90,7 +69,7 @@ function createSignalPromise(): { promise: Promise<void>; cleanup: () => void } 
 
   const resolveSignal = (signal: NodeJS.Signals): void => {
     /* eslint-disable no-console */
-    console.log(`Se recibió la señal ${signal}. Cerrando módulos...`);
+    console.log(`Se recibió la señal ${signal}. Finalizando la sesión de depuración...`);
     /* eslint-enable no-console */
     cleanup();
     signalResolve();
@@ -115,22 +94,19 @@ function createSignalPromise(): { promise: Promise<void>; cleanup: () => void } 
   return { promise, cleanup };
 }
 
-async function closeAllPages(context: BrowserContext): Promise<void> {
-  const pages = context.pages();
-  await Promise.all(
-    pages.map(async (openPage) => {
-      if (openPage.isClosed()) {
-        return;
-      }
-      try {
-        await openPage.close({ runBeforeUnload: true });
-      } catch (error) {
-        /* eslint-disable no-console */
-        console.warn('No se pudo cerrar una pestaña del módulo limpiamente.', error);
-        /* eslint-enable no-console */
-      }
-    }),
-  );
+async function waitForDebuggerSession(): Promise<void> {
+  const { promise, cleanup } = createSignalPromise();
+
+  try {
+    /* eslint-disable no-console */
+    console.log(
+      'Depuración activa. Presiona Ctrl+C (SIGINT) o envía SIGTERM cuando quieras finalizar la sesión.',
+    );
+    /* eslint-enable no-console */
+    await promise;
+  } finally {
+    cleanup();
+  }
 }
 
 await run();
