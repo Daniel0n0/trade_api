@@ -31,29 +31,38 @@ cp .env.example .env
 
 ## Usage
 
-The project exposes a CLI entry point that opens a non-headless browser session and guides you
-through the login flow when needed.
+Antes de abrir el navegador automatizado revisa el [checklist del Paso 0](docs/checklists/paso-0.md)
+para asegurarte de que tienes dependencias, credenciales y directorios listos.
+
+### CLI interactivo principal
+
+El punto de entrada `start:robinhood` inicia una sesión visible en Chromium/Chrome, carga las
+credenciales guardadas (si existen) y pausa la ejecución para que inspecciones la interfaz.
 
 ```bash
 npm run start:robinhood
 ```
 
-During development you can use the watch mode to restart the CLI automatically on file changes:
+Para iterar rápidamente durante el desarrollo existe un modo en caliente que recompila al detectar
+cambios en los archivos fuente:
 
 ```bash
 npm run dev
 ```
 
-An additional orchestrator entry point lets you launch module-specific subscriptions directly. For
-example, to start capturing the SPY 5m/1m socket stream, run:
+### Orquestador modular
+
+El orquestador (`npm run orchestrator`) gestiona módulos especializados y aplica los *feature flags*
+definidos en `.env`/`.env.local` (por ejemplo `HEADLESS`, `DEVTOOLS`, `DEBUG_NETWORK`,
+`DEBUG_CONSOLE`). La sintaxis general es `npm run orchestrator -- sub:<modulo>:<accion>`.
 
 ```bash
-npm run sub:spy-5m-1m:now
+npm run orchestrator -- sub:spy-5m-1m:now
 ```
 
-Alternative helper commands such as `npm run sub:spy-5m-1m:stream` and
-`npm run sub:spy-5m-1m:bars` route through the same orchestrator with different action labels so you
-can experiment with additional behaviours later on.
+Los accesos directos declarados en `package.json` (`npm run sub:spy-5m-1m:stream`,
+`npm run sub:spy-5m-1m:bars`, etc.) delegan en el mismo comando para alternar acciones sin repetir
+argumentos.
 
 ### Environment flags
 
@@ -83,6 +92,29 @@ DEBUG_NETWORK=1
 ```
 
 Restart the CLI after editing `.env` files so the new flags take effect.
+
+### Checklist rápido antes de lanzar módulos
+
+1. Completa el [Paso 0](docs/checklists/paso-0.md) y verifica que `npm run lint` o `npm run test`
+   funcionen si aplican a tu cambio.
+2. Refresca las variables de entorno copiando cambios compartidos en `.env` y ajustes locales en
+   `.env.local`.
+3. Inicializa la sesión interactiva (`npm run start:robinhood`) para asegurar que las cookies de
+   Robinhood sean válidas antes de delegar al orquestador.
+4. Lanza el orquestador con el módulo requerido (`npm run orchestrator -- sub:<modulo>:now`) y
+   monitorea la carpeta `logs/` para confirmar que el *heartbeat* sigue activo.
+5. Al terminar, detén el proceso con `Ctrl+C` y valida que se ejecutó el cierre limpio (sin archivos
+   `.lock` ni procesos huérfanos).
+
+Ejemplo de `.env.local` con banderas de depuración y zona horaria personalizada:
+
+```bash
+HEADLESS=false
+DEVTOOLS=true
+DEBUG_NETWORK=1
+DEBUG_CONSOLE=1
+TZ=America/New_York
+```
 
 ### Session bootstrap and reuse
 
@@ -129,6 +161,37 @@ directory manually with:
 ```bash
 npm run clean:profile
 ```
+
+## Convenciones de almacenamiento y cierre controlado
+
+- **`data/`** – Los módulos que capturan datos usan utilidades como
+  [`dataPath`](src/io/paths.ts) para guardar archivos en `data/<SIMBOLO>/<YYYY-MM-DD>/`. El
+  orquestador imprime la ruta final cuando un *runner* devuelve un string para que puedas localizar
+  rápidamente los artefactos (JSONL, CSV, gzip). Crea la carpeta si vas a versionar datos de prueba.
+- **`logs/`** – Cada proceso activa [`createProcessLogger`](src/bootstrap/logger.ts), que genera un
+  archivo por ejecución con timestamps ISO y se rota automáticamente en base al nombre del comando.
+  Conserva esta carpeta fuera del control de versiones para evitar filtrar información sensible.
+- **Heartbeats** – Tanto [`src/main.ts`](src/main.ts) como [`src/orchestrator.ts`](src/orchestrator.ts)
+  registran un *heartbeat* cada 30 segundos en sus respectivos logs para indicar que el proceso sigue
+  vivo. Si dejan de aparecer entradas nuevas, detén el proceso manualmente y revisa la consola.
+- **Cierre limpio** – La infraestructura de señales definida en
+  [`src/bootstrap/signals.ts`](src/bootstrap/signals.ts) y el registro de *closers* garantizan que al
+  presionar `Ctrl+C` se cierren el navegador, los *streams* de archivos y el intervalo de heartbeat
+  en orden inverso. Si un cierre queda incompleto, vuelve a ejecutar el comando y luego deténlo
+  normalmente para limpiar recursos.
+
+### Regenerar semillas de IndexedDB
+
+Si necesitas regenerar semillas o datos precargados de IndexedDB para los módulos:
+
+1. Detén cualquier ejecución activa del CLI u orquestador con `Ctrl+C` y espera el mensaje de cierre
+   en la terminal.
+2. Elimina los artefactos previos relacionados (`state.json`, subcarpetas bajo `data/` asociadas al
+   símbolo y cualquier perfil persistente en `~/.robinhood-playwright-profile`).
+3. Vuelve a iniciar `npm run start:robinhood` para crear una sesión fresca; completa el login manual
+   y deja que Playwright rehidrate las stores de IndexedDB automáticamente.
+4. Reactiva el módulo requerido mediante el orquestador y verifica que los nuevos archivos se generen
+   en `data/` sin reutilizar semillas antiguas.
 
 ## Project Structure
 
