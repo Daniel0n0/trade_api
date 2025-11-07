@@ -27,6 +27,11 @@ const RawEnvSchema = z
     DEVTOOLS: z.string().optional(),
     DEBUG_NETWORK: z.string().optional(),
     DEBUG_CONSOLE: z.string().optional(),
+    PERSIST_COOKIES: z.string().optional(),
+    PERSIST_INDEXEDDB: z.string().optional(),
+    STORAGE_STATE_PATH: z.string().optional(),
+    INDEXEDDB_SEED: z.string().optional(),
+    INDEXEDDB_PROFILE: z.string().optional(),
   })
   .passthrough();
 
@@ -60,4 +65,15 @@ export const FLAGS = {
   devtools: coerceBoolean(rawEnv.DEVTOOLS, !headless),
   debugNetwork: coerceBoolean(rawEnv.DEBUG_NETWORK, false),
   debugConsole: coerceBoolean(rawEnv.DEBUG_CONSOLE, false),
+  persistCookies: coerceBoolean(rawEnv.PERSIST_COOKIES, true),
+  persistIndexedDb: coerceBoolean(rawEnv.PERSIST_INDEXEDDB, false),
+  storageStatePath:
+    rawEnv.STORAGE_STATE_PATH && rawEnv.STORAGE_STATE_PATH.trim() !== ''
+      ? path.resolve(rawEnv.STORAGE_STATE_PATH)
+      : path.join(process.cwd(), 'state', 'storage', 'robinhood.json'),
+  indexedDbSeed: rawEnv.INDEXEDDB_SEED && rawEnv.INDEXEDDB_SEED.trim() !== '' ? rawEnv.INDEXEDDB_SEED : undefined,
+  indexedDbProfile:
+    rawEnv.INDEXEDDB_PROFILE && rawEnv.INDEXEDDB_PROFILE.trim() !== ''
+      ? path.resolve(rawEnv.INDEXEDDB_PROFILE)
+      : undefined,
 };

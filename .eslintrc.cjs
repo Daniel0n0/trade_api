@@ -18,9 +18,13 @@ module.exports = {
     node: true
   },
   settings: {
+    'import/core-modules': ['dotenv', 'zod'],
     'import/resolver': {
       typescript: {
         project: './tsconfig.json'
+      },
+      node: {
+        extensions: ['.js', '.ts', '.d.ts']
       }
     }
   },

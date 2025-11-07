@@ -2,6 +2,7 @@ import type { BrowserContext, Page } from 'playwright';
 
 import { MODULES } from './config.js';
 import { MODULE_RUNNERS } from './modulos/index.js';
+import type { SubBrowserArgs } from './orchestrator/types.js';
 
 const CONSENT_CONTAINER_SELECTORS = [
   '[data-testid*="consent"]',
@@ -101,7 +102,8 @@ export async function openModuleTabs(context: BrowserContext): Promise<Page[]> {
     const runner = MODULE_RUNNERS[module.name];
     if (runner) {
       await ensureNoModalConsent(page);
-      runner(page).catch((error: unknown) => {
+      const args: SubBrowserArgs = { moduleName: module.name, action: 'preview' };
+      runner(args, { context, page }).catch((error: unknown) => {
         /* eslint-disable no-console */
         console.error(`Error al ejecutar el módulo "${module.name}":`, error);
         /* eslint-enable no-console */
