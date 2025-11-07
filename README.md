@@ -44,6 +44,17 @@ During development you can use the watch mode to restart the CLI automatically o
 npm run dev
 ```
 
+An additional orchestrator entry point lets you launch module-specific subscriptions directly. For
+example, to start capturing the SPY 5m/1m socket stream, run:
+
+```bash
+npm run sub:spy-5m-1m:now
+```
+
+Alternative helper commands such as `npm run sub:spy-5m-1m:stream` and
+`npm run sub:spy-5m-1m:bars` route through the same orchestrator with different action labels so you
+can experiment with additional behaviours later on.
+
 ### Environment flags
 
 Runtime behaviour can be adjusted with environment variables stored in `.env` and overridden in
@@ -56,8 +67,22 @@ committed to version control so you can safely keep local values private.
 | `DEVTOOLS`        | boolean | `true` if `HEADLESS` is `false`, otherwise `false` | Forces the DevTools panel open for non-headless sessions. |
 | `DEBUG_NETWORK`   | boolean | `false` | Logs failed network requests (excluding known benign domains). |
 | `DEBUG_CONSOLE`   | boolean | `false` | Mirrors page `console` output to the terminal. |
+| `TZ`              | string  | `UTC`   | Overrides the process timezone (affects timestamps and log rotation). |
 
 > ℹ️ The process timezone is pinned to `UTC` to keep timestamps deterministic across environments.
+
+Adjust these values by editing `.env` (checked in) or `.env.local` (ignored by Git). The second file
+takes precedence so you can keep machine-specific tweaks private. For example, to run Playwright in
+headless mode while keeping DevTools closed and aligning timestamps with New York time, set:
+
+```bash
+HEADLESS=true
+DEVTOOLS=false
+TZ=America/New_York
+DEBUG_NETWORK=1
+```
+
+Restart the CLI after editing `.env` files so the new flags take effect.
 
 ### Session bootstrap and reuse
 

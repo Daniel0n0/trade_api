@@ -1,8 +1,10 @@
 import type { Locator } from 'playwright';
 
+type LocatorState = NonNullable<Parameters<Locator['waitFor']>[0]>['state'];
+
 export interface WaitForAnyOptions {
   readonly timeout?: number;
-  readonly state?: Parameters<Locator['waitFor']>[0]['state'];
+  readonly state?: LocatorState;
 }
 
 export async function waitForAny(

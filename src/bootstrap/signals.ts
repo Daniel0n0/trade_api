@@ -81,7 +81,7 @@ export function bindProcessSignals(): ProcessSignalsBinding {
     return binding;
   }
 
-  ensureShutdownPromise();
+  void ensureShutdownPromise();
 
   const handleSignal = (signal: Signals) => {
     /* eslint-disable no-console */
