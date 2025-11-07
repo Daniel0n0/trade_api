@@ -1,20 +1,24 @@
 import type { Page } from 'playwright';
 import { chromium } from 'playwright';
 
+import { FLAGS } from './bootstrap/env.js';
+
 import { ensureLoggedInByUrlFlow } from './sessionFlow.js';
 import { openModuleTabs } from './modules.js';
 
 async function run(): Promise<void> {
   const browser = await chromium.launch({
-    headless: false,
-    devtools: true,
-    args: ['--start-maximized', '--auto-open-devtools-for-tabs'],
+    headless: FLAGS.headless,
+    devtools: FLAGS.devtools,
+    args: FLAGS.headless ? undefined : ['--start-maximized', '--auto-open-devtools-for-tabs'],
   });
   const context = await browser.newContext({ viewport: null });
   const page = await context.newPage();
 
-  attachPageObservers(page);
-  context.on('page', attachPageObservers);
+  if (FLAGS.debugNetwork || FLAGS.debugConsole) {
+    attachPageObservers(page);
+    context.on('page', attachPageObservers);
+  }
 
   try {
     const loggedIn = await ensureLoggedInByUrlFlow(page);
@@ -48,24 +52,34 @@ async function handleError(error: unknown): Promise<void> {
 }
 
 function attachPageObservers(page: Page): void {
-  page.on('requestfailed', (req) => {
-    const url = req.url();
-    const err = req.failure()?.errorText ?? '';
-    // Ignora abortos y bloqueos esperados
-    const benign =
-      err.includes('ERR_ABORTED') ||
-      err.includes('ERR_BLOCKED_BY_RESPONSE') ||
-      err.includes('ERR_BLOCKED_BY_ORB') ||
-      url.includes('usercentrics') ||
-      url.includes('googletagmanager') ||
-      url.includes('google-analytics') ||
-      url.includes('sentry') ||
-      url.includes('crumbs.robinhood') ||
-      url.includes('nummus.robinhood');
+  if (FLAGS.debugNetwork) {
+    page.on('requestfailed', (req) => {
+      const url = req.url();
+      const err = req.failure()?.errorText ?? '';
+      // Ignora abortos y bloqueos esperados
+      const benign =
+        err.includes('ERR_ABORTED') ||
+        err.includes('ERR_BLOCKED_BY_RESPONSE') ||
+        err.includes('ERR_BLOCKED_BY_ORB') ||
+        url.includes('usercentrics') ||
+        url.includes('googletagmanager') ||
+        url.includes('google-analytics') ||
+        url.includes('sentry') ||
+        url.includes('crumbs.robinhood') ||
+        url.includes('nummus.robinhood');
 
-    if (benign) return;
-    console.warn(`Request failed [${err}]: ${url}`);
-  });
+      if (benign) return;
+      console.warn(`Request failed [${err}]: ${url}`);
+    });
+  }
+
+  if (FLAGS.debugConsole) {
+    page.on('console', (message) => {
+      /* eslint-disable no-console */
+      console.log(`[console:${message.type()}] ${message.text()}`);
+      /* eslint-enable no-console */
+    });
+  }
 }
 
 function createSignalPromise(): { promise: Promise<void>; cleanup: () => void } {

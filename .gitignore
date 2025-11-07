@@ -4,4 +4,9 @@ artifacts/
 playwright-report/
 test-results/
 .env
+.env.local
+.env.*.local
+logs/
+creds/
+state/
 data/

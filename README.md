@@ -23,6 +23,12 @@ npm install
 npx playwright install chromium
 ```
 
+Copy the sample environment file when bootstrapping a new checkout:
+
+```bash
+cp .env.example .env
+```
+
 ## Usage
 
 The project exposes a CLI entry point that opens a non-headless browser session and guides you
@@ -31,6 +37,27 @@ through the login flow when needed.
 ```bash
 npm run start:robinhood
 ```
+
+During development you can use the watch mode to restart the CLI automatically on file changes:
+
+```bash
+npm run dev
+```
+
+### Environment flags
+
+Runtime behaviour can be adjusted with environment variables stored in `.env` and overridden in
+`.env.local`. These files are loaded on startup and validated with `zod`. Only `.env.example` is
+committed to version control so you can safely keep local values private.
+
+| Variable          | Type    | Default | Description |
+| ----------------- | ------- | ------- | ----------- |
+| `HEADLESS`        | boolean | `false` | Enables headless Chromium runs when set to `true`/`1`. |
+| `DEVTOOLS`        | boolean | `true` if `HEADLESS` is `false`, otherwise `false` | Forces the DevTools panel open for non-headless sessions. |
+| `DEBUG_NETWORK`   | boolean | `false` | Logs failed network requests (excluding known benign domains). |
+| `DEBUG_CONSOLE`   | boolean | `false` | Mirrors page `console` output to the terminal. |
+
+> ℹ️ The process timezone is pinned to `UTC` to keep timestamps deterministic across environments.
 
 ### Session bootstrap and reuse
 
