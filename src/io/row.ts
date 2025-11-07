@@ -74,7 +74,7 @@ type CsvRow<T extends readonly string[]> = Partial<Record<HeaderKey<T>, string |
 export function toCsvLine<T extends readonly string[]>(header: T, row: CsvRow<T>): string {
   return header
     .map((key) => {
-      const value = row[key];
+      const value = row[key as HeaderKey<T>];
       if (value === null || value === undefined) {
         return '';
       }
@@ -268,10 +268,13 @@ export function buildTradeAggregationRow(event: BaseEvent): TradeAggregationRow 
   if (ts === null || price === undefined) {
     return undefined;
   }
-  const trade: TradeAggregationRow = { ts, price };
-  if (typeof event.dayVolume === 'number' && Number.isFinite(event.dayVolume)) {
-    trade.dayVolume = event.dayVolume;
-  }
+  const trade: TradeAggregationRow = {
+    ts,
+    price,
+    ...(typeof event.dayVolume === 'number' && Number.isFinite(event.dayVolume)
+      ? { dayVolume: event.dayVolume }
+      : {})
+  };
   return trade;
 }
 
