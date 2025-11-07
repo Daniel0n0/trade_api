@@ -193,6 +193,62 @@ async function exposeLogger(
     });
   }, HEALTH_INTERVAL_MS);
 
+  const toFiniteNumber = (value: unknown): number | undefined => {
+    if (typeof value === 'number') {
+      return Number.isFinite(value) ? value : undefined;
+    }
+    if (typeof value === 'bigint') {
+      return Number(value);
+    }
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return undefined;
+      }
+      const parsed = Number(trimmed);
+      return Number.isFinite(parsed) ? parsed : undefined;
+    }
+    if (value instanceof Date) {
+      const ms = value.getTime();
+      return Number.isFinite(ms) ? ms : undefined;
+    }
+    return undefined;
+  };
+
+  const resolveEventTimestamp = (event: BaseEvent): number | undefined => {
+    const record = event as Record<string, unknown>;
+    const candidates: unknown[] = [
+      event.eventTime,
+      event.time,
+      record.eventTimestamp,
+      record.timestamp,
+      record.ts,
+      record.t,
+    ];
+
+    for (const candidate of candidates) {
+      const resolved = toFiniteNumber(candidate);
+      if (typeof resolved === 'number') {
+        return resolved;
+      }
+    }
+
+    return undefined;
+  };
+
+  const resolveEventSymbol = (event: BaseEvent): string | undefined => {
+    const candidates = [event.eventSymbol, event.symbol];
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string') {
+        const trimmed = candidate.trim();
+        if (trimmed) {
+          return trimmed;
+        }
+      }
+    }
+    return undefined;
+  };
+
   const writeChannelRows = (channel: number, rows: readonly unknown[]) => {
     if (!rows?.length) {
       return;
@@ -238,6 +294,20 @@ async function exposeLogger(
         (normalized as Record<string, unknown>).raw = row;
       }
       writer.write(JSON.stringify(normalized));
+
+      const eventTs = resolveEventTimestamp(event);
+      if (typeof eventTs === 'number') {
+        const lagMs = Date.now() - eventTs;
+        if (lagMs > 2000) {
+          writeGeneral({
+            kind: 'lag-warn',
+            channel,
+            symbol: resolveEventSymbol(event),
+            lagMs,
+            eventTs,
+          });
+        }
+      }
 
       if (resolvedType === 'Candle') {
         const candleRow = buildCandleCsvRow(event);
