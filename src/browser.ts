@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { chromium, type BrowserContext } from 'playwright';
 import { ENV } from './utils/env.js';
 import { normaliseFramePayload } from './utils/payload.js';
@@ -17,6 +17,11 @@ type WebSocketFrameEvent = {
 type WebSocketCreatedEvent = {
   readonly requestId?: string;
   readonly url?: string;
+};
+
+type WebSocketHandshakeEvent = {
+  readonly requestId?: string;
+  readonly request?: { readonly url?: string };
 };
 
 type SnifferLogEntry = {
@@ -48,7 +53,7 @@ export interface PersistentLaunchOverrides extends Partial<LaunchOptions> {
 export async function launchPersistentBrowser(
   overrides: PersistentLaunchOverrides = {},
 ): Promise<BrowserResources> {
-  const { mode = 'bootstrap', storageStatePath = join(process.cwd(), 'state.json'), ...rest } = overrides;
+  const { mode = 'bootstrap', storageStatePath = defaultStorageStatePath(), ...rest } = overrides;
   const options: LaunchOptions = { ...defaultLaunchOptions, ...rest };
 
   if (mode === 'bootstrap') {
@@ -66,6 +71,21 @@ function ensureProfileDirectory(path: string): void {
   if (!existsSync(path)) {
     mkdirSync(path, { recursive: true });
   }
+}
+
+function ensureDirectoryForFile(filePath: string): void {
+  const directory = dirname(filePath);
+  if (directory && directory !== '.') {
+    ensureProfileDirectory(directory);
+  }
+}
+
+function defaultStorageStatePath(): string {
+  return join(process.cwd(), 'state', 'robinhood.json');
+}
+
+function defaultTracePath(): string {
+  return join(process.cwd(), 'artifacts', `trace-${Date.now()}.zip`);
 }
 
 async function cleanupProfile(path: string): Promise<void> {
@@ -102,6 +122,20 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
 
     const socketUrlByRequestId = new Map<string, string>();
 
+    const resolveUrl = (event: WebSocketFrameEvent): string => {
+      const directUrl = event.request?.url;
+      if (directUrl) {
+        return directUrl;
+      }
+      if (event.requestId) {
+        const mapped = socketUrlByRequestId.get(event.requestId);
+        if (mapped) {
+          return mapped;
+        }
+      }
+      return 'unknown-websocket';
+    };
+
     cdp.on('Network.webSocketCreated', (e: WebSocketCreatedEvent) => {
       if (e.requestId && e.url) {
         socketUrlByRequestId.set(e.requestId, e.url);
@@ -109,10 +143,15 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
       console.log('[socket-sniffer][CDP] WS creado:', e.url);
     });
 
+    cdp.on('Network.webSocketWillSendHandshakeRequest', (e: WebSocketHandshakeEvent) => {
+      if (e.requestId && e.request?.url) {
+        socketUrlByRequestId.set(e.requestId, e.request.url);
+      }
+    });
+
     cdp.on('Network.webSocketFrameReceived', async (e: WebSocketFrameEvent) => {
       try {
-        const url =
-          e.request?.url || (e.requestId ? socketUrlByRequestId.get(e.requestId) ?? '' : '');
+        const url = resolveUrl(e);
         const { text, parsed } = normaliseFramePayload(e.response?.payloadData);
         if (!page.isClosed()) {
           try {
@@ -137,8 +176,7 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
 
     cdp.on('Network.webSocketFrameSent', async (e: WebSocketFrameEvent) => {
       try {
-        const url =
-          e.request?.url || (e.requestId ? socketUrlByRequestId.get(e.requestId) ?? '' : '');
+        const url = resolveUrl(e);
         const { text, parsed } = normaliseFramePayload(e.response?.payloadData);
         if (!page.isClosed()) {
           try {
@@ -167,7 +205,9 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
   await page.goto('https://robinhood.com/login', { waitUntil: 'domcontentloaded' });
   // -> loguéate manualmente
   await page.waitForURL(/robinhood\.com\/(home|account|legend)/, { timeout: 120_000 });
-  await context.storageState({ path: 'state/robinhood.json' });
+  const storageStatePath = defaultStorageStatePath();
+  ensureDirectoryForFile(storageStatePath);
+  await context.storageState({ path: storageStatePath });
 
   const enableNetworkBlocking = configureNetworkBlocking(context, options.blockTrackingDomains);
 
@@ -184,7 +224,8 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
     enableNetworkBlocking,
     close: async () => {
       if (options.tracingEnabled) {
-        const tracePath = join(process.cwd(), 'artifacts', `trace-${Date.now()}.zip`);
+        const tracePath = defaultTracePath();
+        ensureDirectoryForFile(tracePath);
         await context.tracing.stop({ path: tracePath });
       }
       await context.close();
@@ -224,7 +265,8 @@ async function launchReusedContext(options: LaunchOptions, storageStatePath: str
     enableNetworkBlocking,
     close: async () => {
       if (options.tracingEnabled) {
-        const tracePath = join(process.cwd(), 'artifacts', `trace-${Date.now()}.zip`);
+        const tracePath = defaultTracePath();
+        ensureDirectoryForFile(tracePath);
         await context.tracing.stop({ path: tracePath });
       }
       await context.close();
@@ -261,7 +303,8 @@ async function launchPersistentContext(options: LaunchOptions): Promise<BrowserR
     enableNetworkBlocking,
     close: async () => {
       if (options.tracingEnabled) {
-        const tracePath = join(process.cwd(), 'artifacts', `trace-${Date.now()}.zip`);
+        const tracePath = defaultTracePath();
+        ensureDirectoryForFile(tracePath);
         await context.tracing.stop({ path: tracePath });
       }
       await context.close();
