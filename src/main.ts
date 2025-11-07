@@ -2,15 +2,30 @@ import type { Page } from 'playwright';
 import { chromium } from 'playwright';
 
 import { FLAGS } from './bootstrap/env.js';
+import { createProcessLogger } from './bootstrap/logger.js';
+import { bindProcessSignals, registerCloser } from './bootstrap/signals.js';
 
 import { ensureLoggedInByUrlFlow } from './sessionFlow.js';
 import { openModuleTabs } from './modules.js';
+
+const { waitForShutdown } = bindProcessSignals();
+const processLogger = createProcessLogger({ name: 'main' });
+registerCloser(() => processLogger.close());
 
 async function run(): Promise<void> {
   const browser = await chromium.launch({
     headless: FLAGS.headless,
     devtools: FLAGS.devtools,
     args: FLAGS.headless ? undefined : ['--start-maximized', '--auto-open-devtools-for-tabs'],
+  });
+  registerCloser(async () => {
+    try {
+      await browser.close();
+    } catch (error) {
+      /* eslint-disable no-console */
+      console.error('Error al cerrar el navegador durante el apagado controlado:', error);
+      /* eslint-enable no-console */
+    }
   });
   const context = await browser.newContext({ viewport: null });
   const page = await context.newPage();
@@ -40,7 +55,6 @@ async function run(): Promise<void> {
     await handleError(error);
   }
 
-  await waitForDebuggerSession();
 }
 
 async function handleError(error: unknown): Promise<void> {
@@ -81,59 +95,10 @@ function attachPageObservers(page: Page): void {
     });
   }
 }
-
-function createSignalPromise(): { promise: Promise<void>; cleanup: () => void } {
-  let cleanedUp = false;
-
-  const cleanup = (): void => {
-    if (cleanedUp) {
-      return;
-    }
-    cleanedUp = true;
-    process.off('SIGINT', onSigint);
-    process.off('SIGTERM', onSigterm);
-  };
-
-  const resolveSignal = (signal: NodeJS.Signals): void => {
-    /* eslint-disable no-console */
-    console.log(`Se recibió la señal ${signal}. Finalizando la sesión de depuración...`);
-    /* eslint-enable no-console */
-    cleanup();
-    signalResolve();
-  };
-
-  let signalResolve: () => void = () => {};
-
-  const promise = new Promise<void>((resolve) => {
-    signalResolve = resolve;
-  });
-
-  const onSigint = (): void => {
-    resolveSignal('SIGINT');
-  };
-  const onSigterm = (): void => {
-    resolveSignal('SIGTERM');
-  };
-
-  process.once('SIGINT', onSigint);
-  process.once('SIGTERM', onSigterm);
-
-  return { promise, cleanup };
-}
-
-async function waitForDebuggerSession(): Promise<void> {
-  const { promise, cleanup } = createSignalPromise();
-
-  try {
-    /* eslint-disable no-console */
-    console.log(
-      'Depuración activa. Presiona Ctrl+C (SIGINT) o envía SIGTERM cuando quieras finalizar la sesión.',
-    );
-    /* eslint-enable no-console */
-    await promise;
-  } finally {
-    cleanup();
-  }
-}
-
 await run();
+
+/* eslint-disable no-console */
+console.log('Depuración activa. Presiona Ctrl+C (SIGINT) o envía SIGTERM cuando quieras finalizar la sesión.');
+/* eslint-enable no-console */
+
+await waitForShutdown();
