@@ -24,6 +24,7 @@ type Serializable = Record<string, unknown>;
 
 const DEFAULT_PREFIX = 'socket';
 const HEARTBEAT_INTERVAL_MS = 5_000;
+const HEALTH_INTERVAL_MS = 30_000;
 const HOOK_GUARD_FLAG = '__socketSnifferHooked__';
 
 const ROTATE_POLICY: RotatePolicy = {
@@ -80,6 +81,18 @@ async function exposeLogger(
 
   const generalWriter = new RotatingWriter(path.join(baseDir, `${baseName}.jsonl`), ROTATE_POLICY);
   const VERBOSE = false; // Cambiado a false para reducir ruido por defecto
+
+  const counts = new Map<number, number>();
+  const lastWriteTs = new Map<number, number>();
+
+  const bump = (channel: number, n: number) => {
+    if (!Number.isFinite(n) || n <= 0) {
+      return;
+    }
+    const previous = counts.get(channel) ?? 0;
+    counts.set(channel, previous + n);
+    lastWriteTs.set(channel, Date.now());
+  };
 
   const channelWriters = new Map<string, RotatingWriter>();
   let closed = false;
@@ -164,6 +177,22 @@ async function exposeLogger(
     flushBars(Date.now());
   }, HEARTBEAT_INTERVAL_MS);
 
+  const healthbeat = setInterval(() => {
+    const now = Date.now();
+    const rss = process.memoryUsage().rss;
+    const uptime = process.uptime();
+    const countsSnapshot = Object.fromEntries(counts.entries());
+    const lastWriteSnapshot = Object.fromEntries(lastWriteTs.entries());
+    writeGeneral({
+      kind: 'health',
+      now,
+      rss,
+      uptime,
+      counts: countsSnapshot,
+      lastWriteTs: lastWriteSnapshot,
+    });
+  }, HEALTH_INTERVAL_MS);
+
   const writeChannelRows = (channel: number, rows: readonly unknown[]) => {
     if (!rows?.length) {
       return;
@@ -180,6 +209,7 @@ async function exposeLogger(
         ? 'quote'
         : 'raw';
     const writer = getChannelWriter(channel, label);
+    bump(channel, rows.length);
 
     let lastNow = Date.now();
     for (const row of rows) {
@@ -273,6 +303,7 @@ async function exposeLogger(
     }
     closed = true;
     clearInterval(heartbeat);
+    clearInterval(healthbeat);
     try {
       const now = Date.now();
       const remaining1 = agg1m.drainAll();
@@ -308,7 +339,6 @@ async function exposeLogger(
   };
 
   page.once('close', () => {
-    clearInterval(heartbeat);
     closeAll();
     /* eslint-disable no-console */
     console.log('[socket-sniffer] Página cerrada. Archivos rotados y comprimidos si aplica.');
