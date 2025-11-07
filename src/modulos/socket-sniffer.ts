@@ -18,16 +18,7 @@ import {
 } from '../io/row.js';
 import { dataPath } from '../io/paths.js';
 import { BaseEvent } from '../io/schemas.js';
-
-// cerca de arriba (imports), no hace falta importar Buffer explícitamente
-const toText = (p: unknown): string => {
-  if (typeof p === 'string') return p;
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore - Buffer existe en runtime Node y en types al tener node:fs
-  if (typeof Buffer !== 'undefined' && p && Buffer.isBuffer?.(p)) return (p as Buffer).toString('utf8');
-  // último recurso: intenta convertir a string
-  return p == null ? '' : String(p);
-};
+import { payloadToText } from '../utils/payload.js';
 
 type Serializable = Record<string, unknown>;
 
@@ -590,7 +581,7 @@ export async function runSocketSniffer(
 
     ws.on('framereceived', async (frame) => {
       try {
-        const text = toText(frame.payload);
+        const text = payloadToText(frame.payload);
         // if (typeof frame.payload === 'string') {
         //   text = frame.payload;
         // } else if (typeof Buffer !== 'undefined' && Buffer.isBuffer?.(frame.payload)) {
@@ -628,7 +619,7 @@ export async function runSocketSniffer(
 
     ws.on('framesent', (frame) => {
       try {
-        const text = toText(frame.payload);
+        const text = payloadToText(frame.payload);
         let parsed: unknown;
         if (typeof text === 'string' && text.startsWith('{')) {
           try {
@@ -715,22 +706,29 @@ export async function runSocketSniffer(
     HOOK_GUARD_FLAG,
   );
 
-  // Verifica también los frames secundarios
-    for (const frame of page.frames()) {
-      try {
-        const active = await frame.evaluate(() => {
-          const target = window as typeof window & { __socketHookInstalled?: boolean };
-          return Boolean(target.__socketHookInstalled);
-        });
-        console.log('[socket-sniffer] Hook activo (frame):', frame.url(), active);
-      } catch (error) {
-        void error;
+  let framesWithHook = 0;
+  for (const frame of page.frames()) {
+    try {
+      const active = await frame.evaluate(() => {
+        const target = window as typeof window & { __socketHookInstalled?: boolean };
+        return Boolean(target.__socketHookInstalled);
+      });
+      if (active) {
+        framesWithHook += 1;
       }
+      console.log('[socket-sniffer] Hook activo (frame):', frame.url(), active);
+    } catch (error) {
+      void error;
     }
+  }
 
-  /* eslint-disable no-console */
-  console.log('[socket-sniffer] Hook activo:', hookActive);
-  /* eslint-enable no-console */
+  if (!hookActive && framesWithHook === 0) {
+    console.warn('[socket-sniffer] Hook no instalado en ningún frame; usando CDP como fuente principal.');
+  } else {
+    /* eslint-disable no-console */
+    console.log('[socket-sniffer] Hook activo:', hookActive, 'frames con hook:', framesWithHook);
+    /* eslint-enable no-console */
+  }
 
   return {
     close: closeLogger,

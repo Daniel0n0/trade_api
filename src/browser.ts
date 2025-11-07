@@ -2,11 +2,12 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium, type BrowserContext } from 'playwright';
+import { payloadToText } from './utils/payload.js';
 
 // Añade tipos oficiales si quieres máxima precisión
 type WebSocketFrameEvent = {
   readonly request?: { readonly url?: string };
-  readonly response?: { readonly payloadData?: string };
+  readonly response?: { readonly payloadData?: unknown };
 };
 
 type WebSocketCreatedEvent = {
@@ -96,7 +97,7 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
     cdp.on('Network.webSocketFrameReceived', async (e: WebSocketFrameEvent) => {
       try {
         const url = e.request?.url || '';
-        const text = e.response?.payloadData ?? '';
+        const text = payloadToText(e.response?.payloadData);
         let parsed: unknown;
         if (typeof text === 'string' && text.startsWith('{')) {
           parsed = JSON.parse(text);
@@ -125,7 +126,7 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
     cdp.on('Network.webSocketFrameSent', async (e: WebSocketFrameEvent) => {
       try {
         const url = e.request?.url || '';
-        const text = e.response?.payloadData ?? '';
+        const text = payloadToText(e.response?.payloadData);
         let parsed: unknown;
         if (typeof text === 'string' && text.startsWith('{')) {
           parsed = JSON.parse(text);
