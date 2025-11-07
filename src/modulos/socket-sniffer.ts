@@ -82,16 +82,35 @@ async function exposeLogger(
   const generalWriter = new RotatingWriter(path.join(baseDir, `${baseName}.jsonl`), ROTATE_POLICY);
   const VERBOSE = false; // Cambiado a false para reducir ruido por defecto
 
-  const counts = new Map<number, number>();
-  const lastWriteTs = new Map<number, number>();
+  const counts = { ch1: 0, ch3: 0, ch5: 0, ch7: 0, other: 0, total: 0 };
+  const lastWriteTs: Record<string, number> = {};
 
   const bump = (channel: number, n: number) => {
     if (!Number.isFinite(n) || n <= 0) {
       return;
     }
-    const previous = counts.get(channel) ?? 0;
-    counts.set(channel, previous + n);
-    lastWriteTs.set(channel, Date.now());
+
+    counts.total += n;
+    let key: string;
+    if (channel === 1) {
+      counts.ch1 += n;
+      key = 'ch1';
+    } else if (channel === 3) {
+      counts.ch3 += n;
+      key = 'ch3';
+    } else if (channel === 5) {
+      counts.ch5 += n;
+      key = 'ch5';
+    } else if (channel === 7) {
+      counts.ch7 += n;
+      key = 'ch7';
+    } else {
+      counts.other += n;
+      key = `ch${channel}`;
+      lastWriteTs.other = Date.now();
+    }
+
+    lastWriteTs[key] = Date.now();
   };
 
   const channelWriters = new Map<string, RotatingWriter>();
@@ -131,13 +150,13 @@ async function exposeLogger(
     CSV_HEADER_TEXT.quote,
   );
 
-  const BARS_TIMEFRAMES = process.env.BARS_TIMEFRAMES ?? '1,5,15';
   const SUPPORTED_TIMEFRAMES = new Set([1, 5, 15]);
-  const enabledTF = new Set<number>(
-    BARS_TIMEFRAMES.split(',')
-      .map((value) => Number.parseInt(value.trim(), 10))
-      .filter((value) => Number.isFinite(value) && SUPPORTED_TIMEFRAMES.has(value)),
-  );
+  const tfEnv = (process.env.BARS_TIMEFRAMES ?? '1,5,15')
+    .split(',')
+    .map((value) => Number.parseInt(value.trim(), 10))
+    .filter((value) => Number.isFinite(value) && SUPPORTED_TIMEFRAMES.has(value));
+  const enabledTFValues = tfEnv.length > 0 ? tfEnv : [1, 5, 15];
+  const enabledTF = new Set<number>(enabledTFValues);
 
   const agg1m = enabledTF.has(1) ? new BarAggregator(1) : null;
   const agg5m = enabledTF.has(5) ? new BarAggregator(5) : null;
@@ -193,17 +212,14 @@ async function exposeLogger(
 
   const healthbeat = setInterval(() => {
     const now = Date.now();
-    const rss = process.memoryUsage().rss;
-    const uptime = process.uptime();
-    const countsSnapshot = Object.fromEntries(counts.entries());
-    const lastWriteSnapshot = Object.fromEntries(lastWriteTs.entries());
+    const rss = typeof process.memoryUsage === 'function' ? process.memoryUsage().rss : undefined;
     writeGeneral({
       kind: 'health',
-      now,
+      ts: now,
+      counts: { ...counts },
+      lastWriteTs: { ...lastWriteTs },
       rss,
-      uptime,
-      counts: countsSnapshot,
-      lastWriteTs: lastWriteSnapshot,
+      uptimeSec: Math.floor(process.uptime()),
     });
   }, HEALTH_INTERVAL_MS);
 
