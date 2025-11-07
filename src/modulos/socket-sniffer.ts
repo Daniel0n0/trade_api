@@ -18,21 +18,13 @@ import {
 } from '../io/row.js';
 import { dataPath } from '../io/paths.js';
 import { BaseEvent } from '../io/schemas.js';
-
-// cerca de arriba (imports), no hace falta importar Buffer explícitamente
-const toText = (p: unknown): string => {
-  if (typeof p === 'string') return p;
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore - Buffer existe en runtime Node y en types al tener node:fs
-  if (typeof Buffer !== 'undefined' && p && Buffer.isBuffer?.(p)) return (p as Buffer).toString('utf8');
-  // último recurso: intenta convertir a string
-  return p == null ? '' : String(p);
-};
+import { extractFeed, safeJsonParse, toText } from '../utils/payload.js';
 
 type Serializable = Record<string, unknown>;
 
 const DEFAULT_PREFIX = 'socket';
 const MAX_ENTRY_TEXT_LENGTH = 200_000;
+const HEARTBEAT_INTERVAL_MS = 5_000;
 const HOOK_GUARD_FLAG = '__socketSnifferHooked__';
 
 const ROTATE_POLICY: RotatePolicy = {
@@ -76,35 +68,19 @@ function normaliseSymbols(input: readonly string[]): readonly string[] {
   return input.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean);
 }
 
-function extractFeed(parsed: unknown): { channel: number; data: unknown[] } | null {
-  if (!parsed) {
-    return null;
+function parseFramePayload(payload: unknown): { text: string; parsed?: unknown } {
+  const text = toText(payload);
+  const trimmed = text.trimStart();
+  if (!trimmed) {
+    return { text };
   }
 
-  const payload = (parsed as { payload?: unknown })?.payload ?? parsed;
-  if (!payload || typeof payload !== 'object') {
-    return null;
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    const parsed = safeJsonParse(trimmed);
+    return parsed === undefined ? { text } : { text, parsed };
   }
 
-  const payloadRecord = payload as Record<string, unknown>;
-  const channelRaw =
-    payloadRecord.channel ?? payloadRecord.ch ?? payloadRecord.c ??
-    (payloadRecord.payload && (payloadRecord.payload as Record<string, unknown>).channel);
-  const dataRaw =
-    payloadRecord.data ?? payloadRecord.d ??
-    (payloadRecord.payload && (payloadRecord.payload as Record<string, unknown>).data);
-
-  const channel = Number(channelRaw);
-  if (!Number.isFinite(channel)) {
-    return null;
-  }
-
-  const data = Array.isArray(dataRaw) ? dataRaw : null;
-  if (!data) {
-    return null;
-  }
-
-  return { channel, data };
+  return { text };
 }
 
 async function exposeLogger(
@@ -197,6 +173,10 @@ async function exposeLogger(
       bars15mCsv.write(toCsvLine(CSV_HEADERS.bars, buildBarCsvRow(bar)));
     }
   };
+
+  const heartbeat = setInterval(() => {
+    flushBars(Date.now());
+  }, HEARTBEAT_INTERVAL_MS);
 
   const writeChannelRows = (channel: number, rows: readonly unknown[]) => {
     if (!rows?.length) {
@@ -304,6 +284,7 @@ async function exposeLogger(
       return;
     }
     closed = true;
+    clearInterval(heartbeat);
     try {
       const now = Date.now();
       const remaining1 = agg1m.drainAll();
@@ -339,6 +320,7 @@ async function exposeLogger(
   };
 
   page.once('close', () => {
+    clearInterval(heartbeat);
     closeAll();
     /* eslint-disable no-console */
     console.log('[socket-sniffer] Página cerrada. Archivos rotados y comprimidos si aplica.');
@@ -590,24 +572,7 @@ export async function runSocketSniffer(
 
     ws.on('framereceived', async (frame) => {
       try {
-        const text = toText(frame.payload);
-        // if (typeof frame.payload === 'string') {
-        //   text = frame.payload;
-        // } else if (typeof Buffer !== 'undefined' && Buffer.isBuffer?.(frame.payload)) {
-        //   text = (frame.payload as Buffer).toString('utf8');
-        // } else if (frame.payload && typeof (frame.payload as any).toString === 'function') {
-        //   text = (frame.payload as any).toString();
-        // } else {
-        //   text = String(frame.payload ?? '');
-        // }
-        let parsed: unknown;
-        if (typeof text === 'string' && text.startsWith('{')) {
-          try {
-            parsed = JSON.parse(text);
-          } catch {
-            parsed = undefined;
-          }
-        }
+        const { text, parsed } = parseFramePayload(frame.payload);
         if (!page.isClosed()) {
           try {
             await page.evaluate(
@@ -628,15 +593,7 @@ export async function runSocketSniffer(
 
     ws.on('framesent', (frame) => {
       try {
-        const text = toText(frame.payload);
-        let parsed: unknown;
-        if (typeof text === 'string' && text.startsWith('{')) {
-          try {
-            parsed = JSON.parse(text);
-          } catch {
-            parsed = undefined;
-          }
-        }
+        const { text, parsed } = parseFramePayload(frame.payload);
         // (page as unknown as { socketSnifferLog?: (e: any) => void }).socketSnifferLog?.({
         //   kind: 'ws-message',
         //   url,
@@ -715,22 +672,29 @@ export async function runSocketSniffer(
     HOOK_GUARD_FLAG,
   );
 
-  // Verifica también los frames secundarios
-    for (const frame of page.frames()) {
-      try {
-        const active = await frame.evaluate(() => {
-          const target = window as typeof window & { __socketHookInstalled?: boolean };
-          return Boolean(target.__socketHookInstalled);
-        });
-        console.log('[socket-sniffer] Hook activo (frame):', frame.url(), active);
-      } catch (error) {
-        void error;
+  let framesWithHook = 0;
+  for (const frame of page.frames()) {
+    try {
+      const active = await frame.evaluate(() => {
+        const target = window as typeof window & { __socketHookInstalled?: boolean };
+        return Boolean(target.__socketHookInstalled);
+      });
+      if (active) {
+        framesWithHook += 1;
       }
+      console.log('[socket-sniffer] Hook activo (frame):', frame.url(), active);
+    } catch (error) {
+      void error;
     }
+  }
 
-  /* eslint-disable no-console */
-  console.log('[socket-sniffer] Hook activo:', hookActive);
-  /* eslint-enable no-console */
+  if (!hookActive && framesWithHook === 0) {
+    console.warn('[socket-sniffer] Hook no instalado en ningún frame; usando CDP como fuente principal.');
+  } else {
+    /* eslint-disable no-console */
+    console.log('[socket-sniffer] Hook activo:', hookActive, 'frames con hook:', framesWithHook);
+    /* eslint-enable no-console */
+  }
 
   return {
     close: closeLogger,

@@ -2,11 +2,12 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium, type BrowserContext } from 'playwright';
+import { safeJsonParse, toText } from './utils/payload.js';
 
 // Añade tipos oficiales si quieres máxima precisión
 type WebSocketFrameEvent = {
   readonly request?: { readonly url?: string };
-  readonly response?: { readonly payloadData?: string };
+  readonly response?: { readonly payloadData?: unknown };
 };
 
 type WebSocketCreatedEvent = {
@@ -22,13 +23,18 @@ type SnifferLogEntry = {
 
 import { defaultLaunchOptions, type LaunchOptions } from './config.js';
 
+const HEADLESS = process.env.HEADLESS === '1';
+const DEBUG_NETWORK = process.env.DEBUG_NETWORK === '1';
+const CHANNEL = process.platform === 'darwin' ? 'chrome' : undefined;
+const BROWSER_ARGS = ['--disable-blink-features=AutomationControlled'];
+
 export interface BrowserResources {
   readonly context: BrowserContext;
   readonly close: () => Promise<void>;
   readonly enableNetworkBlocking: () => void;
 }
 
-export type LaunchMode = 'bootstrap' | 'reuse';
+export type LaunchMode = 'bootstrap' | 'reuse' | 'persistent';
 
 export interface PersistentLaunchOverrides extends Partial<LaunchOptions> {
   readonly mode?: LaunchMode;
@@ -43,6 +49,10 @@ export async function launchPersistentBrowser(
 
   if (mode === 'bootstrap') {
     return launchBootstrapContext(options);
+  }
+
+  if (mode === 'persistent') {
+    return launchPersistentContext(options);
   }
 
   return launchReusedContext(options, storageStatePath);
@@ -67,22 +77,15 @@ async function cleanupProfile(path: string): Promise<void> {
 async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserResources> {
   ensureProfileDirectory(options.userDataDir);
 
-  // const context = await chromium.launchPersistentContext(options.userDataDir, {
-  //   headless: false,
-  //   slowMo: options.slowMo,
-  //   viewport: null,
-  //   channel: process.platform === 'darwin' ? 'chrome' : undefined,
-  //   args: ['--disable-blink-features=AutomationControlled'],
-  // });
-
   // Primera vez (interactiva):
   const browser = await chromium.launch({
-    headless: false,
+    headless: HEADLESS,
     slowMo: options.slowMo,
-    channel: process.platform === 'darwin' ? 'chrome' : undefined,
-    args: ['--disable-blink-features=AutomationControlled'],
+    channel: CHANNEL,
+    args: BROWSER_ARGS,
   });
   const context = await browser.newContext({ storageState: undefined });
+  setupRequestFailedLogging(context);
   const page = await context.newPage();
 
   try {
@@ -96,11 +99,7 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
     cdp.on('Network.webSocketFrameReceived', async (e: WebSocketFrameEvent) => {
       try {
         const url = e.request?.url || '';
-        const text = e.response?.payloadData ?? '';
-        let parsed: unknown;
-        if (typeof text === 'string' && text.startsWith('{')) {
-          parsed = JSON.parse(text);
-        }
+        const { text, parsed } = parseFramePayload(e.response?.payloadData);
         if (!page.isClosed()) {
           try {
             await page.evaluate(
@@ -125,11 +124,7 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
     cdp.on('Network.webSocketFrameSent', async (e: WebSocketFrameEvent) => {
       try {
         const url = e.request?.url || '';
-        const text = e.response?.payloadData ?? '';
-        let parsed: unknown;
-        if (typeof text === 'string' && text.startsWith('{')) {
-          parsed = JSON.parse(text);
-        }
+        const { text, parsed } = parseFramePayload(e.response?.payloadData);
         if (!page.isClosed()) {
           try {
             await page.evaluate(
@@ -188,15 +183,16 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
 
 async function launchReusedContext(options: LaunchOptions, storageStatePath: string): Promise<BrowserResources> {
   const browser = await chromium.launch({
-    headless: false,
+    headless: HEADLESS,
     slowMo: options.slowMo,
-    channel: process.platform === 'darwin' ? 'chrome' : undefined,
-    args: ['--disable-blink-features=AutomationControlled'],
+    channel: CHANNEL,
+    args: BROWSER_ARGS,
   });
 
   const context = await browser.newContext({
     storageState: storageStatePath,
   });
+  setupRequestFailedLogging(context);
 
   const enableNetworkBlocking = configureNetworkBlocking(context, options.blockTrackingDomains);
 
@@ -218,6 +214,45 @@ async function launchReusedContext(options: LaunchOptions, storageStatePath: str
       }
       await context.close();
       await browser.close();
+    },
+  };
+}
+
+async function launchPersistentContext(options: LaunchOptions): Promise<BrowserResources> {
+  ensureProfileDirectory(options.userDataDir);
+
+  const context = await chromium.launchPersistentContext(options.userDataDir, {
+    headless: HEADLESS,
+    slowMo: options.slowMo,
+    viewport: null,
+    channel: CHANNEL,
+    args: BROWSER_ARGS,
+  });
+
+  setupRequestFailedLogging(context);
+
+  const enableNetworkBlocking = configureNetworkBlocking(context, options.blockTrackingDomains);
+
+  if (options.blockTrackingDomains) {
+    enableNetworkBlocking();
+  }
+
+  if (options.tracingEnabled) {
+    await context.tracing.start({ screenshots: true, snapshots: true });
+  }
+
+  return {
+    context,
+    enableNetworkBlocking,
+    close: async () => {
+      if (options.tracingEnabled) {
+        const tracePath = join(process.cwd(), 'artifacts', `trace-${Date.now()}.zip`);
+        await context.tracing.stop({ path: tracePath });
+      }
+      await context.close();
+      if (!options.preserveUserDataDir) {
+        await cleanupProfile(options.userDataDir);
+      }
     },
   };
 }
@@ -259,4 +294,31 @@ function configureNetworkBlocking(context: BrowserContext, shouldBlock: boolean)
     // eslint-disable-next-line no-console
     console.log('[network-blocking] ACTIVADO (usercentrics/gtm/ga/sentry)');
   };
+}
+
+function parseFramePayload(payload: unknown): { text: string; parsed?: unknown } {
+  const text = toText(payload);
+  const trimmed = text.trimStart();
+  if (!trimmed) {
+    return { text };
+  }
+
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    const parsed = safeJsonParse(trimmed);
+    return parsed === undefined ? { text } : { text, parsed };
+  }
+
+  return { text };
+}
+
+function setupRequestFailedLogging(context: BrowserContext): void {
+  context.on('requestfailed', (req) => {
+    const url = req.url();
+    if (!DEBUG_NETWORK && TRACKING_DOMAIN_PATTERNS.some((pattern) => url.includes(pattern))) {
+      return;
+    }
+    const failure = req.failure()?.errorText ?? 'unknown';
+    // eslint-disable-next-line no-console
+    console.warn('[net] fail:', failure, url);
+  });
 }
