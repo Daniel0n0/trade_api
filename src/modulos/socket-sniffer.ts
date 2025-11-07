@@ -1,9 +1,23 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import type { Page, WebSocket as PlaywrightWebSocket } from 'playwright';
 
 import { RotatingWriter, type RotatePolicy } from './rotating-writer.js';
 import { BarAggregator } from './timebar.js';
+import {
+  buildBarCsvRow,
+  buildCandleCsvRow,
+  buildQuoteAggregationRow,
+  buildQuoteCsvRow,
+  buildTradeAggregationRow,
+  CSV_HEADERS,
+  CSV_HEADER_TEXT,
+  isValidCandle,
+  normalizeDxFeedRow,
+  resolveCandleTimeframe,
+  toCsvLine,
+} from '../io/row.js';
+import { dataPath } from '../io/paths.js';
+import { BaseEvent } from '../io/schemas.js';
 
 // cerca de arriba (imports), no hace falta importar Buffer explícitamente
 const toText = (p: unknown): string => {
@@ -43,10 +57,6 @@ type SnifferBindingEntry = {
   readonly parsed?: unknown;
 };
 
-type SnifferMessageEntry = SnifferBindingEntry & {
-  readonly kind: 'ws-message';
-};
-
 type PageWithSnifferBinding = Page & {
   socketSnifferLog?: (entry: SnifferBindingEntry) => void;
 };
@@ -55,130 +65,8 @@ type LogEntry = Serializable & {
   readonly ts: number;
 };
 
-type DxFeedRow = {
-  readonly eventType?: string;
-  readonly eventSymbol?: string;
-  readonly symbol?: string;
-  readonly eventFlags?: number;
-  readonly time?: number;
-  readonly eventTime?: number;
-  readonly open?: number;
-  readonly high?: number;
-  readonly low?: number;
-  readonly close?: number;
-  readonly volume?: number;
-  readonly vwap?: number;
-  readonly count?: number;
-  readonly sequence?: number;
-  readonly impliedVolatility?: number;
-  readonly openInterest?: number;
-  readonly price?: number;
-  readonly dayVolume?: number;
-  readonly bidPrice?: number;
-  readonly bidSize?: number;
-  readonly bidTime?: number;
-  readonly askPrice?: number;
-  readonly askSize?: number;
-  readonly askTime?: number;
-  readonly [key: string]: unknown;
-};
-
-function safeDirName(input: string | undefined): string {
-  if (!input) {
-    return 'GENERAL';
-  }
-  const trimmed = input.trim();
-  if (!trimmed) {
-    return 'GENERAL';
-  }
-  return trimmed
-    .toUpperCase()
-    .replace(/[^A-Z0-9_-]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .replace(/-{2,}/g, '-');
-}
-
-function currentDateFolder(): string {
-  const now = new Date();
-  const year = String(now.getFullYear());
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function ensureDataDir(asset?: string): string {
-  const dir = path.join(process.cwd(), 'data', safeDirName(asset), currentDateFolder());
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  return dir;
-}
-
-function createLogPath(prefix: string, asset?: string): string {
-  return path.join(ensureDataDir(asset), `${prefix}.jsonl`);
-}
-
 function normaliseSymbols(input: readonly string[]): readonly string[] {
   return input.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean);
-}
-
-// Convierte el payload de dxFeed a una fila más plana según canal/eventType
-function normalizeDxFeedRow(channel: number, row: DxFeedRow | undefined): Record<string, unknown> {
-  const sym = row?.eventSymbol ?? row?.symbol ?? undefined;
-  const base = {
-    ts: Date.now(),
-    symbol: sym,
-    channel,
-    eventType: row?.eventType,
-    eventTime: row?.time ?? row?.eventTime,
-  };
-
-  if (row?.eventType === 'Candle' || channel === 1) {
-    return {
-      ...base,
-      open: row?.open,
-      high: row?.high,
-      low: row?.low,
-      close: row?.close,
-      volume: row?.volume,
-      vwap: row?.vwap,
-      count: row?.count,
-      sequence: row?.sequence,
-      impliedVolatility: row?.impliedVolatility,
-      openInterest: row?.openInterest,
-    };
-  }
-
-  if (row?.eventType === 'Trade' || channel === 3) {
-    return {
-      ...base,
-      price: row?.price,
-      dayVolume: row?.dayVolume,
-    };
-  }
-
-  if (row?.eventType === 'TradeETH' || channel === 5) {
-    return {
-      ...base,
-      price: row?.price,
-      dayVolume: row?.dayVolume,
-      session: 'ETH',
-    };
-  }
-
-  if (row?.eventType === 'Quote' || channel === 7) {
-    return {
-      ...base,
-      bidPrice: row?.bidPrice,
-      bidSize: row?.bidSize,
-      bidTime: row?.bidTime,
-      askPrice: row?.askPrice,
-      askSize: row?.askSize,
-      askTime: row?.askTime,
-    };
-  }
-
-  return { ...base, raw: row };
 }
 
 function extractFeed(parsed: unknown): { channel: number; data: unknown[] } | null {
@@ -232,8 +120,12 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
     return writer;
   };
 
-  const createCsvWriter = (suffix: string, header: string) =>
-    new RotatingWriter(path.join(baseDir, `${perChannelPrefix}-${suffix}.csv`), ROTATE_POLICY, header);
+  const createCsvWriter = (suffix: string, headerKey: keyof typeof CSV_HEADER_TEXT) =>
+    new RotatingWriter(
+      path.join(baseDir, `${perChannelPrefix}-${suffix}.csv`),
+      ROTATE_POLICY,
+      CSV_HEADER_TEXT[headerKey],
+    );
 
   const candleCsvByTimeframe = new Map<string, RotatingWriter>();
   const getCandleCsv = (timeframe: string) => {
@@ -241,7 +133,7 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
     let writer = candleCsvByTimeframe.get(key);
     if (!writer) {
       const suffix = key === 'general' ? 'candle' : `candle-${key}`;
-      writer = createCsvWriter(suffix, 't,open,high,low,close,volume,symbol');
+      writer = createCsvWriter(suffix, 'candle');
       candleCsvByTimeframe.set(key, writer);
     }
     return writer;
@@ -250,7 +142,7 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
   const quoteCsv = new RotatingWriter(
     path.join(baseDir, `${perChannelPrefix}-quote.csv`),
     ROTATE_POLICY,
-    't,bidPrice,bidSize,askPrice,askSize,symbol',
+    CSV_HEADER_TEXT.quote,
   );
 
   const agg1m = new BarAggregator(1);
@@ -260,17 +152,17 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
   const bars1mCsv = new RotatingWriter(
     path.join(baseDir, `${perChannelPrefix}-bars-1m.csv`),
     ROTATE_POLICY,
-    't,open,high,low,close,volume',
+    CSV_HEADER_TEXT.bars,
   );
   const bars5mCsv = new RotatingWriter(
     path.join(baseDir, `${perChannelPrefix}-bars-5m.csv`),
     ROTATE_POLICY,
-    't,open,high,low,close,volume',
+    CSV_HEADER_TEXT.bars,
   );
   const bars15mCsv = new RotatingWriter(
     path.join(baseDir, `${perChannelPrefix}-bars-15m.csv`),
     ROTATE_POLICY,
-    't,open,high,low,close,volume',
+    CSV_HEADER_TEXT.bars,
   );
 
   const writeGeneral = (entry: Serializable) => {
@@ -283,37 +175,19 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
   const flushBars = (now: number) => {
     const closed1 = agg1m.drainClosed(now);
     for (const bar of closed1) {
-      bars1mCsv.write(`${bar.t},${bar.open},${bar.high},${bar.low},${bar.close},${bar.volume}`);
+      bars1mCsv.write(toCsvLine(CSV_HEADERS.bars, buildBarCsvRow(bar)));
     }
     const closed5 = agg5m.drainClosed(now);
     for (const bar of closed5) {
-      bars5mCsv.write(`${bar.t},${bar.open},${bar.high},${bar.low},${bar.close},${bar.volume}`);
+      bars5mCsv.write(toCsvLine(CSV_HEADERS.bars, buildBarCsvRow(bar)));
     }
     const closed15 = agg15m.drainClosed(now);
     for (const bar of closed15) {
-      bars15mCsv.write(`${bar.t},${bar.open},${bar.high},${bar.low},${bar.close},${bar.volume}`);
+      bars15mCsv.write(toCsvLine(CSV_HEADERS.bars, buildBarCsvRow(bar)));
     }
   };
 
-  const parseFiniteNumber = (value: unknown): number | null => {
-    if (typeof value === 'number') {
-      return Number.isFinite(value) ? value : null;
-    }
-    if (typeof value === 'string') {
-      const trimmed = value.trim();
-      if (!trimmed) {
-        return null;
-      }
-      if (trimmed.toLowerCase() === 'nan') {
-        return null;
-      }
-      const parsed = Number(trimmed);
-      return Number.isFinite(parsed) ? parsed : null;
-    }
-    return null;
-  };
-
-  const writeChannelRows = (channel: number, rows: readonly DxFeedRow[]) => {
+  const writeChannelRows = (channel: number, rows: readonly unknown[]) => {
     if (!rows?.length) {
       return;
     }
@@ -334,100 +208,55 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
     for (const row of rows) {
       const currentNow = Date.now();
       lastNow = currentNow;
-      const isCandle = channel === 1 || row?.eventType === 'Candle';
-      if (isCandle) {
-        const ef = Number(row?.eventFlags ?? 0);
-        const o = Number(row?.open);
-        const h = Number(row?.high);
-        const l = Number(row?.low);
-        const c = Number(row?.close);
-        const v = Number(row?.volume);
-        const invalid =
-          ef === 18 ||
-          !Number.isFinite(o) ||
-          !Number.isFinite(h) ||
-          !Number.isFinite(l) ||
-          !Number.isFinite(c) ||
-          !Number.isFinite(v);
+      const parsed = BaseEvent.safeParse(row ?? {});
+      const event = parsed.success ? parsed.data : BaseEvent.parse({});
+      const resolvedType =
+        event.eventType ??
+        (channel === 1
+          ? 'Candle'
+          : channel === 3
+          ? 'Trade'
+          : channel === 5
+          ? 'TradeETH'
+          : channel === 7
+          ? 'Quote'
+          : undefined);
 
-        if (invalid) {
-          continue;
+      if (resolvedType === 'Candle' && !isValidCandle(event)) {
+        continue;
+      }
+
+      const normalized = normalizeDxFeedRow(channel, event);
+      if (!parsed.success) {
+        (normalized as Record<string, unknown>).raw = row;
+      }
+      writer.write(JSON.stringify(normalized));
+
+      if (resolvedType === 'Candle') {
+        const candleRow = buildCandleCsvRow(event);
+        if (candleRow) {
+          const timeframe = resolveCandleTimeframe(event.eventSymbol);
+          getCandleCsv(timeframe).write(toCsvLine(CSV_HEADERS.candle, candleRow));
         }
       }
 
-      const flat = normalizeDxFeedRow(channel, row);
-      writer.write(JSON.stringify(flat));
-
-      if (channel === 1 || row?.eventType === 'Candle') {
-        const t = Number(row?.time ?? row?.eventTime);
-        if (!Number.isFinite(t)) {
-          continue;
+      if (resolvedType === 'Quote') {
+        const quoteRow = buildQuoteCsvRow(event);
+        if (quoteRow) {
+          quoteCsv.write(toCsvLine(CSV_HEADERS.quote, quoteRow));
         }
-        const timeframe = (() => {
-          const eventSymbol = row?.eventSymbol;
-          if (typeof eventSymbol !== 'string') {
-            return 'general';
-          }
-          const match = eventSymbol.match(/\{=([^,}]+)/);
-          if (!match) {
-            return 'general';
-          }
-          const raw = match[1]?.trim().toLowerCase();
-          if (!raw) {
-            return 'general';
-          }
-          if (raw === 'm') {
-            return '1m';
-          }
-          return raw.replace(/[^0-9a-z]+/g, '') || 'general';
-        })();
-        const line = `${t},${row?.open ?? ''},${row?.high ?? ''},${row?.low ?? ''},${row?.close ?? ''},${row?.volume ?? ''},${row?.eventSymbol ?? ''}`;
-        getCandleCsv(timeframe).write(line);
-      }
-
-      if (channel === 7 || row?.eventType === 'Quote') {
-        const t = Number(row?.bidTime ?? row?.askTime);
-        if (!Number.isFinite(t)) {
-          continue;
+        const quoteAgg = buildQuoteAggregationRow(event);
+        if (quoteAgg) {
+          agg1m.addQuote(quoteAgg);
+          agg5m.addQuote(quoteAgg);
+          agg15m.addQuote(quoteAgg);
         }
-        const line = `${t},${row?.bidPrice ?? ''},${row?.bidSize ?? ''},${row?.askPrice ?? ''},${row?.askSize ?? ''},${row?.eventSymbol ?? ''}`;
-        quoteCsv.write(line);
-      }
-
-      if (channel === 3 || row?.eventType === 'Trade') {
-        const tsCandidate = row?.time ?? row?.eventTime;
-        const ts = parseFiniteNumber(tsCandidate);
-        const price = parseFiniteNumber(row?.price);
-        if (ts !== null && price !== null) {
-          const dayVolume = parseFiniteNumber(row?.dayVolume) ?? undefined;
-          const trade = { price, dayVolume, ts };
+      } else if (resolvedType === 'Trade' || resolvedType === 'TradeETH') {
+        const trade = buildTradeAggregationRow(event);
+        if (trade) {
           agg1m.addTrade(trade);
           agg5m.addTrade(trade);
           agg15m.addTrade(trade);
-        }
-      } else if (channel === 5 || row?.eventType === 'TradeETH') {
-        const tsCandidate = row?.time ?? row?.eventTime;
-        const ts = parseFiniteNumber(tsCandidate);
-        const price = parseFiniteNumber(row?.price);
-        if (ts !== null && price !== null) {
-          const dayVolume = parseFiniteNumber(row?.dayVolume) ?? undefined;
-          const trade = { price, dayVolume, ts };
-          agg1m.addTrade(trade);
-          agg5m.addTrade(trade);
-          agg15m.addTrade(trade);
-        }
-      } else if (channel === 7 || row?.eventType === 'Quote') {
-        const tsCandidate = row?.bidTime ?? row?.askTime;
-        const ts = parseFiniteNumber(tsCandidate);
-        if (ts !== null) {
-          const quote = {
-            bidPrice: parseFiniteNumber(row?.bidPrice) ?? undefined,
-            askPrice: parseFiniteNumber(row?.askPrice) ?? undefined,
-            ts,
-          };
-          agg1m.addQuote(quote);
-          agg5m.addQuote(quote);
-          agg15m.addQuote(quote);
         }
       }
     }
@@ -449,7 +278,7 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
       if (entry?.['kind'] === 'ws-message') {
         const feed = extractFeed(parsed);
         if (feed && feed.data.length) {
-          writeChannelRows(feed.channel, feed.data as DxFeedRow[]);
+          writeChannelRows(feed.channel, feed.data);
         }
       }
     } catch (error) {
@@ -468,15 +297,15 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
       const now = Date.now();
       const remaining1 = agg1m.drainAll();
       for (const bar of remaining1) {
-        bars1mCsv.write(`${bar.t},${bar.open},${bar.high},${bar.low},${bar.close},${bar.volume}`);
+        bars1mCsv.write(toCsvLine(CSV_HEADERS.bars, buildBarCsvRow(bar)));
       }
       const remaining5 = agg5m.drainAll();
       for (const bar of remaining5) {
-        bars5mCsv.write(`${bar.t},${bar.open},${bar.high},${bar.low},${bar.close},${bar.volume}`);
+        bars5mCsv.write(toCsvLine(CSV_HEADERS.bars, buildBarCsvRow(bar)));
       }
       const remaining15 = agg15m.drainAll();
       for (const bar of remaining15) {
-        bars15mCsv.write(`${bar.t},${bar.open},${bar.high},${bar.low},${bar.close},${bar.volume}`);
+        bars15mCsv.write(toCsvLine(CSV_HEADERS.bars, buildBarCsvRow(bar)));
       }
       flushBars(now);
     } catch (error) {
@@ -746,7 +575,7 @@ export async function runSocketSniffer(
   const symbols = normaliseSymbols(options.symbols ?? []);
   const prefix = options.logPrefix?.trim() || DEFAULT_PREFIX;
   const primarySymbol = symbols[0];
-  const logPath = createLogPath(prefix, primarySymbol ?? prefix);
+  const logPath = dataPath(primarySymbol ?? prefix, `${prefix}.jsonl`);
   const logDir = path.dirname(logPath);
   const logBaseName = path.basename(logPath, '.jsonl');
   const logPattern = path.join(logDir, `${logBaseName}-*.jsonl`);
@@ -796,8 +625,8 @@ export async function runSocketSniffer(
         if (!page.isClosed()) {
           try {
             await page.evaluate(
-              (entry: { kind: string; url: string; text: string; parsed?: unknown }) => {
-                const target = window as unknown as { socketSnifferLog?: (v: any) => void };
+              (entry: SnifferBindingEntry) => {
+                const target = window as typeof window & { socketSnifferLog?: (value: SnifferBindingEntry) => void };
                 target.socketSnifferLog?.(entry);
               },
               { kind: 'ws-message' as const, url, text, parsed },
