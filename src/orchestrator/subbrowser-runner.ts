@@ -10,7 +10,8 @@ import { bindProcessSignals, registerCloser } from '../bootstrap/signals.js';
 import { bindContextDebugObservers, attachPageDebugObservers } from '../debugging.js';
 import { ensureLoggedInByUrlFlow } from '../sessionFlow.js';
 import { getModule } from './modules.js';
-import type { OrchestratorModule, SubBrowserArgs, SubBrowserRuntime } from './types.js';
+import type { ModuleArgs } from './messages.js';
+import type { OrchestratorModule, SubBrowserRuntime } from './types.js';
 
 const { waitForShutdown } = bindProcessSignals();
 
@@ -62,7 +63,7 @@ type ContextBootResult = {
 
 async function launchContext(
   moduleDef: OrchestratorModule,
-  args: SubBrowserArgs,
+  args: ModuleArgs,
   loggerName: string,
 ): Promise<ContextBootResult> {
   const persistIndexedDb = args.persistIndexedDb ?? FLAGS.persistIndexedDb;
@@ -125,7 +126,7 @@ async function launchContext(
 async function persistState(
   moduleDef: OrchestratorModule,
   context: BrowserContext,
-  args: SubBrowserArgs,
+  args: ModuleArgs,
 ): Promise<void> {
   const persistCookies = args.persistCookies ?? FLAGS.persistCookies;
   if (!persistCookies) {
@@ -144,7 +145,7 @@ async function persistState(
   }
 }
 
-export async function runSubBrowser(args: SubBrowserArgs): Promise<void> {
+export async function runSubBrowser(args: ModuleArgs): Promise<void> {
   const moduleDef = getModule(args.moduleName);
   if (!moduleDef) {
     /* eslint-disable no-console */

@@ -11,14 +11,15 @@ import { bindContextDebugObservers, attachPageDebugObservers } from '../debuggin
 import { ensureLoggedInByUrlFlow } from '../sessionFlow.js';
 import { openModuleTabs } from '../modules.js';
 import { getModule, listModules } from './modules.js';
-import type { OrchestratorModule, SubBrowserArgs } from './types.js';
+import type { ModuleArgs } from './messages.js';
+import type { OrchestratorModule } from './types.js';
 
 const SUBBROWSER_ENTRY = fileURLToPath(new URL('./subbrowser.entry.ts', import.meta.url));
 const THIS_FILE = fileURLToPath(import.meta.url);
 
 type ParsedCommand =
   | { kind: 'session' }
-  | { kind: 'sub'; args: SubBrowserArgs }
+  | { kind: 'sub'; args: ModuleArgs }
   | { kind: 'help'; message?: string };
 
 type RawParseResult = {
@@ -124,13 +125,13 @@ function toSubArgs(raw: RawParseResult): ParsedCommand {
   return { kind: 'help', message: `Comando desconocido: ${first}` };
 }
 
-function buildSubArgs(moduleName: string, action: string, flags: Record<string, string>): SubBrowserArgs {
+function buildSubArgs(moduleName: string, action: string, flags: Record<string, string>): ModuleArgs {
   const startAt = flags.startAt ?? flags['start-at'];
   const endAt = flags.endAt ?? flags['end-at'];
   const persistCookies = coerceBoolean(flags.persistCookies ?? flags['persist-cookies']);
   const persistIndexedDb = coerceBoolean(flags.persistIndexedDb ?? flags['persist-indexeddb']);
 
-  const args: SubBrowserArgs = {
+  const args: ModuleArgs = {
     moduleName,
     action,
     startAt: startAt || undefined,
@@ -254,7 +255,7 @@ async function runInteractiveSession(): Promise<void> {
   await waitForShutdown();
 }
 
-async function spawnSubbrowser(args: SubBrowserArgs): Promise<void> {
+async function spawnSubbrowser(args: ModuleArgs): Promise<void> {
   const moduleDef: OrchestratorModule | undefined = getModule(args.moduleName);
   if (!moduleDef) {
     renderHelp(`No existe un módulo con el nombre "${args.moduleName}".`);

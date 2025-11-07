@@ -1,9 +1,9 @@
 import process from 'node:process';
 
 import { runSubBrowser } from './subbrowser-runner.js';
-import type { SubBrowserArgs } from './types.js';
+import type { ModuleArgs } from './messages.js';
 
-function parseArgs(argv: readonly string[]): SubBrowserArgs {
+function parseArgs(argv: readonly string[]): ModuleArgs {
   const payload = argv[2];
   if (!payload) {
     throw new Error('Missing serialized arguments for subbrowser entry.');
@@ -18,7 +18,7 @@ function parseArgs(argv: readonly string[]): SubBrowserArgs {
     );
   }
 
-  const args = parsed as Partial<SubBrowserArgs>;
+  const args = parsed as Partial<ModuleArgs>;
   if (!args || typeof args.moduleName !== 'string' || typeof args.action !== 'string') {
     throw new Error('Serialized arguments must include "moduleName" and "action".');
   }
@@ -33,7 +33,7 @@ function parseArgs(argv: readonly string[]): SubBrowserArgs {
     storageStatePath: args.storageStatePath,
     indexedDbSeed: args.indexedDbSeed,
     indexedDbProfile: args.indexedDbProfile,
-  } satisfies SubBrowserArgs;
+  } satisfies ModuleArgs;
 }
 
 const argv = process.argv;
