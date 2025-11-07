@@ -18,6 +18,7 @@ import {
 } from '../io/row.js';
 import { dataPath } from '../io/paths.js';
 import { BaseEvent } from '../io/schemas.js';
+import { registerCloser } from '../bootstrap/signals.js';
 
 // cerca de arriba (imports), no hace falta importar Buffer explícitamente
 const toText = (p: unknown): string => {
@@ -109,7 +110,7 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
 
   const channelWriters = new Map<string, RotatingWriter>();
   let closed = false;
-  let removeProcessListeners: (() => void) | null = null;
+  let unregisterCloser: (() => void) | null = null;
   const getChannelWriter = (channel: number, label: string) => {
     const key = `ch${channel}-${label}`;
     let writer = channelWriters.get(key);
@@ -324,10 +325,8 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
       writer.close();
     }
 
-    if (removeProcessListeners) {
-      removeProcessListeners();
-      removeProcessListeners = null;
-    }
+    unregisterCloser?.();
+    unregisterCloser = null;
   };
 
   page.once('close', () => {
@@ -337,32 +336,9 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
     /* eslint-enable no-console */
   });
 
-  const onExit = () => {
+  unregisterCloser = registerCloser(() => {
     closeAll();
-    removeProcessListeners?.();
-    removeProcessListeners = null;
-  };
-  const onSigInt = () => {
-    closeAll();
-    removeProcessListeners?.();
-    removeProcessListeners = null;
-    process.exit(0);
-  };
-  const onSigTerm = () => {
-    closeAll();
-    removeProcessListeners?.();
-    removeProcessListeners = null;
-    process.exit(0);
-  };
-
-  process.on('exit', onExit);
-  process.on('SIGINT', onSigInt);
-  process.on('SIGTERM', onSigTerm);
-  removeProcessListeners = () => {
-    process.off('exit', onExit);
-    process.off('SIGINT', onSigInt);
-    process.off('SIGTERM', onSigTerm);
-  };
+  });
 }
 
 function buildHookScript() {
