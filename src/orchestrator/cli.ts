@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import process from 'node:process';
@@ -11,10 +10,11 @@ import { bindContextDebugObservers, attachPageDebugObservers } from '../debuggin
 import { ensureLoggedInByUrlFlow } from '../sessionFlow.js';
 import { openModuleTabs } from '../modules.js';
 import { getModule, listModules } from './modules.js';
-import type { ModuleArgs } from './messages.js';
+import { ProcessManager } from './processManager.js';
+import type { ChildRef } from './processManager.js';
+import type { ChildToParent, ModuleArgs } from './messages.js';
 import type { OrchestratorModule } from './types.js';
 
-const SUBBROWSER_ENTRY = fileURLToPath(new URL('./subbrowser.entry.ts', import.meta.url));
 const THIS_FILE = fileURLToPath(import.meta.url);
 
 type ParsedCommand =
@@ -271,32 +271,139 @@ async function spawnSubbrowser(args: ModuleArgs): Promise<void> {
   );
   /* eslint-enable no-console */
 
-  const payload = JSON.stringify(args);
+  const manager = new ProcessManager();
+  let ref: ChildRef;
+  try {
+    ref = manager.start(args);
+  } catch (error) {
+    /* eslint-disable no-console */
+    console.error('No se pudo iniciar el runner del módulo:', error);
+    /* eslint-enable no-console */
+    process.exitCode = 1;
+    return;
+  }
 
-  const child = spawn(
-    process.execPath,
-    ['--loader', 'tsx', SUBBROWSER_ENTRY, payload],
-    {
-      stdio: 'inherit',
-      env: process.env,
-    },
-  );
-
-  await new Promise<void>((resolve) => {
-    child.once('exit', (code) => {
-      if (typeof code === 'number' && code !== 0) {
-        process.exitCode = code;
-      }
-      resolve();
-    });
-    child.once('error', (error) => {
-      /* eslint-disable no-console */
-      console.error('No se pudo lanzar el subproceso de Playwright:', error);
-      /* eslint-enable no-console */
-      process.exitCode = 1;
-      resolve();
-    });
+  let resolveExit: (() => void) | null = null;
+  const exitPromise = new Promise<void>((resolve) => {
+    resolveExit = resolve;
   });
+
+  let stopOnSignal = false;
+  const handleSignal = () => {
+    if (stopOnSignal) {
+      return;
+    }
+    stopOnSignal = true;
+    manager.stop(ref.ctxId);
+  };
+
+  const logPrefix = `[runner:${moduleDef.name}]`;
+
+  const cleanup = () => {
+    manager.off('error', handleErrorEvent);
+    manager.off('message', handleMessageEvent);
+    manager.off('stopped', handleStoppedEvent);
+    manager.off('failed', handleFailedEvent);
+    manager.off('ready', handleReadyEvent);
+    process.off('SIGINT', handleSignal);
+    process.off('SIGTERM', handleSignal);
+  };
+
+  const handleStoppedEvent = ({
+    ctxId,
+    exit,
+  }: {
+    ctxId: string;
+    ref: ChildRef;
+    exit: { code: number | null; signal: NodeJS.Signals | null };
+  }) => {
+    if (ctxId !== ref.ctxId) {
+      return;
+    }
+
+    cleanup();
+
+    if (exit.code !== null && exit.code !== 0) {
+      process.exitCode = exit.code;
+    }
+
+    if (exit.signal) {
+      process.exitCode = 1;
+    }
+
+    const resolver = resolveExit;
+    resolveExit = null;
+    resolver?.();
+  };
+
+  const handleFailedEvent = ({
+    ctxId,
+    exit,
+  }: {
+    ctxId: string;
+    ref: ChildRef;
+    exit: { code: number | null; signal: NodeJS.Signals | null };
+  }) => {
+    if (ctxId !== ref.ctxId) {
+      return;
+    }
+
+    cleanup();
+    if (exit.code !== null && exit.code !== 0) {
+      process.exitCode = exit.code;
+    } else if (exit.signal) {
+      process.exitCode = 1;
+    } else if (!process.exitCode) {
+      process.exitCode = 1;
+    }
+    const resolver = resolveExit;
+    resolveExit = null;
+    resolver?.();
+  };
+
+  const handleErrorEvent = ({ ctxId, error }: { ctxId: string; ref: ChildRef; error: Error }) => {
+    if (ctxId !== ref.ctxId) {
+      return;
+    }
+    /* eslint-disable no-console */
+    console.error(`${logPrefix} Error:`, error);
+    /* eslint-enable no-console */
+  };
+
+  const handleMessageEvent = ({ ctxId, message }: { ctxId: string; ref: ChildRef; message: ChildToParent }) => {
+    if (ctxId !== ref.ctxId) {
+      return;
+    }
+
+    if (message.type === 'log') {
+      const level = message.level ?? 'info';
+      const logger = level === 'error' ? console.error : level === 'warn' ? console.warn : console.log;
+      /* eslint-disable no-console */
+      logger(`${logPrefix} ${message.message}`, message.data ?? '');
+      /* eslint-enable no-console */
+    }
+  };
+
+  const handleReadyEvent = ({ ctxId }: { ctxId: string; ref: ChildRef }) => {
+    if (ctxId !== ref.ctxId) {
+      return;
+    }
+
+    /* eslint-disable no-console */
+    console.log(`${logPrefix} Runner inicializado correctamente.`);
+    /* eslint-enable no-console */
+  };
+
+  manager.on('error', handleErrorEvent);
+  manager.on('message', handleMessageEvent);
+  manager.on('stopped', handleStoppedEvent);
+  manager.on('failed', handleFailedEvent);
+  manager.on('ready', handleReadyEvent);
+
+  process.once('SIGINT', handleSignal);
+  process.once('SIGTERM', handleSignal);
+
+  await exitPromise;
 }
 
 export async function runCli(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
