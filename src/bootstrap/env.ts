@@ -15,7 +15,9 @@ for (const filename of DOTENV_FILES) {
   }
 }
 
-process.env.TZ = 'UTC';
+if (!process.env.TZ || process.env.TZ.trim() === '') {
+  process.env.TZ = 'UTC';
+}
 
 const RawEnvSchema = z
   .object({

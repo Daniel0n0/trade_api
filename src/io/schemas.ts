@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 const optionalString: z.ZodType<string | undefined> = z
   .any()
-  .transform((value) => {
+  .transform((value: unknown) => {
     if (value === null || value === undefined) {
       return undefined;
     }
@@ -13,7 +13,7 @@ const optionalString: z.ZodType<string | undefined> = z
 
 const optionalNumber: z.ZodType<number | undefined> = z
   .any()
-  .transform((value) => {
+  .transform((value: unknown) => {
     if (value === null || value === undefined) {
       return undefined;
     }
