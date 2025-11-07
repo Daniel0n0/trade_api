@@ -18,7 +18,6 @@ import {
 } from '../io/row.js';
 import { dataPath } from '../io/paths.js';
 import { BaseEvent } from '../io/schemas.js';
-import { registerCloser } from '../bootstrap/signals.js';
 
 // cerca de arriba (imports), no hace falta importar Buffer explícitamente
 const toText = (p: unknown): string => {
@@ -42,9 +41,16 @@ const ROTATE_POLICY: RotatePolicy = {
   gzipOnRotate: true,
 };
 
-type SocketSnifferOptions = {
+export type SocketSnifferOptions = {
   readonly symbols?: readonly string[];
   readonly logPrefix?: string;
+  readonly startAt?: string;
+  readonly endAt?: string;
+};
+
+export type SocketSnifferHandle = {
+  readonly close: () => void;
+  readonly logPattern: string;
 };
 
 // type PlaywrightWebSocketFrame = {
@@ -101,7 +107,12 @@ function extractFeed(parsed: unknown): { channel: number; data: unknown[] } | nu
   return { channel, data };
 }
 
-async function exposeLogger(page: Page, logPath: string, perChannelPrefix: string): Promise<void> {
+async function exposeLogger(
+  page: Page,
+  logPath: string,
+  perChannelPrefix: string,
+  meta: { startAt?: string; endAt?: string } = {},
+): Promise<() => void> {
   const baseDir = path.dirname(logPath);
   const baseName = path.basename(logPath, '.jsonl');
 
@@ -110,7 +121,6 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
 
   const channelWriters = new Map<string, RotatingWriter>();
   let closed = false;
-  let unregisterCloser: (() => void) | null = null;
   const getChannelWriter = (channel: number, label: string) => {
     const key = `ch${channel}-${label}`;
     let writer = channelWriters.get(key);
@@ -171,7 +181,7 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
     generalWriter.write(JSON.stringify(payload));
   };
 
-  writeGeneral({ kind: 'boot', msg: 'socket-sniffer up' });
+  writeGeneral({ kind: 'boot', msg: 'socket-sniffer up', startAt: meta.startAt, endAt: meta.endAt });
 
   const flushBars = (now: number) => {
     const closed1 = agg1m.drainClosed(now);
@@ -325,8 +335,7 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
       writer.close();
     }
 
-    unregisterCloser?.();
-    unregisterCloser = null;
+    return undefined;
   };
 
   page.once('close', () => {
@@ -336,9 +345,7 @@ async function exposeLogger(page: Page, logPath: string, perChannelPrefix: strin
     /* eslint-enable no-console */
   });
 
-  unregisterCloser = registerCloser(() => {
-    closeAll();
-  });
+  return closeAll;
 }
 
 function buildHookScript() {
@@ -547,7 +554,7 @@ function buildHookScript() {
 export async function runSocketSniffer(
   page: Page,
   options: SocketSnifferOptions = {},
-): Promise<string> {
+): Promise<SocketSnifferHandle> {
   const symbols = normaliseSymbols(options.symbols ?? []);
   const prefix = options.logPrefix?.trim() || DEFAULT_PREFIX;
   const primarySymbol = symbols[0];
@@ -565,7 +572,10 @@ export async function runSocketSniffer(
   );
   /* eslint-enable no-console */
 
-  await exposeLogger(page, logPath, prefix);
+  const closeLogger = await exposeLogger(page, logPath, prefix, {
+    startAt: options.startAt,
+    endAt: options.endAt,
+  });
 
   const pageWithSniffer = page as PageWithSnifferBinding;
   const ctx = page.context();
@@ -722,11 +732,8 @@ export async function runSocketSniffer(
   console.log('[socket-sniffer] Hook activo:', hookActive);
   /* eslint-enable no-console */
 
-  page.once('close', () => {
-    /* eslint-disable no-console */
-    console.log(`[socket-sniffer] Página cerrada. Archivos disponibles bajo: ${logPattern}`);
-    /* eslint-enable no-console */
-  });
-
-  return logPattern;
+  return {
+    close: closeLogger,
+    logPattern,
+  };
 }

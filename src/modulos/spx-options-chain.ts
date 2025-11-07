@@ -1,10 +1,9 @@
-import type { BrowserContext } from 'playwright';
+import type { ModuleRunner } from '../orchestrator/types.js';
 
 /**
  * Módulo placeholder para la options chain de SPX.
  * Implementar la lógica específica según sea necesario.
  */
-export async function runSpxOptionsChainModule(context: BrowserContext): Promise<void> {
-  void context;
-  await Promise.resolve();
-}
+export const runSpxOptionsChainModule: ModuleRunner = async () => {
+  return undefined;
+};

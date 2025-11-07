@@ -52,17 +52,19 @@ npm run dev
 
 ### Orquestador modular
 
-El orquestador (`npm run orchestrator`) gestiona módulos especializados y aplica los *feature flags*
-definidos en `.env`/`.env.local` (por ejemplo `HEADLESS`, `DEVTOOLS`, `DEBUG_NETWORK`,
-`DEBUG_CONSOLE`). La sintaxis general es `npm run orchestrator -- sub:<modulo>:<accion>`.
+El orquestador (`npm run orchestrator`) centraliza la ejecución de subprocesos especializados y aplica
+los *feature flags* definidos en `.env`/`.env.local` (`HEADLESS`, `DEVTOOLS`, `DEBUG_NETWORK`,
+`DEBUG_CONSOLE`, `PERSIST_COOKIES`, etc.). Usa `npm run orchestrator -- list` para inspeccionar los
+módulos disponibles y obtén ayuda contextual con `--help`.
 
 ```bash
-npm run orchestrator -- sub:spy-5m-1m:now
+npm run orchestrator -- --module spy-5m-1m --action now
+npm run orchestrator -- --module spy-5m-1m --action stream --startAt=2024-10-29T13:30:00Z --endAt=2024-10-29T20:00:00Z
 ```
 
-Los accesos directos declarados en `package.json` (`npm run sub:spy-5m-1m:stream`,
-`npm run sub:spy-5m-1m:bars`, etc.) delegan en el mismo comando para alternar acciones sin repetir
-argumentos.
+Los accesos directos declarados en `package.json` (`npm run sub:spy-5m-1m:now`,
+`npm run sub:spy-5m-1m:stream`, `npm run sub:spy-5m-1m:bars`, etc.) delegan en el mismo comando para
+alternar acciones sin repetir argumentos.
 
 ### Environment flags
 
@@ -76,6 +78,11 @@ committed to version control so you can safely keep local values private.
 | `DEVTOOLS`        | boolean | `true` if `HEADLESS` is `false`, otherwise `false` | Forces the DevTools panel open for non-headless sessions. |
 | `DEBUG_NETWORK`   | boolean | `false` | Logs failed network requests (excluding known benign domains). |
 | `DEBUG_CONSOLE`   | boolean | `false` | Mirrors page `console` output to the terminal. |
+| `PERSIST_COOKIES` | boolean | `true`  | Persiste cookies/localStorage en `state/storage/<modulo>.json` al finalizar un subproceso. |
+| `PERSIST_INDEXEDDB` | boolean | `false` | Conserva el directorio de perfil (cookies + IndexedDB) entre ejecuciones. |
+| `STORAGE_STATE_PATH` | string | `state/storage/robinhood.json` | Ruta base del `storageState` reutilizable durante el bootstrap de sesión. |
+| `INDEXEDDB_SEED`  | string  | — | Copia `state/indexeddb-seeds/<valor>` al perfil antes de lanzar Playwright. |
+| `INDEXEDDB_PROFILE` | string | — | Directorio de perfil persistente a utilizar (omite la carpeta por defecto). |
 | `TZ`              | string  | `UTC`   | Overrides the process timezone (affects timestamps and log rotation). |
 
 > ℹ️ The process timezone is pinned to `UTC` to keep timestamps deterministic across environments.
@@ -180,18 +187,20 @@ npm run clean:profile
   en orden inverso. Si un cierre queda incompleto, vuelve a ejecutar el comando y luego deténlo
   normalmente para limpiar recursos.
 
-### Regenerar semillas de IndexedDB
+### Semillas de IndexedDB y credenciales externas
 
-Si necesitas regenerar semillas o datos precargados de IndexedDB para los módulos:
-
-1. Detén cualquier ejecución activa del CLI u orquestador con `Ctrl+C` y espera el mensaje de cierre
-   en la terminal.
-2. Elimina los artefactos previos relacionados (`state.json`, subcarpetas bajo `data/` asociadas al
-   símbolo y cualquier perfil persistente en `~/.robinhood-playwright-profile`).
-3. Vuelve a iniciar `npm run start:robinhood` para crear una sesión fresca; completa el login manual
-   y deja que Playwright rehidrate las stores de IndexedDB automáticamente.
-4. Reactiva el módulo requerido mediante el orquestador y verifica que los nuevos archivos se generen
-   en `data/` sin reutilizar semillas antiguas.
+- Almacena semillas sanitizadas en `state/indexeddb-seeds/<nombre>/` (ignoradas por Git). Cada
+  subcarpeta debe contener el contenido completo del perfil Chromium que quieras hidratar. Activa la
+  semilla con `INDEXEDDB_SEED=<nombre>` o `npm run orchestrator -- --indexedDbSeed <nombre>`.
+- Para generar una semilla fresca:
+  1. Ejecuta `npm run orchestrator -- --module spy-5m-1m --action now --persistIndexedDb=1 --indexedDbProfile $(mktemp -d)`
+     o exporta `INDEXEDDB_PROFILE` a una carpeta temporal.
+  2. Navega el flujo deseado y verifica que la base de datos tenga los datos requeridos.
+  3. Copia el contenido resultante del perfil temporal a `state/indexeddb-seeds/<nombre>/`.
+  4. Elimina el perfil temporal para evitar filtrar cookies sensibles.
+- Conserva credenciales externas (tokens, claves API, secretos de servicios de datos) en `creds/` o en
+  variables de entorno declaradas dentro de `.env.local`. Ambas rutas están excluidas del control de
+  versiones; sincroniza los artefactos sensibles de forma manual y segura.
 
 ## Project Structure
 
