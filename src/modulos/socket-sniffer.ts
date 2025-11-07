@@ -18,12 +18,11 @@ import {
 } from '../io/row.js';
 import { dataPath } from '../io/paths.js';
 import { BaseEvent } from '../io/schemas.js';
-import { extractFeed, safeJsonParse, toText } from '../utils/payload.js';
+import { extractFeed, MAX_WS_ENTRY_TEXT_LENGTH, normaliseFramePayload } from '../utils/payload.js';
 
 type Serializable = Record<string, unknown>;
 
 const DEFAULT_PREFIX = 'socket';
-const MAX_ENTRY_TEXT_LENGTH = 200_000;
 const HEARTBEAT_INTERVAL_MS = 5_000;
 const HOOK_GUARD_FLAG = '__socketSnifferHooked__';
 
@@ -49,12 +48,14 @@ export type SocketSnifferHandle = {
 //   readonly payload: string;
 // };
 
-type SnifferBindingEntry = {
-  readonly kind: string;
+type WsMessageEntry = {
+  readonly kind: 'ws-message';
   readonly url: string;
   readonly text: string;
   readonly parsed?: unknown;
 };
+
+type SnifferBindingEntry = WsMessageEntry | Serializable;
 
 type PageWithSnifferBinding = Page & {
   socketSnifferLog?: (entry: SnifferBindingEntry) => void;
@@ -66,21 +67,6 @@ type LogEntry = Serializable & {
 
 function normaliseSymbols(input: readonly string[]): readonly string[] {
   return input.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean);
-}
-
-function parseFramePayload(payload: unknown): { text: string; parsed?: unknown } {
-  const text = toText(payload);
-  const trimmed = text.trimStart();
-  if (!trimmed) {
-    return { text };
-  }
-
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    const parsed = safeJsonParse(trimmed);
-    return parsed === undefined ? { text } : { text, parsed };
-  }
-
-  return { text };
 }
 
 async function exposeLogger(
@@ -255,7 +241,10 @@ async function exposeLogger(
     flushBars(lastNow);
   };
 
-  await page.exposeFunction('socketSnifferLog', (entry: Serializable) => {
+  const isWsMessageEntry = (entry: Serializable): entry is WsMessageEntry =>
+    entry.kind === 'ws-message' && typeof entry.url === 'string' && typeof entry.text === 'string';
+
+  await page.exposeFunction('socketSnifferLog', (entry: SnifferBindingEntry) => {
     try {
       if (VERBOSE) {
         /* eslint-disable no-console */
@@ -265,9 +254,8 @@ async function exposeLogger(
 
       writeGeneral(entry);
 
-      const parsed = (entry as { parsed?: unknown } | undefined)?.parsed;
-      if (entry?.['kind'] === 'ws-message') {
-        const feed = extractFeed(parsed);
+      if (isWsMessageEntry(entry)) {
+        const feed = extractFeed(entry.parsed);
         if (feed && feed.data.length) {
           writeChannelRows(feed.channel, feed.data);
         }
@@ -572,7 +560,7 @@ export async function runSocketSniffer(
 
     ws.on('framereceived', async (frame) => {
       try {
-        const { text, parsed } = parseFramePayload(frame.payload);
+        const { text, parsed } = normaliseFramePayload(frame.payload);
         if (!page.isClosed()) {
           try {
             await page.evaluate(
@@ -593,7 +581,7 @@ export async function runSocketSniffer(
 
     ws.on('framesent', (frame) => {
       try {
-        const { text, parsed } = parseFramePayload(frame.payload);
+        const { text, parsed } = normaliseFramePayload(frame.payload);
         // (page as unknown as { socketSnifferLog?: (e: any) => void }).socketSnifferLog?.({
         //   kind: 'ws-message',
         //   url,
@@ -622,7 +610,7 @@ export async function runSocketSniffer(
 
   const hookScriptString = `(${buildHookScript.toString()})({
     wantedSymbols: ${JSON.stringify(symbols)},
-    maxTextLength: ${MAX_ENTRY_TEXT_LENGTH},
+    maxTextLength: ${MAX_WS_ENTRY_TEXT_LENGTH},
     hookGuardFlag: ${JSON.stringify(HOOK_GUARD_FLAG)}
   })`;
 

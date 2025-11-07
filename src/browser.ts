@@ -2,15 +2,20 @@ import { existsSync, mkdirSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium, type BrowserContext } from 'playwright';
-import { safeJsonParse, toText } from './utils/payload.js';
+import { ENV } from './utils/env.js';
+import { normaliseFramePayload } from './utils/payload.js';
 
 // Añade tipos oficiales si quieres máxima precisión
+type WSFramePayload = { readonly payloadData?: unknown };
+
 type WebSocketFrameEvent = {
+  readonly requestId?: string;
   readonly request?: { readonly url?: string };
-  readonly response?: { readonly payloadData?: unknown };
+  readonly response?: WSFramePayload;
 };
 
 type WebSocketCreatedEvent = {
+  readonly requestId?: string;
   readonly url?: string;
 };
 
@@ -23,8 +28,7 @@ type SnifferLogEntry = {
 
 import { defaultLaunchOptions, type LaunchOptions } from './config.js';
 
-const HEADLESS = process.env.HEADLESS === '1';
-const DEBUG_NETWORK = process.env.DEBUG_NETWORK === '1';
+const { HEADLESS, DEBUG_NETWORK } = ENV;
 const CHANNEL = process.platform === 'darwin' ? 'chrome' : undefined;
 const BROWSER_ARGS = ['--disable-blink-features=AutomationControlled'];
 
@@ -88,18 +92,28 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
   setupRequestFailedLogging(context);
   const page = await context.newPage();
 
+  if (HEADLESS) {
+    console.warn('[login] HEADLESS=1 puede requerir verificación manual adicional.');
+  }
+
   try {
     const cdp = await page.context().newCDPSession(page);
     await cdp.send('Network.enable');
 
+    const socketUrlByRequestId = new Map<string, string>();
+
     cdp.on('Network.webSocketCreated', (e: WebSocketCreatedEvent) => {
+      if (e.requestId && e.url) {
+        socketUrlByRequestId.set(e.requestId, e.url);
+      }
       console.log('[socket-sniffer][CDP] WS creado:', e.url);
     });
 
     cdp.on('Network.webSocketFrameReceived', async (e: WebSocketFrameEvent) => {
       try {
-        const url = e.request?.url || '';
-        const { text, parsed } = parseFramePayload(e.response?.payloadData);
+        const url =
+          e.request?.url || (e.requestId ? socketUrlByRequestId.get(e.requestId) ?? '' : '');
+        const { text, parsed } = normaliseFramePayload(e.response?.payloadData);
         if (!page.isClosed()) {
           try {
             await page.evaluate(
@@ -123,8 +137,9 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
 
     cdp.on('Network.webSocketFrameSent', async (e: WebSocketFrameEvent) => {
       try {
-        const url = e.request?.url || '';
-        const { text, parsed } = parseFramePayload(e.response?.payloadData);
+        const url =
+          e.request?.url || (e.requestId ? socketUrlByRequestId.get(e.requestId) ?? '' : '');
+        const { text, parsed } = normaliseFramePayload(e.response?.payloadData);
         if (!page.isClosed()) {
           try {
             await page.evaluate(
@@ -257,15 +272,28 @@ async function launchPersistentContext(options: LaunchOptions): Promise<BrowserR
   };
 }
 
-const TRACKING_DOMAIN_PATTERNS = [
-  'google-analytics',
-  'googletagmanager',
-  'sentry',
-  'usercentrics',
-  'usercentrics.eu',
-  'crumbs.robinhood',
-  'nummus.robinhood',
+const TRACKING_HOST_PATTERNS = [
+  /(^|\.)google-analytics\.com$/i,
+  /(^|\.)googletagmanager\.com$/i,
+  /(^|\.)sentry\.io$/i,
+  /(^|\.)usercentrics\.eu$/i,
+  /(^|\.)crumbs\.robinhood\.com$/i,
+  /(^|\.)nummus\.robinhood\.com$/i,
 ];
+
+const NOISY_REQUEST_PREFIXES = [
+  'https://www.google.com/ccm/collect',
+  'https://www.googletagmanager.com/',
+];
+
+function matchesTrackingHost(url: string): boolean {
+  try {
+    const { hostname } = new URL(url);
+    return TRACKING_HOST_PATTERNS.some((pattern) => pattern.test(hostname));
+  } catch {
+    return TRACKING_HOST_PATTERNS.some((pattern) => pattern.test(url));
+  }
+}
 
 function configureNetworkBlocking(context: BrowserContext, shouldBlock: boolean): () => void {
   if (!shouldBlock) {
@@ -281,7 +309,7 @@ function configureNetworkBlocking(context: BrowserContext, shouldBlock: boolean)
     }
 
     const requestUrl = route.request().url();
-    if (TRACKING_DOMAIN_PATTERNS.some((pattern) => requestUrl.includes(pattern))) {
+    if (matchesTrackingHost(requestUrl)) {
       await route.abort();
       return;
     }
@@ -296,29 +324,18 @@ function configureNetworkBlocking(context: BrowserContext, shouldBlock: boolean)
   };
 }
 
-function parseFramePayload(payload: unknown): { text: string; parsed?: unknown } {
-  const text = toText(payload);
-  const trimmed = text.trimStart();
-  if (!trimmed) {
-    return { text };
-  }
-
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    const parsed = safeJsonParse(trimmed);
-    return parsed === undefined ? { text } : { text, parsed };
-  }
-
-  return { text };
-}
-
 function setupRequestFailedLogging(context: BrowserContext): void {
   context.on('requestfailed', (req) => {
     const url = req.url();
-    if (!DEBUG_NETWORK && TRACKING_DOMAIN_PATTERNS.some((pattern) => url.includes(pattern))) {
+    if (
+      !DEBUG_NETWORK &&
+      (matchesTrackingHost(url) || NOISY_REQUEST_PREFIXES.some((prefix) => url.startsWith(prefix)))
+    ) {
       return;
     }
     const failure = req.failure()?.errorText ?? 'unknown';
+    const method = req.method();
     // eslint-disable-next-line no-console
-    console.warn('[net] fail:', failure, url);
+    console.warn('[net] fail:', method, failure, url);
   });
 }

@@ -1,3 +1,5 @@
+export const MAX_WS_ENTRY_TEXT_LENGTH = 200_000;
+
 export function toText(payload: unknown): string {
   if (typeof payload === 'string') {
     return payload;
@@ -22,6 +24,24 @@ export function safeJsonParse<T = unknown>(value: string): T | undefined {
   } catch {
     return undefined;
   }
+}
+
+export function normaliseFramePayload(payload: unknown): { text: string; parsed?: unknown } {
+  const rawText = toText(payload);
+  const text =
+    rawText.length > MAX_WS_ENTRY_TEXT_LENGTH ? rawText.slice(0, MAX_WS_ENTRY_TEXT_LENGTH) : rawText;
+
+  const trimmed = rawText.trimStart();
+  if (!trimmed) {
+    return { text };
+  }
+
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    const parsed = safeJsonParse(trimmed);
+    return parsed === undefined ? { text } : { text, parsed };
+  }
+
+  return { text };
 }
 
 export type FeedPacket = {
