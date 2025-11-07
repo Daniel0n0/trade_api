@@ -1,4 +1,5 @@
-import type { Signals } from 'node:process';
+// Supported process signals as string literal types
+export type Signals = 'SIGINT' | 'SIGTERM';
 
 export type Closer = () => void | Promise<void>;
 

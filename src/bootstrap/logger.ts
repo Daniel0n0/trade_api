@@ -79,7 +79,7 @@ export function createProcessLogger(options: ProcessLoggerOptions = {}): Process
     closed = true;
 
     await new Promise<void>((resolve, reject) => {
-      stream.end((error) => {
+      stream.end((error: Error | null | undefined): void => {
         if (error) {
           reject(error);
           return;
