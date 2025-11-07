@@ -104,7 +104,7 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
         if (!page.isClosed()) {
           try {
             await page.evaluate(
-              (entry) => {
+              (entry: SnifferLogEntry) => {
                 const target = window as typeof window & {
                   socketSnifferLog?: (value: { kind: 'ws-message'; url: string; text: string; parsed?: unknown }) => void;
                 };
