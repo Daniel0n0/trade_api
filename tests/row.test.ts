@@ -92,7 +92,7 @@ test('buildTradeAggregationRow infers sessions for extended hours trades', () =>
 });
 
 test('BarAggregator uses dayVolume deltas per session', () => {
-  const agg = new BarAggregator(1);
+  const agg = new BarAggregator({ timeframe: '1m', periodMs: 60_000 });
   const baseTs = Date.UTC(2024, 0, 1, 14, 30);
   agg.addTrade({ ts: baseTs, price: 100, dayVolume: 100, size: 100, session: 'REG' });
   agg.addTrade({ ts: baseTs + 10_000, price: 101, dayVolume: 120, session: 'REG' });
@@ -101,5 +101,5 @@ test('BarAggregator uses dayVolume deltas per session', () => {
 
   const bars = agg.drainAll();
   assert.strictEqual(bars.length, 1);
-  assert.strictEqual(bars[0]?.volume, 128);
+  assert.strictEqual(bars[0]?.bar.volume, 128);
 });
