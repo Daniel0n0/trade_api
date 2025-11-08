@@ -19,6 +19,7 @@ test('isModuleArgs acepta objetos válidos con nuevos campos', () => {
     credSource: 'env',
     optionsDate: '2024-01-01',
     optionsHorizon: 5,
+    urlMode: 'symbol',
   };
 
   assert.ok(isModuleArgs(args));
@@ -34,4 +35,14 @@ test('assertModuleArgs rechaza dataSink inválido', () => {
 
   assert.ok(!isModuleArgs(invalid));
   assert.throws(() => assertModuleArgs(invalid));
+});
+
+test('isModuleArgs rechaza urlMode desconocido', () => {
+  const invalid = {
+    module: 'spy-options-chain',
+    action: 'now',
+    urlMode: 'custom',
+  };
+
+  assert.ok(!isModuleArgs(invalid));
 });

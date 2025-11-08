@@ -8,6 +8,7 @@ import {
   DATA_SINK_VALUES,
   LOGIN_MODE_VALUES,
   CREDENTIAL_SOURCE_VALUES,
+  URL_MODE_VALUES,
   type ModuleArgsInput,
 } from './schema.js';
 import type { ModuleArgs } from '../orchestrator/messages.js';
@@ -297,6 +298,7 @@ export function normalizeModuleArgs(input: Partial<ModuleArgsInput>): ModuleArgs
     ),
     optionsDate: coerceISO(input.optionsDate, { label: 'optionsDate' }),
     optionsHorizon: toOptionalNumber(input.optionsHorizon, 'optionsHorizon'),
+    urlMode: normalizeEnumValue(input.urlMode, 'urlMode', URL_MODE_VALUES, (raw) => raw.trim().toLowerCase()),
     persistCookies: coerceBool(input.persistCookies, 'persistCookies'),
     persistIndexedDb: coerceBool(input.persistIndexedDb, 'persistIndexedDb'),
     storageStatePath: toOptionalString(input.storageStatePath),

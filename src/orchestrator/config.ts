@@ -4,7 +4,7 @@ import path from 'node:path';
 import { parse } from 'yaml';
 import { z } from 'zod';
 
-import type { ModuleArgs, DataSink, LoginMode, CredentialSource } from './messages.js';
+import type { ModuleArgs, DataSink, LoginMode, CredentialSource, UrlMode } from './messages.js';
 
 const BooleanLikeSchema = z
   .preprocess((value) => {
@@ -37,6 +37,7 @@ const BooleanLikeSchema = z
 const DataSinkValues: readonly DataSink[] = ['stdout', 'filesystem', 'noop'];
 const LoginModeValues: readonly LoginMode[] = ['auto', 'manual', 'skip'];
 const CredentialSourceValues: readonly CredentialSource[] = ['env', 'prompt', 'keychain'];
+const UrlModeValues: readonly UrlMode[] = ['auto', 'module', 'symbol'];
 
 const StringArraySchema = z.preprocess((value) => {
   if (Array.isArray(value)) {
@@ -83,6 +84,7 @@ const JobSchema = z
     credSource: z.enum(CredentialSourceValues as [CredentialSource, ...CredentialSource[]]).optional(),
     optionsDate: z.string().optional(),
     optionsHorizon: NumberLikeSchema,
+    urlMode: z.enum(UrlModeValues as [UrlMode, ...UrlMode[]]).optional(),
     persistCookies: BooleanLikeSchema,
     persistIndexedDb: BooleanLikeSchema,
     storageStatePath: z.string().optional(),
@@ -133,6 +135,7 @@ function toModuleArgsFromJob(job: JobConfig): ModuleArgs {
     credSource: job.credSource ?? undefined,
     optionsDate: job.optionsDate ?? undefined,
     optionsHorizon: job.optionsHorizon ?? undefined,
+    urlMode: job.urlMode ?? undefined,
     persistCookies: job.persistCookies,
     persistIndexedDb: job.persistIndexedDb,
     storageStatePath: job.storageStatePath ?? undefined,

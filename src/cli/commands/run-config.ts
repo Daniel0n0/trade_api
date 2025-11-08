@@ -20,6 +20,10 @@ const ENV_MAPPING: Partial<Record<keyof ModuleArgsInput, string | readonly strin
   storageStatePath: ['TRADE_API_STORAGE_STATE_PATH', 'ORCHESTRATOR_STORAGE_STATE_PATH'],
   indexedDbSeed: ['TRADE_API_INDEXEDDB_SEED', 'ORCHESTRATOR_INDEXEDDB_SEED'],
   indexedDbProfile: ['TRADE_API_INDEXEDDB_PROFILE', 'ORCHESTRATOR_INDEXEDDB_PROFILE'],
+  symbols: ['TRADE_API_SYMBOLS', 'ORCHESTRATOR_SYMBOLS'],
+  optionsDate: ['TRADE_API_OPTIONS_DATE', 'ORCHESTRATOR_OPTIONS_DATE'],
+  optionsHorizon: ['TRADE_API_OPTIONS_HORIZON', 'ORCHESTRATOR_OPTIONS_HORIZON'],
+  urlMode: ['TRADE_API_URL_MODE', 'ORCHESTRATOR_URL_MODE'],
 };
 
 type RunConfigOptions = {
@@ -34,6 +38,9 @@ type RunConfigOptions = {
   indexeddbProfile?: string;
   module?: string;
   symbols?: string | string[];
+  optionsDate?: string;
+  optionsHorizon?: string | number;
+  urlMode?: string;
 };
 
 type RunConfigArgs = [configPath?: string, options?: RunConfigOptions, command?: Command];
@@ -71,6 +78,18 @@ function buildOverrides(options: RunConfigOptions): Partial<ModuleArgsInput> {
 
   if (options.indexeddbProfile !== undefined) {
     overrides.indexedDbProfile = options.indexeddbProfile;
+  }
+
+  if (options.optionsDate !== undefined) {
+    overrides.optionsDate = options.optionsDate;
+  }
+
+  if (options.optionsHorizon !== undefined) {
+    overrides.optionsHorizon = options.optionsHorizon as ModuleArgsInput['optionsHorizon'];
+  }
+
+  if (options.urlMode !== undefined) {
+    overrides.urlMode = options.urlMode as ModuleArgsInput['urlMode'];
   }
 
   return overrides;
@@ -188,6 +207,9 @@ export function registerRunConfigCommand(program: Command, context: CommandConte
     .option('--indexeddb-profile <path>', 'Sobrescribe el perfil de IndexedDB.')
     .option('--module <name>', 'Filtra por nombre de módulo antes de lanzar.')
     .option('--symbols <list>', 'Filtra por símbolos (lista separada por comas o espacios).')
+    .option('--options-date <iso>', 'Expiración principal para los módulos de opciones.')
+    .option('--options-horizon <días>', 'Límite de días hasta la expiración objetivo en módulos de opciones.')
+    .option('--url-mode <modo>', 'Modo de URL para módulos de opciones (auto|module|symbol).')
     .action(async (...args: RunConfigArgs) => {
       const [pathArg, options = {}, command] = args;
       const globals = command ? context.resolveGlobals(command) : { json: false, dryRun: false };
