@@ -15,6 +15,7 @@ import {
   normalizeDxFeedRow,
   resolveCandleTimeframe,
   toCsvLine,
+  toMsUtc,
 } from '../io/row.js';
 import { dataPath } from '../io/paths.js';
 import { BaseEvent } from '../io/schemas.js';
@@ -64,6 +65,27 @@ type PageWithSnifferBinding = Page & {
 
 type LogEntry = Serializable & {
   readonly ts: number;
+};
+
+export const resolveEventTimestamp = (event: BaseEvent): number | undefined => {
+  const record = event as Record<string, unknown>;
+  const candidates: readonly unknown[] = [
+    event.eventTime,
+    event.time,
+    record.eventTimestamp,
+    record.timestamp,
+    record.ts,
+    record.t,
+  ];
+
+  for (const candidate of candidates) {
+    const resolved = toMsUtc(candidate);
+    if (resolved !== null) {
+      return resolved;
+    }
+  }
+
+  return undefined;
 };
 
 function normaliseSymbols(input: readonly string[]): readonly string[] {
@@ -222,49 +244,6 @@ async function exposeLogger(
       uptimeSec: Math.floor(process.uptime()),
     });
   }, HEALTH_INTERVAL_MS);
-
-  const toFiniteNumber = (value: unknown): number | undefined => {
-    if (typeof value === 'number') {
-      return Number.isFinite(value) ? value : undefined;
-    }
-    if (typeof value === 'bigint') {
-      return Number(value);
-    }
-    if (typeof value === 'string') {
-      const trimmed = value.trim();
-      if (!trimmed) {
-        return undefined;
-      }
-      const parsed = Number(trimmed);
-      return Number.isFinite(parsed) ? parsed : undefined;
-    }
-    if (value instanceof Date) {
-      const ms = value.getTime();
-      return Number.isFinite(ms) ? ms : undefined;
-    }
-    return undefined;
-  };
-
-  const resolveEventTimestamp = (event: BaseEvent): number | undefined => {
-    const record = event as Record<string, unknown>;
-    const candidates: unknown[] = [
-      event.eventTime,
-      event.time,
-      record.eventTimestamp,
-      record.timestamp,
-      record.ts,
-      record.t,
-    ];
-
-    for (const candidate of candidates) {
-      const resolved = toFiniteNumber(candidate);
-      if (typeof resolved === 'number') {
-        return resolved;
-      }
-    }
-
-    return undefined;
-  };
 
   const resolveEventSymbol = (event: BaseEvent): string | undefined => {
     const candidates = [event.eventSymbol, event.symbol];
