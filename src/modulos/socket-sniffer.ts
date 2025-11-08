@@ -374,12 +374,53 @@ async function exposeLogger(
   const isWsMessageEntry = (entry: Serializable): entry is WsMessageEntry =>
     entry.kind === 'ws-message' && typeof entry.url === 'string' && typeof entry.text === 'string';
 
+  const shouldIgnoreWsMessage = (entry: WsMessageEntry): boolean => {
+    const { parsed, url } = entry;
+
+    if (!parsed || typeof parsed !== 'object') {
+      return false;
+    }
+
+    const payload = parsed as Record<string, unknown>;
+
+    if (/api-streaming\.robinhood\.com/i.test(url)) {
+      const opCode = payload.opCode ?? (payload as { opcode?: unknown }).opcode;
+      const opCodeValue =
+        typeof opCode === 'string' ? Number.parseInt(opCode, 10) : (opCode as number | undefined);
+      if (opCodeValue === 10) {
+        return true;
+      }
+    }
+
+    if (/marketdata\/streaming\/legend\//i.test(url)) {
+      const type = payload.type;
+      if (type === 'KEEPALIVE') {
+        return true;
+      }
+
+      const channel = payload.channel;
+      const channelValue =
+        typeof channel === 'string'
+          ? Number.parseInt(channel, 10)
+          : (channel as number | undefined);
+      if (channelValue === 0) {
+        return true;
+      }
+    }
+
+    return false;
+  };
+
   await page.exposeFunction('socketSnifferLog', (entry: SnifferBindingEntry) => {
     try {
       if (VERBOSE) {
         /* eslint-disable no-console */
         console.log('[socket-sniffer] entry:', JSON.stringify(entry));
         /* eslint-enable no-console */
+      }
+
+      if (isWsMessageEntry(entry) && shouldIgnoreWsMessage(entry)) {
+        return;
       }
 
       writeGeneral(entry);
