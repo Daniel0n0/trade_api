@@ -1,5 +1,8 @@
 import type { Bar } from '../modulos/timebar.js';
 import type { BaseEvent } from './schemas.js';
+import { BARS_HEADER, CANDLE_HEADER, QUOTE_HEADER } from './csvHeaders.js';
+
+export { CSV_HEADERS, CSV_HEADER_TEXT } from './csvHeaders.js';
 
 export function toMsUtc(value: unknown): number | null {
   if (value === null || value === undefined) {
@@ -51,25 +54,22 @@ export function toMsUtc(value: unknown): number | null {
   return Math.round(numeric / 1_000_000);
 }
 
-const CANDLE_HEADER = ['t', 'open', 'high', 'low', 'close', 'volume', 'symbol'] as const;
-const QUOTE_HEADER = ['t', 'bidPrice', 'bidSize', 'askPrice', 'askSize', 'symbol'] as const;
-const BARS_HEADER = ['t', 'open', 'high', 'low', 'close', 'volume'] as const;
-
-export const CSV_HEADERS = {
-  candle: CANDLE_HEADER,
-  quote: QUOTE_HEADER,
-  bars: BARS_HEADER,
-} as const;
-
-export const CSV_HEADER_TEXT = {
-  candle: CANDLE_HEADER.join(','),
-  quote: QUOTE_HEADER.join(','),
-  bars: BARS_HEADER.join(','),
-} as const;
-
 type HeaderKey<T extends readonly string[]> = T[number];
 
 type CsvRow<T extends readonly string[]> = Partial<Record<HeaderKey<T>, string | number | undefined>>;
+
+const CSV_SPECIAL_CHARACTERS = /[",\n]/;
+const DOUBLE_QUOTE = '"';
+
+const escapeCsvString = (value: string): string => {
+  const normalized = value.replace(/\r\n?/g, '\n');
+  const escapedNewLines = normalized.replace(/\n/g, '\\n');
+  const escapedQuotes = escapedNewLines.split(DOUBLE_QUOTE).join(DOUBLE_QUOTE + DOUBLE_QUOTE);
+  if (CSV_SPECIAL_CHARACTERS.test(normalized)) {
+    return `${DOUBLE_QUOTE}${escapedQuotes}${DOUBLE_QUOTE}`;
+  }
+  return escapedQuotes;
+};
 
 export function toCsvLine<T extends readonly string[]>(header: T, row: CsvRow<T>): string {
   return header
@@ -81,7 +81,11 @@ export function toCsvLine<T extends readonly string[]>(header: T, row: CsvRow<T>
       if (typeof value === 'number') {
         return Number.isFinite(value) ? String(value) : '';
       }
-      return String(value);
+      const stringValue = String(value);
+      if (!stringValue) {
+        return '';
+      }
+      return escapeCsvString(stringValue);
     })
     .join(',');
 }

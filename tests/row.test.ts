@@ -25,6 +25,12 @@ test('toMsUtc converts microseconds and nanoseconds correctly', () => {
   assert.strictEqual(toMsUtc(1_700_000_000_123_456_789n), 1_700_000_000_123);
 });
 
+test('toCsvLine escapes commas, quotes, and new lines', () => {
+  const header = ['value'] as const;
+  const line = toCsvLine(header, { value: 'Hello, "world"\nNext line' });
+  assert.strictEqual(line, '"Hello, ""world""\\nNext line"');
+});
+
 test('normalizeDxFeedRow normalizes event times to milliseconds', () => {
   const event = BaseEvent.parse({ eventType: 'Trade', time: 1_700_000_000, price: 12.34 });
   const normalized = normalizeDxFeedRow(3, event);
