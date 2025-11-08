@@ -121,6 +121,100 @@ type LogEntry = Serializable & {
   readonly ts: number;
 };
 
+const LEGEND_WS_PATTERN = /marketdata\/streaming\/legend\//i;
+
+type LegendMessageKind = 'marketdata' | 'options' | 'news' | 'ignore' | 'unknown';
+
+type LegendClassificationResult =
+  | { readonly matched: false }
+  | {
+      readonly matched: true;
+      readonly kind: LegendMessageKind;
+      readonly payload?: Record<string, unknown>;
+    };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+const collectLegendTypeTokens = (root: Record<string, unknown>): readonly string[] => {
+  const tokens: string[] = [];
+  const visited = new Set<unknown>();
+  let current: unknown = root;
+
+  while (isRecord(current) && !visited.has(current)) {
+    visited.add(current);
+    const record = current as Record<string, unknown>;
+    const typeValue = record.type;
+    if (typeof typeValue === 'string') {
+      const normalized = typeValue.trim();
+      if (normalized) {
+        tokens.push(normalized);
+      }
+    }
+    current = record.payload;
+  }
+
+  return tokens;
+};
+
+const resolveDeepestLegendPayload = (root: Record<string, unknown>): Record<string, unknown> => {
+  const visited = new Set<unknown>();
+  let current: unknown = root;
+  let deepest: Record<string, unknown> = root;
+
+  while (isRecord(current) && !visited.has(current)) {
+    visited.add(current);
+    deepest = current as Record<string, unknown>;
+    const next = (current as Record<string, unknown>).payload;
+    if (!isRecord(next)) {
+      break;
+    }
+    current = next;
+  }
+
+  return deepest;
+};
+
+const classifyLegendWsMessage = (entry: WsMessageEntry): LegendClassificationResult => {
+  if (!LEGEND_WS_PATTERN.test(entry.url)) {
+    return { matched: false };
+  }
+
+  if (!isRecord(entry.parsed)) {
+    return { matched: true, kind: 'unknown' };
+  }
+
+  const tokens = collectLegendTypeTokens(entry.parsed);
+  const normalizedTokens = tokens.map((token) => token.trim().toUpperCase()).filter(Boolean);
+  const reversed = [...normalizedTokens].reverse();
+  const payload = resolveDeepestLegendPayload(entry.parsed);
+
+  const includesToken = (needles: readonly string[]): boolean =>
+    reversed.some((token) => needles.some((needle) => token.includes(needle)));
+
+  if (includesToken(['KEEPALIVE', 'HEARTBEAT', 'PING', 'PONG'])) {
+    return { matched: true, kind: 'ignore', payload };
+  }
+
+  if (includesToken(['SUBSCRIBED', 'SUBSCRIPTION', 'ACK', 'CONNECTED', 'CONNECT'])) {
+    return { matched: true, kind: 'ignore', payload };
+  }
+
+  if (includesToken(['OPTION'])) {
+    return { matched: true, kind: 'options', payload };
+  }
+
+  if (includesToken(['NEWS'])) {
+    return { matched: true, kind: 'news', payload };
+  }
+
+  if (includesToken(['MARKETDATA'])) {
+    return { matched: true, kind: 'marketdata', payload };
+  }
+
+  return { matched: true, kind: 'unknown', payload };
+};
+
 export const resolveEventTimestamp = (event: BaseEvent): number | undefined => {
   const record = event as Record<string, unknown>;
   const candidates: readonly unknown[] = [
@@ -158,7 +252,16 @@ async function exposeLogger(
   const generalWriter = new RotatingWriter(path.join(baseDir, `${baseName}.jsonl`), ROTATE_POLICY);
   const VERBOSE = false; // Cambiado a false para reducir ruido por defecto
 
-  const counts = { ch1: 0, ch3: 0, ch5: 0, ch7: 0, other: 0, total: 0 };
+  const counts = {
+    ch1: 0,
+    ch3: 0,
+    ch5: 0,
+    ch7: 0,
+    legendOptions: 0,
+    legendNews: 0,
+    other: 0,
+    total: 0,
+  };
   const lastWriteTs: Record<string, number> = {};
 
   const bump = (channel: number, n: number) => {
@@ -190,6 +293,14 @@ async function exposeLogger(
   };
 
   const channelWriters = new Map<string, RotatingWriter>();
+  const legendOptionsWriter = new RotatingWriter(
+    path.join(baseDir, `${perChannelPrefix}-legend-options.jsonl`),
+    ROTATE_POLICY,
+  );
+  const legendNewsWriter = new RotatingWriter(
+    path.join(baseDir, `${perChannelPrefix}-legend-news.jsonl`),
+    ROTATE_POLICY,
+  );
   let closed = false;
   const getChannelWriter = (channel: number, label: string) => {
     const key = `ch${channel}-${label}`;
@@ -199,6 +310,56 @@ async function exposeLogger(
       channelWriters.set(key, writer);
     }
     return writer;
+  };
+
+  const bumpLegend = (key: 'legendOptions' | 'legendNews', n: number) => {
+    if (!Number.isFinite(n) || n <= 0) {
+      return;
+    }
+
+    counts.total += n;
+    counts[key] += n;
+    lastWriteTs[key] = Date.now();
+  };
+
+  const writeLegendSink = (
+    writer: RotatingWriter,
+    key: 'legendOptions' | 'legendNews',
+    payload: Record<string, unknown> | undefined,
+  ) => {
+    if (!payload) {
+      return;
+    }
+
+    const now = Date.now();
+    const base = {
+      ts: now,
+      channel: (payload as { channel?: unknown }).channel,
+      type: (payload as { type?: unknown }).type,
+      topic: (payload as { topic?: unknown }).topic,
+    };
+
+    const rawData = (payload as { data?: unknown }).data;
+    if (Array.isArray(rawData) && rawData.length > 0) {
+      bumpLegend(key, rawData.length);
+      for (const item of rawData) {
+        writer.write(
+          JSON.stringify({
+            ...base,
+            data: item,
+          }),
+        );
+      }
+      return;
+    }
+
+    bumpLegend(key, 1);
+    writer.write(
+      JSON.stringify({
+        ...base,
+        payload,
+      }),
+    );
   };
 
   const createCsvWriter = (suffix: string, headerKey: keyof typeof CSV_HEADER_TEXT) =>
@@ -404,7 +565,10 @@ async function exposeLogger(
   const isWsMessageEntry = (entry: Serializable): entry is WsMessageEntry =>
     entry.kind === 'ws-message' && typeof entry.url === 'string' && typeof entry.text === 'string';
 
-  const shouldIgnoreWsMessage = (entry: WsMessageEntry): boolean => {
+  const shouldIgnoreWsMessage = (
+    entry: WsMessageEntry,
+    classification?: LegendClassificationResult,
+  ): boolean => {
     const { parsed, url } = entry;
 
     if (!parsed || typeof parsed !== 'object') {
@@ -422,17 +586,17 @@ async function exposeLogger(
       }
     }
 
-    if (/marketdata\/streaming\/legend\//i.test(url)) {
-      const type = payload.type;
-      if (type === 'KEEPALIVE') {
+    const legendClassification = classification ?? classifyLegendWsMessage(entry);
+    if (legendClassification.matched) {
+      if (legendClassification.kind === 'ignore') {
         return true;
       }
 
-      const channel = payload.channel;
+      const channelCandidate = (legendClassification.payload as { channel?: unknown } | undefined)?.channel;
       const channelValue =
-        typeof channel === 'string'
-          ? Number.parseInt(channel, 10)
-          : (channel as number | undefined);
+        typeof channelCandidate === 'string'
+          ? Number.parseInt(channelCandidate, 10)
+          : (channelCandidate as number | undefined);
       if (channelValue === 0) {
         return true;
       }
@@ -449,16 +613,48 @@ async function exposeLogger(
         /* eslint-enable no-console */
       }
 
-      if (isWsMessageEntry(entry) && shouldIgnoreWsMessage(entry)) {
-        return;
+      let legendClassification: LegendClassificationResult | undefined;
+      if (isWsMessageEntry(entry)) {
+        legendClassification = classifyLegendWsMessage(entry);
+        if (shouldIgnoreWsMessage(entry, legendClassification)) {
+          return;
+        }
       }
 
       writeGeneral(entry);
 
       if (isWsMessageEntry(entry)) {
-        const feed = extractFeed(entry.parsed);
-        if (feed && feed.data.length) {
-          writeChannelRows(feed.channel, feed.data);
+        const classification = legendClassification ?? classifyLegendWsMessage(entry);
+        if (classification.matched) {
+          switch (classification.kind) {
+            case 'marketdata': {
+              const feed = extractFeed(entry.parsed);
+              if (feed && feed.data.length) {
+                writeChannelRows(feed.channel, feed.data);
+              }
+              break;
+            }
+            case 'options':
+              writeLegendSink(legendOptionsWriter, 'legendOptions', classification.payload);
+              break;
+            case 'news':
+              writeLegendSink(legendNewsWriter, 'legendNews', classification.payload);
+              break;
+            case 'unknown': {
+              const feed = extractFeed(entry.parsed);
+              if (feed && feed.data.length) {
+                writeChannelRows(feed.channel, feed.data);
+              }
+              break;
+            }
+            case 'ignore':
+              break;
+          }
+        } else {
+          const feed = extractFeed(entry.parsed);
+          if (feed && feed.data.length) {
+            writeChannelRows(feed.channel, feed.data);
+          }
         }
       }
     } catch (error) {
@@ -489,6 +685,8 @@ async function exposeLogger(
     }
 
     generalWriter.close();
+    legendOptionsWriter.close();
+    legendNewsWriter.close();
     for (const writer of candleCsvByTimeframe.values()) {
       writer.close();
     }
