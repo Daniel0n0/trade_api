@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { Command } from 'commander';
 
 import { registerRunConfigCommand } from '../src/cli/commands/run-config.js';
+import { registerSessionCommand } from '../src/cli/commands/session.js';
 import { registerStartCommand } from '../src/cli/commands/start.js';
 import { registerStatusCommand } from '../src/cli/commands/status.js';
 import { registerStopCommand } from '../src/cli/commands/stop.js';
@@ -186,4 +187,25 @@ test('run-config command aplica filtros y overrides', async () => {
   assert.strictEqual(jobArgs.module, 'quotes');
   assert.strictEqual(jobArgs.action, 'stream');
   assert.strictEqual(jobArgs.start, '2024-01-01T00:00:00Z');
+});
+
+test('session command respeta el modo dry-run', async () => {
+  const manager = new FakeManager();
+  const context = createContext(manager, { dryRun: true });
+  const program = new Command();
+  registerSessionCommand(program, context);
+
+  let output = '';
+  const originalLog = console.log;
+  console.log = (message?: unknown) => {
+    output += `${String(message)}\n`;
+  };
+
+  try {
+    await program.parseAsync(['node', 'trade-api', 'session']);
+  } finally {
+    console.log = originalLog;
+  }
+
+  assert.match(output, /\[dry-run] trade-api session/);
 });

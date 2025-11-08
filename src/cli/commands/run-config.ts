@@ -10,7 +10,7 @@ import { CommandContext, resolveEnv } from './shared.js';
 
 const DEFAULT_CONFIG = 'orchestrator.yaml';
 
-const ENV_MAPPING: Record<keyof ModuleArgsInput, string | readonly string[]> = {
+const ENV_MAPPING: Partial<Record<keyof ModuleArgsInput, string | readonly string[]>> = {
   module: ['TRADE_API_MODULE', 'ORCHESTRATOR_MODULE'],
   action: ['TRADE_API_ACTION', 'ORCHESTRATOR_ACTION'],
   start: ['TRADE_API_START', 'ORCHESTRATOR_START', 'TRADE_API_START_AT', 'ORCHESTRATOR_START_AT'],
@@ -197,7 +197,11 @@ export function registerRunConfigCommand(program: Command, context: CommandConte
       const resolvedPath = path.resolve(configPath);
       const config = await loadRunConfig(resolvedPath);
 
-      const envArgs = mapEnvFallbacks<Partial<ModuleArgsInput>>({ action: 'now' }, ENV_MAPPING, env);
+      const envArgs = mapEnvFallbacks<Partial<ModuleArgsInput>>(
+        { action: 'now' } as Partial<ModuleArgsInput>,
+        ENV_MAPPING,
+        env,
+      );
       const overrides = buildOverrides(options);
       const jobs = filterJobs(config.jobs, options);
 

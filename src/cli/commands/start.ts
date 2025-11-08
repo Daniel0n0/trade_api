@@ -8,7 +8,7 @@ import { deriveOutPrefix, mapEnvFallbacks, mergeArgChain, normalizeModuleArgs } 
 import type { ModuleArgs } from '../../orchestrator/messages.js';
 import { CommandContext, resolveEnv } from './shared.js';
 
-const ENV_MAPPING: Record<keyof ModuleArgs, string | readonly string[]> = {
+const ENV_MAPPING: Partial<Record<keyof ModuleArgsInput, string | readonly string[]>> = {
   module: ['TRADE_API_MODULE', 'ORCHESTRATOR_MODULE'],
   action: ['TRADE_API_ACTION', 'ORCHESTRATOR_ACTION'],
   start: ['TRADE_API_START', 'ORCHESTRATOR_START', 'TRADE_API_START_AT', 'ORCHESTRATOR_START_AT'],
@@ -35,7 +35,11 @@ type StartOptions = {
 
 type StartCliArgs = [module?: string, action?: string, options?: StartOptions, command?: Command];
 
-function buildCliArgs(moduleArg: string | undefined, actionArg: string | undefined, options: StartOptions): Partial<ModuleArgsInput> {
+function buildCliArgs(
+  moduleArg: string | undefined,
+  actionArg: string | undefined,
+  options: StartOptions,
+): Partial<ModuleArgsInput> {
   const result: Partial<ModuleArgsInput> = {};
   const moduleName = options.module ?? moduleArg;
   if (moduleName !== undefined) {
@@ -141,11 +145,15 @@ export function registerStartCommand(program: Command, context: CommandContext):
       const globals = command ? context.resolveGlobals(command) : { json: false, dryRun: false };
       const env = resolveEnv(context);
 
-      const envArgs = mapEnvFallbacks<Partial<ModuleArgsInput>>({ action: 'now' }, ENV_MAPPING, env);
+      const envArgs = mapEnvFallbacks<Partial<ModuleArgsInput>>(
+        { action: 'now' } as Partial<ModuleArgsInput>,
+        ENV_MAPPING,
+        env,
+      );
       const configArgs = options.config ? await loadConfigDefaults(options.config) : undefined;
       const cliArgs = buildCliArgs(moduleArg, actionArg, options);
 
-      const merged = mergeArgChain<Partial<ModuleArgsInput>>(envArgs, configArgs, cliArgs);
+      const merged = mergeArgChain(envArgs, configArgs, cliArgs);
       const moduleArgs = normalizeModuleArgs(merged);
 
       const prefix = deriveOutPrefix({ module: moduleArgs.module, action: moduleArgs.action });
