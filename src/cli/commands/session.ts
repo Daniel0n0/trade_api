@@ -1,5 +1,3 @@
-import { mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
 import process from 'node:process';
 
 import { Command } from 'commander';
@@ -11,18 +9,10 @@ import { bindProcessSignals, registerCloser } from '../../bootstrap/signals.js';
 import { bindContextDebugObservers, attachPageDebugObservers } from '../../debugging.js';
 import { openModuleTabs } from '../../modules.js';
 import { ensureLoggedInByUrlFlow } from '../../sessionFlow.js';
+import { ensureDirectoryForFile } from '../../io/dir.js';
 import type { CommandContext, GlobalOptions } from './shared.js';
 
 type SessionOutcome = 'ready' | 'missing' | 'error';
-
-async function ensureDirectoryForFile(filePath: string): Promise<void> {
-  const directory = dirname(filePath);
-  if (!directory || directory === '.' || directory === '') {
-    return;
-  }
-
-  await mkdir(directory, { recursive: true });
-}
 
 async function runInteractiveSession(globals: GlobalOptions): Promise<SessionOutcome> {
   const json = globals.json;
