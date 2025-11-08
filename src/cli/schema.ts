@@ -60,7 +60,7 @@ export const ModuleArgsSchema: z.ZodType<ModuleArgs> = z.object({
 export type CommonArgsInput = z.input<typeof CommonArgsSchema>;
 export type AuthArgsInput = z.input<typeof AuthArgsSchema>;
 export type RunnerOptionsInput = z.input<typeof RunnerOptionsSchema>;
-export type ModuleArgsInput = z.input<typeof ModuleArgsSchema>;
+export type ModuleArgsInput = ModuleArgs;
 
 export type CommonArgs = z.output<typeof CommonArgsSchema>;
 export type AuthArgs = z.output<typeof AuthArgsSchema>;

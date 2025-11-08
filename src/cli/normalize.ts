@@ -137,7 +137,7 @@ export function coerceISO(
     throw new Error(`El ${label} debe ser una fecha en formato ISO 8601.`);
   }
 
-  return dt.toUTC().toISO({ suppressMilliseconds: true });
+  return dt.toUTC().toISO({ suppressMilliseconds: true }) ?? undefined;
 }
 
 function sanitizeToken(token: string): string {
@@ -171,7 +171,7 @@ export function deriveOutPrefix({
   return baseDir ? path.join(baseDir, filename) : filename;
 }
 
-type EnvMapping<T> = {
+type EnvMapping<T extends object> = {
   [K in keyof T]?:
     | string
     | readonly string[]
@@ -179,12 +179,12 @@ type EnvMapping<T> = {
     | readonly { readonly key: string; readonly transform?: (value: string) => unknown }[];
 };
 
-export function mapEnvFallbacks<T extends Record<string, unknown>>(
+export function mapEnvFallbacks<T extends object>(
   source: T,
   mapping: EnvMapping<T>,
   env: NodeJS.ProcessEnv = process.env,
 ): T {
-  const result: Record<string, unknown> = { ...source };
+  const result = { ...(source as Record<string, unknown>) } as Record<string, unknown>;
 
   for (const [property, descriptor] of Object.entries(mapping) as [keyof T, EnvMapping<T>[keyof T]][]) {
     const current = result[property as string];
@@ -302,15 +302,15 @@ export function normalizeModuleArgs(input: Partial<ModuleArgsInput>): ModuleArgs
     storageStatePath: toOptionalString(input.storageStatePath),
     indexedDbSeed: toOptionalString(input.indexedDbSeed),
     indexedDbProfile: toOptionalString(input.indexedDbProfile),
-  } satisfies ModuleArgsInput;
+  } satisfies Partial<ModuleArgsInput>;
 
-  return ModuleArgsSchema.parse(normalized);
+  return ModuleArgsSchema.parse(normalized as ModuleArgsInput);
 }
 
 export function mergeArgChain(
-  ...sources: ReadonlyArray<Partial<ModuleArgsInput> | undefined>
+  ...sources: ReadonlyArray<Partial<ModuleArgsInput> | ModuleArgs | undefined>
 ): Partial<ModuleArgsInput> {
-  const target: Partial<ModuleArgsInput> = {};
+  const target: Record<string, unknown> = {};
   for (const source of sources) {
     if (!source) {
       continue;
@@ -319,8 +319,8 @@ export function mergeArgChain(
       if (value === undefined) {
         continue;
       }
-      target[key] = value as ModuleArgsInput[typeof key];
+      target[key as string] = value;
     }
   }
-  return target;
+  return target as Partial<ModuleArgsInput>;
 }

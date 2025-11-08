@@ -9,25 +9,25 @@ export type LoginMode = 'auto' | 'manual' | 'skip';
 export type CredentialSource = 'env' | 'prompt' | 'keychain';
 
 export type ModuleArgs = {
-  readonly module: string;
-  readonly action: ModuleAction;
-  readonly symbols?: readonly string[];
-  readonly headless?: boolean;
-  readonly start?: string;
-  readonly end?: string;
-  readonly closeOnFinish?: boolean;
-  readonly outPrefix?: string;
-  readonly dataSink?: DataSink;
-  readonly parentId?: string;
-  readonly loginMode?: LoginMode;
-  readonly credSource?: CredentialSource;
-  readonly optionsDate?: string;
-  readonly optionsHorizon?: number;
-  readonly persistCookies?: boolean;
-  readonly persistIndexedDb?: boolean;
-  readonly storageStatePath?: string;
-  readonly indexedDbSeed?: string;
-  readonly indexedDbProfile?: string;
+  module: string;
+  action: ModuleAction;
+  symbols?: readonly string[];
+  headless?: boolean;
+  start?: string;
+  end?: string;
+  closeOnFinish?: boolean;
+  outPrefix?: string;
+  dataSink?: DataSink;
+  parentId?: string;
+  loginMode?: LoginMode;
+  credSource?: CredentialSource;
+  optionsDate?: string;
+  optionsHorizon?: number;
+  persistCookies?: boolean;
+  persistIndexedDb?: boolean;
+  storageStatePath?: string;
+  indexedDbSeed?: string;
+  indexedDbProfile?: string;
 };
 
 export type Metrics = {
