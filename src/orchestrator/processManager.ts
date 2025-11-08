@@ -28,7 +28,7 @@ type ChildStatus = 'starting' | 'running' | 'stopping' | 'restarting' | 'stopped
 
 export type ChildRef = {
   readonly ctxId: string;
-  readonly moduleName: string;
+  readonly module: string;
   readonly action: string;
   readonly args: ModuleArgs;
   child: ChildProcess | null;
@@ -47,7 +47,7 @@ export type ChildRef = {
 
 export type ProcessSnapshot = {
   readonly ctxId: string;
-  readonly moduleName: string;
+  readonly module: string;
   readonly action: string;
   readonly pid: number | null;
   readonly status: ChildStatus;
@@ -145,7 +145,7 @@ export class ProcessManager extends EventEmitter {
   }
 
   public start(args: ModuleArgs): ChildRef {
-    const moduleName = args.moduleName;
+    const moduleName = args.module;
     const bundlePath = toBundlePath(this.bundleRoot, moduleName);
     if (!existsSync(bundlePath)) {
       throw new Error(`No se encontró el bundle del módulo "${moduleName}" en ${bundlePath}.`);
@@ -155,7 +155,7 @@ export class ProcessManager extends EventEmitter {
 
     const ref: ChildRef = {
       ctxId,
-      moduleName,
+      module: moduleName,
       action: args.action,
       args,
       child: null,
@@ -231,7 +231,7 @@ export class ProcessManager extends EventEmitter {
       const pid = ref.child?.pid ?? null;
       snapshots.push({
         ctxId: ref.ctxId,
-        moduleName: ref.moduleName,
+        module: ref.module,
         action: ref.action,
         pid,
         status: ref.status,
@@ -315,10 +315,10 @@ export class ProcessManager extends EventEmitter {
   }
 
   private spawn(ref: ChildRef): void {
-    const bundlePath = toBundlePath(this.bundleRoot, ref.moduleName);
+    const bundlePath = toBundlePath(this.bundleRoot, ref.module);
     if (!existsSync(bundlePath)) {
       this.children.delete(ref.ctxId);
-      throw new Error(`No se encontró el bundle del módulo "${ref.moduleName}" en ${bundlePath}.`);
+      throw new Error(`No se encontró el bundle del módulo "${ref.module}" en ${bundlePath}.`);
     }
 
     const child = fork(bundlePath, [], {

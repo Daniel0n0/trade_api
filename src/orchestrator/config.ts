@@ -4,7 +4,7 @@ import path from 'node:path';
 import { parse } from 'yaml';
 import { z } from 'zod';
 
-import type { ModuleArgs } from './messages.js';
+import type { ModuleArgs, DataSink, LoginMode, CredentialSource } from './messages.js';
 
 const BooleanLikeSchema = z
   .preprocess((value) => {
@@ -34,14 +34,55 @@ const BooleanLikeSchema = z
   }, z.boolean())
   .optional();
 
+const DataSinkValues: readonly DataSink[] = ['stdout', 'filesystem', 'noop'];
+const LoginModeValues: readonly LoginMode[] = ['auto', 'manual', 'skip'];
+const CredentialSourceValues: readonly CredentialSource[] = ['env', 'prompt', 'keychain'];
+
+const StringArraySchema = z.preprocess((value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item));
+  }
+  if (typeof value === 'string') {
+    const parts = value
+      .split(/[\s,;]+/u)
+      .map((item) => item.trim())
+      .filter((item) => item.length > 0);
+    return parts;
+  }
+  return value;
+}, z.array(z.string()).optional());
+
+const NumberLikeSchema = z.preprocess((value) => {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+  if (typeof value === 'number') {
+    return value;
+  }
+  const parsed = Number.parseFloat(String(value));
+  return Number.isFinite(parsed) ? parsed : value;
+}, z.number().optional());
+
 const JobSchema = z
   .object({
     label: z.string().optional(),
     module: z.string().min(1).optional(),
     moduleName: z.string().min(1).optional(),
     action: z.string().min(1).default('now'),
+    symbols: StringArraySchema,
+    headless: BooleanLikeSchema,
+    start: z.string().optional(),
+    end: z.string().optional(),
     startAt: z.string().optional(),
     endAt: z.string().optional(),
+    closeOnFinish: BooleanLikeSchema,
+    outPrefix: z.string().optional(),
+    dataSink: z.enum(DataSinkValues as [DataSink, ...DataSink[]]).optional(),
+    parentId: z.string().optional(),
+    loginMode: z.enum(LoginModeValues as [LoginMode, ...LoginMode[]]).optional(),
+    credSource: z.enum(CredentialSourceValues as [CredentialSource, ...CredentialSource[]]).optional(),
+    optionsDate: z.string().optional(),
+    optionsHorizon: NumberLikeSchema,
     persistCookies: BooleanLikeSchema,
     persistIndexedDb: BooleanLikeSchema,
     storageStatePath: z.string().optional(),
@@ -49,7 +90,7 @@ const JobSchema = z
     indexedDbProfile: z.string().optional(),
   })
   .refine((value) => value.module !== undefined || value.moduleName !== undefined, {
-    message: 'Each job must include "module" or "moduleName".',
+    message: 'Each job must include "module".',
     path: ['module'],
   });
 
@@ -72,16 +113,26 @@ export type RunConfig = {
 };
 
 function toModuleArgsFromJob(job: JobConfig): ModuleArgs {
-  const moduleName = job.module ?? job.moduleName;
-  if (!moduleName) {
+  const moduleId = job.module ?? job.moduleName;
+  if (!moduleId) {
     throw new Error('Job is missing a module name.');
   }
 
   return {
-    moduleName,
+    module: moduleId,
     action: job.action,
-    startAt: job.startAt ?? undefined,
-    endAt: job.endAt ?? undefined,
+    symbols: job.symbols ?? undefined,
+    headless: job.headless ?? undefined,
+    start: job.start ?? job.startAt ?? undefined,
+    end: job.end ?? job.endAt ?? undefined,
+    closeOnFinish: job.closeOnFinish ?? undefined,
+    outPrefix: job.outPrefix ?? undefined,
+    dataSink: job.dataSink ?? undefined,
+    parentId: job.parentId ?? undefined,
+    loginMode: job.loginMode ?? undefined,
+    credSource: job.credSource ?? undefined,
+    optionsDate: job.optionsDate ?? undefined,
+    optionsHorizon: job.optionsHorizon ?? undefined,
     persistCookies: job.persistCookies,
     persistIndexedDb: job.persistIndexedDb,
     storageStatePath: job.storageStatePath ?? undefined,

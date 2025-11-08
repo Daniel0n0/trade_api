@@ -2,11 +2,27 @@ import process from 'node:process';
 
 export type ModuleAction = string;
 
+export type DataSink = 'stdout' | 'filesystem' | 'noop';
+
+export type LoginMode = 'auto' | 'manual' | 'skip';
+
+export type CredentialSource = 'env' | 'prompt' | 'keychain';
+
 export type ModuleArgs = {
-  readonly moduleName: string;
+  readonly module: string;
   readonly action: ModuleAction;
-  readonly startAt?: string;
-  readonly endAt?: string;
+  readonly symbols?: readonly string[];
+  readonly headless?: boolean;
+  readonly start?: string;
+  readonly end?: string;
+  readonly closeOnFinish?: boolean;
+  readonly outPrefix?: string;
+  readonly dataSink?: DataSink;
+  readonly parentId?: string;
+  readonly loginMode?: LoginMode;
+  readonly credSource?: CredentialSource;
+  readonly optionsDate?: string;
+  readonly optionsHorizon?: number;
   readonly persistCookies?: boolean;
   readonly persistIndexedDb?: boolean;
   readonly storageStatePath?: string;
@@ -66,16 +82,30 @@ export function isMetrics(payload: unknown): payload is Metrics {
   return true;
 }
 
+function isStringArray(value: unknown): value is readonly string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === 'string' && item.length > 0);
+}
+
 export function isModuleArgs(payload: unknown): payload is ModuleArgs {
   if (!isPlainObject(payload)) {
     return false;
   }
 
   const {
-    moduleName,
+    module,
     action,
-    startAt,
-    endAt,
+    symbols,
+    headless,
+    start,
+    end,
+    closeOnFinish,
+    outPrefix,
+    dataSink,
+    parentId,
+    loginMode,
+    credSource,
+    optionsDate,
+    optionsHorizon,
     persistCookies,
     persistIndexedDb,
     storageStatePath,
@@ -83,7 +113,7 @@ export function isModuleArgs(payload: unknown): payload is ModuleArgs {
     indexedDbProfile,
   } = payload;
 
-  if (typeof moduleName !== 'string' || moduleName.length === 0) {
+  if (typeof module !== 'string' || module.length === 0) {
     return false;
   }
 
@@ -91,11 +121,51 @@ export function isModuleArgs(payload: unknown): payload is ModuleArgs {
     return false;
   }
 
-  if (startAt !== undefined && typeof startAt !== 'string') {
+  if (symbols !== undefined && !isStringArray(symbols)) {
     return false;
   }
 
-  if (endAt !== undefined && typeof endAt !== 'string') {
+  if (headless !== undefined && typeof headless !== 'boolean') {
+    return false;
+  }
+
+  if (start !== undefined && typeof start !== 'string') {
+    return false;
+  }
+
+  if (end !== undefined && typeof end !== 'string') {
+    return false;
+  }
+
+  if (closeOnFinish !== undefined && typeof closeOnFinish !== 'boolean') {
+    return false;
+  }
+
+  if (outPrefix !== undefined && typeof outPrefix !== 'string') {
+    return false;
+  }
+
+  if (dataSink !== undefined && (dataSink !== 'stdout' && dataSink !== 'filesystem' && dataSink !== 'noop')) {
+    return false;
+  }
+
+  if (parentId !== undefined && typeof parentId !== 'string') {
+    return false;
+  }
+
+  if (loginMode !== undefined && loginMode !== 'auto' && loginMode !== 'manual' && loginMode !== 'skip') {
+    return false;
+  }
+
+  if (credSource !== undefined && credSource !== 'env' && credSource !== 'prompt' && credSource !== 'keychain') {
+    return false;
+  }
+
+  if (optionsDate !== undefined && typeof optionsDate !== 'string') {
+    return false;
+  }
+
+  if (optionsHorizon !== undefined && (typeof optionsHorizon !== 'number' || !Number.isFinite(optionsHorizon))) {
     return false;
   }
 
@@ -120,6 +190,12 @@ export function isModuleArgs(payload: unknown): payload is ModuleArgs {
   }
 
   return true;
+}
+
+export function assertModuleArgs(payload: unknown): asserts payload is ModuleArgs {
+  if (!isModuleArgs(payload)) {
+    throw new Error('Payload is not a valid ModuleArgs object.');
+  }
 }
 
 export function isParentMessage(payload: unknown): payload is ParentToChild {

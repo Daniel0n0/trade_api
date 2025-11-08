@@ -30,7 +30,7 @@ class FakeManager extends EventEmitter implements ProcessManagerLike {
     this.startedArgs.push(args);
     const ref = {
       ctxId,
-      moduleName: args.moduleName,
+      module: args.module,
       action: args.action,
       args,
       child: null,
@@ -84,7 +84,7 @@ test('start command normalizes argumentos antes de iniciar', async () => {
 
   assert.strictEqual(manager.startedArgs.length, 1);
   const args = manager.startedArgs[0];
-  assert.strictEqual(args.moduleName, 'quotes');
+  assert.strictEqual(args.module, 'quotes');
   assert.strictEqual(args.action, 'stream');
   assert.strictEqual(args.persistCookies, false);
 });
@@ -101,7 +101,7 @@ test('start command respeta el modo dry-run', async () => {
 
 test('stop command invoca ProcessManager.stop con el ctx indicado', async () => {
   const manager = new FakeManager();
-  manager.startRunner({ moduleName: 'quotes', action: 'now' });
+  manager.startRunner({ module: 'quotes', action: 'now' });
   const context = createContext(manager);
   const program = new Command();
   registerStopCommand(program, context);
@@ -115,7 +115,7 @@ test('status command imprime instantáneas en formato JSON cuando se solicita', 
   manager.snapshots = [
     {
       ctxId: 'ctx-1',
-      moduleName: 'quotes',
+      module: 'quotes',
       action: 'stream',
       pid: 123,
       status: 'running',
@@ -175,12 +175,15 @@ test('run-config command aplica filtros y overrides', async () => {
     'quotes',
     '--action',
     'stream',
+    '--start',
+    '2024-01-01T00:00:00Z',
   ];
 
   await program.parseAsync(argv);
 
   assert.strictEqual(manager.startedArgs.length, 1);
   const [jobArgs] = manager.startedArgs;
-  assert.strictEqual(jobArgs.moduleName, 'quotes');
+  assert.strictEqual(jobArgs.module, 'quotes');
   assert.strictEqual(jobArgs.action, 'stream');
+  assert.strictEqual(jobArgs.start, '2024-01-01T00:00:00Z');
 });

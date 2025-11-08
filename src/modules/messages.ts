@@ -21,8 +21,8 @@ export type RunnerStartPayload = {
   readonly url?: string;
   readonly symbols?: readonly string[];
   readonly logPrefix?: string;
-  readonly startAt?: string;
-  readonly endAt?: string;
+  readonly start?: string;
+  readonly end?: string;
 };
 
 export type ParentMessage =
@@ -82,7 +82,7 @@ function isRunnerStartPayload(value: unknown): value is RunnerStartPayload {
     return false;
   }
 
-  const { url, symbols, logPrefix, startAt, endAt } = value;
+  const { url, symbols, logPrefix, start, end } = value;
 
   if (url !== undefined && typeof url !== 'string') {
     return false;
@@ -96,11 +96,11 @@ function isRunnerStartPayload(value: unknown): value is RunnerStartPayload {
     return false;
   }
 
-  if (startAt !== undefined && typeof startAt !== 'string') {
+  if (start !== undefined && typeof start !== 'string') {
     return false;
   }
 
-  if (endAt !== undefined && typeof endAt !== 'string') {
+  if (end !== undefined && typeof end !== 'string') {
     return false;
   }
 

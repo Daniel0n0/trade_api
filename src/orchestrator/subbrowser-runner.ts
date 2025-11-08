@@ -15,10 +15,10 @@ const RUNNERS: Record<string, (args: ModuleArgs) => Promise<void>> = {
 };
 
 export async function runSubBrowser(args: ModuleArgs): Promise<void> {
-  const runner = RUNNERS[args.moduleName];
+  const runner = RUNNERS[args.module];
   if (!runner) {
     /* eslint-disable no-console */
-    console.error(`No existe un runner registrado para el módulo "${args.moduleName}".`);
+    console.error(`No existe un runner registrado para el módulo "${args.module}".`);
     /* eslint-enable no-console */
     process.exitCode = 1;
     return;
@@ -28,7 +28,7 @@ export async function runSubBrowser(args: ModuleArgs): Promise<void> {
     await runner(args);
   } catch (error) {
     /* eslint-disable no-console */
-    console.error(`Error no controlado en el runner "${args.moduleName}":`, error);
+    console.error(`Error no controlado en el runner "${args.module}":`, error);
     /* eslint-enable no-console */
     process.exitCode = 1;
     if (error instanceof Error) {

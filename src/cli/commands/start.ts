@@ -9,10 +9,10 @@ import type { ModuleArgs } from '../../orchestrator/messages.js';
 import { CommandContext, resolveEnv } from './shared.js';
 
 const ENV_MAPPING: Record<keyof ModuleArgs, string | readonly string[]> = {
-  moduleName: ['TRADE_API_MODULE', 'ORCHESTRATOR_MODULE'],
+  module: ['TRADE_API_MODULE', 'ORCHESTRATOR_MODULE'],
   action: ['TRADE_API_ACTION', 'ORCHESTRATOR_ACTION'],
-  startAt: ['TRADE_API_START_AT', 'ORCHESTRATOR_START_AT'],
-  endAt: ['TRADE_API_END_AT', 'ORCHESTRATOR_END_AT'],
+  start: ['TRADE_API_START', 'ORCHESTRATOR_START', 'TRADE_API_START_AT', 'ORCHESTRATOR_START_AT'],
+  end: ['TRADE_API_END', 'ORCHESTRATOR_END', 'TRADE_API_END_AT', 'ORCHESTRATOR_END_AT'],
   persistCookies: ['TRADE_API_PERSIST_COOKIES', 'ORCHESTRATOR_PERSIST_COOKIES'],
   persistIndexedDb: ['TRADE_API_PERSIST_INDEXEDDB', 'ORCHESTRATOR_PERSIST_INDEXEDDB'],
   storageStatePath: ['TRADE_API_STORAGE_STATE_PATH', 'ORCHESTRATOR_STORAGE_STATE_PATH'],
@@ -23,8 +23,8 @@ const ENV_MAPPING: Record<keyof ModuleArgs, string | readonly string[]> = {
 type StartOptions = {
   module?: string;
   action?: string;
-  startAt?: string;
-  endAt?: string;
+  start?: string;
+  end?: string;
   persistCookies?: string | boolean;
   persistIndexeddb?: string | boolean;
   storageState?: string;
@@ -39,7 +39,7 @@ function buildCliArgs(moduleArg: string | undefined, actionArg: string | undefin
   const result: Partial<ModuleArgsInput> = {};
   const moduleName = options.module ?? moduleArg;
   if (moduleName !== undefined) {
-    result.moduleName = moduleName;
+    result.module = moduleName;
   }
 
   const action = options.action ?? actionArg;
@@ -47,12 +47,12 @@ function buildCliArgs(moduleArg: string | undefined, actionArg: string | undefin
     result.action = action;
   }
 
-  if (options.startAt !== undefined) {
-    result.startAt = options.startAt;
+  if (options.start !== undefined) {
+    result.start = options.start;
   }
 
-  if (options.endAt !== undefined) {
-    result.endAt = options.endAt;
+  if (options.end !== undefined) {
+    result.end = options.end;
   }
 
   if (options.persistCookies !== undefined) {
@@ -98,8 +98,8 @@ function printStartResult(json: boolean, payload: Record<string, unknown>): void
     return;
   }
 
-  const { moduleName, action, ctxId, dryRun, prefix } = payload as {
-    moduleName?: string;
+  const { module: moduleName, action, ctxId, dryRun, prefix } = payload as {
+    module?: string;
     action?: string;
     ctxId?: string;
     dryRun?: boolean;
@@ -128,8 +128,8 @@ export function registerStartCommand(program: Command, context: CommandContext):
     .argument('[action]', 'Acción del módulo (por defecto: now).')
     .option('-m, --module <name>', 'Nombre del módulo.')
     .option('-a, --action <name>', 'Acción del módulo.')
-    .option('--start-at <iso>', 'Fecha/hora de inicio en formato ISO 8601.')
-    .option('--end-at <iso>', 'Fecha/hora de fin en formato ISO 8601.')
+    .option('--start <iso>', 'Fecha/hora de inicio en formato ISO 8601.')
+    .option('--end <iso>', 'Fecha/hora de fin en formato ISO 8601.')
     .option('--persist-cookies [value]', 'Persistir cookies entre ejecuciones (true/false).')
     .option('--persist-indexeddb [value]', 'Persistir IndexedDB entre ejecuciones (true/false).')
     .option('--storage-state <path>', 'Ruta a un archivo de estado de almacenamiento.')
@@ -148,15 +148,15 @@ export function registerStartCommand(program: Command, context: CommandContext):
       const merged = mergeArgChain<Partial<ModuleArgsInput>>(envArgs, configArgs, cliArgs);
       const moduleArgs = normalizeModuleArgs(merged);
 
-      const prefix = deriveOutPrefix({ moduleName: moduleArgs.moduleName, action: moduleArgs.action });
+      const prefix = deriveOutPrefix({ module: moduleArgs.module, action: moduleArgs.action });
 
       if (globals.dryRun) {
         printStartResult(globals.json, {
           dryRun: true,
-          moduleName: moduleArgs.moduleName,
+          module: moduleArgs.module,
           action: moduleArgs.action,
-          startAt: moduleArgs.startAt,
-          endAt: moduleArgs.endAt,
+          start: moduleArgs.start,
+          end: moduleArgs.end,
           prefix,
         });
         return;
@@ -166,7 +166,7 @@ export function registerStartCommand(program: Command, context: CommandContext):
 
       printStartResult(globals.json, {
         ctxId: ref.ctxId,
-        moduleName: moduleArgs.moduleName,
+        module: moduleArgs.module,
         action: moduleArgs.action,
         prefix,
       });

@@ -3,7 +3,13 @@ import process from 'node:process';
 
 import { DateTime } from 'luxon';
 
-import { ModuleArgsSchema, type ModuleArgsInput } from './schema.js';
+import {
+  ModuleArgsSchema,
+  DATA_SINK_VALUES,
+  LOGIN_MODE_VALUES,
+  CREDENTIAL_SOURCE_VALUES,
+  type ModuleArgsInput,
+} from './schema.js';
 import type { ModuleArgs } from '../orchestrator/messages.js';
 
 const BOOLEAN_TRUE = new Set(['1', 'true', 'yes', 'on']);
@@ -139,13 +145,13 @@ function sanitizeToken(token: string): string {
 }
 
 export function deriveOutPrefix({
-  moduleName,
+  module,
   action,
   symbols,
   timestamp,
   baseDir,
 }: {
-  moduleName: string;
+  module: string;
   action?: string;
   symbols?: readonly string[];
   timestamp?: unknown;
@@ -154,7 +160,7 @@ export function deriveOutPrefix({
   const dtIso = coerceISO(timestamp ?? DateTime.utc(), { label: 'timestamp' });
   const dt = dtIso ? DateTime.fromISO(dtIso, { zone: 'utc' }) : DateTime.utc();
   const stamp = dt.toFormat('yyyyLLdd-HHmmss');
-  const safeModule = sanitizeToken(moduleName);
+  const safeModule = sanitizeToken(module);
   const safeAction = sanitizeToken(action ?? 'run');
   const symbolPart = symbols && symbols.length > 0 ? symbols.map(sanitizeToken).join('+') : null;
   const segments = [safeModule, safeAction, stamp];
@@ -226,12 +232,71 @@ function toOptionalString(value: unknown): string | undefined {
   return String(value);
 }
 
+function toOptionalNumber(value: unknown, label: string): number | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed === '') {
+      return undefined;
+    }
+    const parsed = Number.parseFloat(trimmed);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  throw new Error(`El ${label} debe ser numérico.`);
+}
+
+function normalizeEnumValue<T extends string>(
+  value: unknown,
+  label: string,
+  allowed: readonly T[],
+  mapper?: (input: string) => string,
+): T | undefined {
+  if (value === undefined || value === null || value === '') {
+    return undefined;
+  }
+
+  const asString = typeof value === 'string' ? value : String(value);
+  const candidate = mapper ? mapper(asString) : asString;
+  const match = allowed.find((item) => item === candidate);
+  if (!match) {
+    throw new Error(`El ${label} debe ser uno de: ${allowed.join(', ')}.`);
+  }
+
+  return match;
+}
+
 export function normalizeModuleArgs(input: Partial<ModuleArgsInput>): ModuleArgs {
   const normalized = {
-    moduleName: toOptionalString(input.moduleName),
+    module: toOptionalString(input.module),
     action: toOptionalString(input.action) ?? 'now',
-    startAt: coerceISO(input.startAt, { label: 'startAt' }),
-    endAt: coerceISO(input.endAt, { label: 'endAt' }),
+    symbols: parseSymbols(input.symbols),
+    headless: coerceBool(input.headless, 'headless'),
+    start: coerceISO(input.start, { label: 'start' }),
+    end: coerceISO(input.end, { label: 'end' }),
+    closeOnFinish: coerceBool(input.closeOnFinish, 'closeOnFinish'),
+    outPrefix: toOptionalString(input.outPrefix),
+    dataSink: normalizeEnumValue(input.dataSink, 'dataSink', DATA_SINK_VALUES, (raw) =>
+      raw.trim().toLowerCase(),
+    ),
+    parentId: toOptionalString(input.parentId),
+    loginMode: normalizeEnumValue(input.loginMode, 'loginMode', LOGIN_MODE_VALUES, (raw) =>
+      raw.trim().toLowerCase(),
+    ),
+    credSource: normalizeEnumValue(input.credSource, 'credSource', CREDENTIAL_SOURCE_VALUES, (raw) =>
+      raw.trim().toLowerCase(),
+    ),
+    optionsDate: coerceISO(input.optionsDate, { label: 'optionsDate' }),
+    optionsHorizon: toOptionalNumber(input.optionsHorizon, 'optionsHorizon'),
     persistCookies: coerceBool(input.persistCookies, 'persistCookies'),
     persistIndexedDb: coerceBool(input.persistIndexedDb, 'persistIndexedDb'),
     storageStatePath: toOptionalString(input.storageStatePath),
