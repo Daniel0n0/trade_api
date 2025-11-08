@@ -16,7 +16,7 @@ import type { CommandContext, ProcessManagerLike } from '../src/cli/commands/sha
 import type { ChildRef, ProcessSnapshot } from '../src/orchestrator/processManager.js';
 import type { ModuleArgs, ParentToChild } from '../src/orchestrator/messages.js';
 
-class FakeManager extends EventEmitter implements ProcessManagerLike {
+class FakeManager extends EventEmitter {
   public readonly startedArgs: ModuleArgs[] = [];
   public readonly stoppedCtx: string[] = [];
   public readonly broadcastMessages: unknown[] = [];
