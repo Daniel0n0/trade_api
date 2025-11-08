@@ -7,10 +7,10 @@
     "dev": "tsx watch src/main.ts",
     "start:robinhood": "tsx src/main.ts",
     "orchestrator": "tsx src/orchestrator/cli.ts",
-    "orchestrator:list": "npm run orchestrator -- list",
-    "sub:spy-5m-1m:now": "npm run orchestrator -- --module spy-5m-1m --action now",
-    "sub:spy-5m-1m:stream": "npm run orchestrator -- --module spy-5m-1m --action stream",
-    "sub:spy-5m-1m:bars": "npm run orchestrator -- --module spy-5m-1m --action bars --startAt=2024-10-29T13:30:00Z --endAt=2024-10-29T20:00:00Z",
+    "orchestrator:list": "npm run orchestrator -- status",
+    "sub:spy-5m-1m:now": "npm run orchestrator -- start spy-5m-1m now",
+    "sub:spy-5m-1m:stream": "npm run orchestrator -- start spy-5m-1m stream",
+    "sub:spy-5m-1m:bars": "npm run orchestrator -- start spy-5m-1m bars --start-at=2024-10-29T13:30:00Z --end-at=2024-10-29T20:00:00Z",
     "clean:profile": "tsx scripts/clean-profile.ts",
     "lint": "eslint \"src/**/*.ts\" \"scripts/**/*.ts\"",
     "typecheck": "tsc --noEmit",
@@ -20,6 +20,7 @@
   "dependencies": {
     "dotenv": "^17.2.3",
     "playwright": "^1.45.0",
+    "yaml": "^2.8.1",
     "zod": "^4.1.12"
   },
   "devDependencies": {

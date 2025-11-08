@@ -176,6 +176,40 @@ export class ProcessManager extends EventEmitter {
     return ref;
   }
 
+  public startRunner(args: ModuleArgs): ChildRef {
+    return this.start(args);
+  }
+
+  public send(ctxId: string, message: ParentToChild): boolean {
+    const ref = this.children.get(ctxId);
+    if (!ref || !ref.child) {
+      return false;
+    }
+
+    try {
+      ref.child.send(message);
+      return true;
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      this.emit('error', { ctxId: ref.ctxId, ref, error: err });
+      return false;
+    }
+  }
+
+  public requestGracefulExit(ctxId: string): boolean {
+    const ref = this.children.get(ctxId);
+    if (!ref) {
+      return false;
+    }
+
+    ref.desiredState = 'stopped';
+    if (ref.status === 'running') {
+      ref.status = 'stopping';
+    }
+
+    return this.send(ctxId, { type: 'graceful-exit' });
+  }
+
   public broadcast(message: ParentToChild): void {
     for (const ref of this.children.values()) {
       if (!ref.child) {

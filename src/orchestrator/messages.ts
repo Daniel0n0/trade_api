@@ -23,6 +23,7 @@ export type Metrics = {
 export type ParentToChild =
   | { readonly type: 'start'; readonly args: ModuleArgs }
   | { readonly type: 'shutdown' }
+  | { readonly type: 'graceful-exit' }
   | { readonly type: 'ping'; readonly id: string };
 
 export type ChildToParent =
@@ -131,6 +132,10 @@ export function isParentMessage(payload: unknown): payload is ParentToChild {
   }
 
   if (payload.type === 'shutdown') {
+    return true;
+  }
+
+  if (payload.type === 'graceful-exit') {
     return true;
   }
 
