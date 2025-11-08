@@ -48,6 +48,7 @@ const REGULAR_SESSION_KEY = 'REG';
 export type AggregatorConfig = {
   readonly timeframe: string;
   readonly periodMs: number;
+  readonly preferNative?: boolean;
 };
 
 export type AggregatedBarResult = {
@@ -62,11 +63,14 @@ export class BarAggregator {
 
   private readonly periodMs: number;
 
+  private readonly preferNative: boolean;
+
   private readonly buckets: Map<string, BucketState> = new Map();
 
   constructor(config: AggregatorConfig) {
     this.timeframe = config.timeframe;
     this.periodMs = config.periodMs;
+    this.preferNative = Boolean(config.preferNative);
   }
 
   private normalizeSymbol(symbol: string | undefined): string {
@@ -110,6 +114,10 @@ export class BarAggregator {
     const start = this.bucketStart(trade.ts);
     const state = this.ensureState(symbol, start, trade.price);
     const { bar, lastDayVolumeBySession } = state;
+
+    if (this.preferNative && state.source === 'native') {
+      return;
+    }
 
     if (trade.price > bar.high) {
       bar.high = trade.price;
@@ -162,6 +170,10 @@ export class BarAggregator {
     const symbol = this.normalizeSymbol(quote.symbol);
     const start = this.bucketStart(quote.ts);
     const state = this.ensureState(symbol, start, mid);
+    if (this.preferNative && state.source === 'native') {
+      return;
+    }
+
     const bar = state.bar;
     if (mid > bar.high) {
       bar.high = mid;
@@ -213,7 +225,7 @@ export class BarAggregator {
     if (barVolume !== undefined) {
       bar.volume = barVolume;
     }
-    existing.source = existing.source === 'aggregated' ? 'mixed' : 'native';
+    existing.source = this.preferNative ? 'native' : existing.source === 'aggregated' ? 'mixed' : 'native';
   }
 
   drainClosed(nowTs: number): readonly AggregatedBarResult[] {

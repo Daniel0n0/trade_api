@@ -1,6 +1,6 @@
 import type { Bar } from '../modulos/timebar.js';
 import type { BaseEvent } from './schemas.js';
-import { BARS_HEADER, CANDLE_HEADER, QUOTE_HEADER } from './csvHeaders.js';
+import { BARS_HEADER, CANDLE_HEADER, QUOTE_HEADER, STATS_HEADER } from './csvHeaders.js';
 
 export { CSV_HEADERS, CSV_HEADER_TEXT } from './csvHeaders.js';
 
@@ -201,6 +201,43 @@ export function isValidCandle(event: BaseEvent): boolean {
   return values.every((value) => typeof value === 'number' && Number.isFinite(value));
 }
 
+export type StatsCounts = {
+  ch1: number;
+  ch3: number;
+  ch5: number;
+  ch7: number;
+  legendOptions: number;
+  legendNews: number;
+  other: number;
+  total: number;
+};
+
+export type StatsCsvRow = CsvRow<typeof STATS_HEADER>;
+
+export type StatsSnapshotInput = {
+  readonly ts: number;
+  readonly counts: StatsCounts;
+  readonly rss?: number;
+  readonly uptimeSec?: number;
+};
+
+export function buildStatsCsvRow(input: StatsSnapshotInput): StatsCsvRow {
+  const { ts, counts, rss, uptimeSec } = input;
+  return {
+    ts,
+    total: counts.total,
+    ch1: counts.ch1,
+    ch3: counts.ch3,
+    ch5: counts.ch5,
+    ch7: counts.ch7,
+    legendOptions: counts.legendOptions,
+    legendNews: counts.legendNews,
+    other: counts.other,
+    rss,
+    uptimeSec,
+  };
+}
+
 export type CandleCsvRow = CsvRow<typeof CANDLE_HEADER>;
 
 export function buildCandleCsvRow(event: BaseEvent): CandleCsvRow | null {
@@ -242,6 +279,46 @@ export function buildQuoteCsvRow(event: BaseEvent): QuoteCsvRow | null {
   };
 }
 
+const CANDLE_TIMEFRAME_ALIASES: Record<string, string> = {
+  m: '1min',
+  min: '1min',
+  minute: '1min',
+  minutes: '1min',
+  '1m': '1min',
+  '1min': '1min',
+  '1minute': '1min',
+  '1minutes': '1min',
+  s: '1sec',
+  sec: '1sec',
+  second: '1sec',
+  seconds: '1sec',
+  '1s': '1sec',
+  '1sec': '1sec',
+  '1second': '1sec',
+  '1seconds': '1sec',
+  '5m': '5min',
+  '5min': '5min',
+  '5minute': '5min',
+  '5minutes': '5min',
+  '15m': '15min',
+  '15min': '15min',
+  '15minute': '15min',
+  '15minutes': '15min',
+  '1h': '1h',
+  hour: '1h',
+  hours: '1h',
+  '1hour': '1h',
+  '1hours': '1h',
+  '1d': '1d',
+  day: '1d',
+  days: '1d',
+  '1day': '1d',
+  '1days': '1d',
+};
+
+const resolveTimeframeAlias = (token: string): string | undefined =>
+  CANDLE_TIMEFRAME_ALIASES[token] ?? CANDLE_TIMEFRAME_ALIASES[token.replace(/[^0-9a-z]+/g, '')];
+
 export function resolveCandleTimeframe(eventSymbol: string | undefined): string {
   if (!eventSymbol) {
     return 'general';
@@ -254,10 +331,35 @@ export function resolveCandleTimeframe(eventSymbol: string | undefined): string 
   if (!raw) {
     return 'general';
   }
-  if (raw === 'm') {
-    return '1m';
+
+  const alias = resolveTimeframeAlias(raw);
+  if (alias) {
+    return alias;
   }
-  return raw.replace(/[^0-9a-z]+/g, '') || 'general';
+
+  const sanitized = raw.replace(/[^0-9a-z]+/g, '');
+  if (!sanitized) {
+    return 'general';
+  }
+
+  const sanitizedAlias = resolveTimeframeAlias(sanitized);
+  if (sanitizedAlias) {
+    return sanitizedAlias;
+  }
+
+  if (/^\d+min$/.test(sanitized)) {
+    return sanitized;
+  }
+
+  if (/^\d+m$/.test(sanitized)) {
+    return `${sanitized.slice(0, -1)}min`;
+  }
+
+  if (/^\d+h$/.test(sanitized) || /^\d+d$/.test(sanitized)) {
+    return sanitized;
+  }
+
+  return sanitized || 'general';
 }
 
 export type TradeAggregationRow = {
