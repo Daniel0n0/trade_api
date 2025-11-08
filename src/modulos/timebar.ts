@@ -2,6 +2,7 @@ export type TradeLike = {
   readonly price: number;
   readonly size?: number;
   readonly dayVolume?: number;
+  readonly session?: string;
   readonly ts: number;
 };
 
@@ -20,10 +21,17 @@ export type Bar = {
   volume: number;
 };
 
+type BucketState = {
+  readonly bar: Bar;
+  readonly lastDayVolumeBySession: Map<string, number>;
+};
+
+const REGULAR_SESSION_KEY = 'REG';
+
 export class BarAggregator {
   private readonly tfMs: number;
 
-  private readonly buckets: Map<number, Bar> = new Map();
+  private readonly buckets: Map<number, BucketState> = new Map();
 
   constructor(tfMinutes: number) {
     this.tfMs = tfMinutes * 60_000;
@@ -38,22 +46,39 @@ export class BarAggregator {
       return;
     }
     const start = this.bucketStart(trade.ts);
-    let bar = this.buckets.get(start);
-    if (!bar) {
-      bar = { t: start, open: trade.price, high: trade.price, low: trade.price, close: trade.price, volume: 0 };
-      this.buckets.set(start, bar);
-    } else {
-      if (trade.price > bar.high) {
-        bar.high = trade.price;
-      }
-      if (trade.price < bar.low) {
-        bar.low = trade.price;
-      }
-      bar.close = trade.price;
+    let state = this.buckets.get(start);
+    if (!state) {
+      state = {
+        bar: { t: start, open: trade.price, high: trade.price, low: trade.price, close: trade.price, volume: 0 },
+        lastDayVolumeBySession: new Map(),
+      };
+      this.buckets.set(start, state);
     }
+    const { bar, lastDayVolumeBySession } = state;
+
+    if (trade.price > bar.high) {
+      bar.high = trade.price;
+    }
+    if (trade.price < bar.low) {
+      bar.low = trade.price;
+    }
+    bar.close = trade.price;
+
+    const sessionRaw = typeof trade.session === 'string' ? trade.session.trim() : '';
+    const sessionKey = sessionRaw ? sessionRaw : REGULAR_SESSION_KEY;
     if (typeof trade.dayVolume === 'number' && Number.isFinite(trade.dayVolume)) {
-      bar.volume += 1;
-    } else if (typeof trade.size === 'number' && Number.isFinite(trade.size)) {
+      const last = lastDayVolumeBySession.get(sessionKey);
+      lastDayVolumeBySession.set(sessionKey, trade.dayVolume);
+      if (last !== undefined) {
+        const delta = trade.dayVolume - last;
+        if (delta > 0 && Number.isFinite(delta)) {
+          bar.volume += delta;
+          return;
+        }
+      }
+    }
+
+    if (typeof trade.size === 'number' && Number.isFinite(trade.size)) {
       bar.volume += trade.size;
     } else {
       bar.volume += 1;
@@ -96,9 +121,9 @@ export class BarAggregator {
   drainClosed(nowTs: number): readonly Bar[] {
     const out: Bar[] = [];
     const cutoff = this.bucketStart(nowTs) - this.tfMs;
-    for (const [bucket, bar] of this.buckets) {
+    for (const [bucket, state] of this.buckets) {
       if (bucket <= cutoff) {
-        out.push(bar);
+        out.push(state.bar);
         this.buckets.delete(bucket);
       }
     }
@@ -107,7 +132,7 @@ export class BarAggregator {
   }
 
   drainAll(): readonly Bar[] {
-    const out = Array.from(this.buckets.values());
+    const out = Array.from(this.buckets.values(), (state) => state.bar);
     this.buckets.clear();
     out.sort((a, b) => a.t - b.t);
     return out;

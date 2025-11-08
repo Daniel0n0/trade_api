@@ -11,6 +11,7 @@ import {
   toCsvLine,
   toMsUtc,
 } from '../src/io/row.js';
+import { BarAggregator } from '../src/modulos/timebar.js';
 import { BaseEvent } from '../src/io/schemas.js';
 
 test('toMsUtc converts seconds to milliseconds', () => {
@@ -66,7 +67,7 @@ test('buildQuoteCsvRow uses quote timestamps in milliseconds', () => {
 test('aggregation helpers convert timestamps consistently', () => {
   const tradeEvent = BaseEvent.parse({ eventType: 'Trade', time: 1_700_000_000, price: 10 });
   const trade = buildTradeAggregationRow(tradeEvent);
-  assert.deepEqual(trade, { ts: 1_700_000_000_000, price: 10 });
+  assert.deepEqual(trade, { ts: 1_700_000_000_000, price: 10, session: 'REG' });
 
   const quoteEvent = BaseEvent.parse({
     eventType: 'Quote',
@@ -76,4 +77,23 @@ test('aggregation helpers convert timestamps consistently', () => {
   });
   const quote = buildQuoteAggregationRow(quoteEvent);
   assert.deepEqual(quote, { ts: 1_700_000_000_000, bidPrice: 9.5, askPrice: 10.5 });
+});
+
+test('buildTradeAggregationRow infers sessions for extended hours trades', () => {
+  const event = BaseEvent.parse({ eventType: 'TradeETH', time: 1_700_000_500, price: 11.5, dayVolume: 25 });
+  const trade = buildTradeAggregationRow(event, 'TradeETH');
+  assert.deepEqual(trade, { ts: 1_700_000_500_000, price: 11.5, dayVolume: 25, session: 'ETH' });
+});
+
+test('BarAggregator uses dayVolume deltas per session', () => {
+  const agg = new BarAggregator(1);
+  const baseTs = Date.UTC(2024, 0, 1, 14, 30);
+  agg.addTrade({ ts: baseTs, price: 100, dayVolume: 100, size: 100, session: 'REG' });
+  agg.addTrade({ ts: baseTs + 10_000, price: 101, dayVolume: 120, session: 'REG' });
+  agg.addTrade({ ts: baseTs + 20_000, price: 102, dayVolume: 5, size: 5, session: 'ETH' });
+  agg.addTrade({ ts: baseTs + 30_000, price: 103, dayVolume: 8, session: 'ETH' });
+
+  const bars = agg.drainAll();
+  assert.strictEqual(bars.length, 1);
+  assert.strictEqual(bars[0]?.volume, 128);
 });

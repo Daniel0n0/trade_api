@@ -260,20 +260,46 @@ export type TradeAggregationRow = {
   readonly ts: number;
   readonly price: number;
   readonly dayVolume?: number;
+  readonly session?: string;
 };
 
-export function buildTradeAggregationRow(event: BaseEvent): TradeAggregationRow | undefined {
+const REGULAR_SESSION = 'REG';
+
+const normalizeSession = (raw: unknown): string | undefined => {
+  if (typeof raw !== 'string') {
+    return undefined;
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  return trimmed;
+};
+
+export function buildTradeAggregationRow(event: BaseEvent, resolvedType?: string): TradeAggregationRow | undefined {
   const ts = toMsUtc(event.time ?? event.eventTime ?? null);
   const price = typeof event.price === 'number' && Number.isFinite(event.price) ? event.price : undefined;
   if (ts === null || price === undefined) {
     return undefined;
+  }
+  const explicitSession = normalizeSession((event as Record<string, unknown>).session);
+  const typeHint = typeof resolvedType === 'string' ? resolvedType : event.eventType;
+  let session = explicitSession;
+  if (!session && typeof typeHint === 'string') {
+    const lowered = typeHint.toLowerCase();
+    if (lowered === 'tradeeth') {
+      session = 'ETH';
+    } else if (lowered === 'trade') {
+      session = REGULAR_SESSION;
+    }
   }
   const trade: TradeAggregationRow = {
     ts,
     price,
     ...(typeof event.dayVolume === 'number' && Number.isFinite(event.dayVolume)
       ? { dayVolume: event.dayVolume }
-      : {})
+      : {}),
+    ...(session ? { session } : {}),
   };
   return trade;
 }

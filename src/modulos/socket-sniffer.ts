@@ -359,7 +359,7 @@ async function exposeLogger(
           agg15m?.addQuote(quoteAgg);
         }
       } else if (resolvedType === 'Trade' || resolvedType === 'TradeETH') {
-        const trade = buildTradeAggregationRow(event);
+        const trade = buildTradeAggregationRow(event, resolvedType);
         if (trade) {
           agg1m?.addTrade(trade);
           agg5m?.addTrade(trade);
