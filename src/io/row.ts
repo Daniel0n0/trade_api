@@ -265,6 +265,7 @@ export type TradeAggregationRow = {
   readonly price: number;
   readonly dayVolume?: number;
   readonly session?: string;
+  readonly symbol?: string;
 };
 
 const REGULAR_SESSION = 'REG';
@@ -297,6 +298,7 @@ export function buildTradeAggregationRow(event: BaseEvent, resolvedType?: string
       session = REGULAR_SESSION;
     }
   }
+  const symbol = symbolFromEvent(event);
   const trade: TradeAggregationRow = {
     ts,
     price,
@@ -304,6 +306,7 @@ export function buildTradeAggregationRow(event: BaseEvent, resolvedType?: string
       ? { dayVolume: event.dayVolume }
       : {}),
     ...(session ? { session } : {}),
+    ...(symbol ? { symbol } : {}),
   };
   return trade;
 }
@@ -312,6 +315,7 @@ export type QuoteAggregationRow = {
   readonly ts: number;
   readonly bidPrice?: number;
   readonly askPrice?: number;
+  readonly symbol?: string;
 };
 
 export function buildQuoteAggregationRow(event: BaseEvent): QuoteAggregationRow | undefined {
@@ -325,7 +329,8 @@ export function buildQuoteAggregationRow(event: BaseEvent): QuoteAggregationRow 
   if (bid === undefined && ask === undefined) {
     return undefined;
   }
-  return { ts, bidPrice: bid, askPrice: ask };
+  const symbol = symbolFromEvent(event);
+  return { ts, bidPrice: bid, askPrice: ask, ...(symbol ? { symbol } : {}) };
 }
 
 export function buildBarCsvRow(bar: Bar): CsvRow<typeof BARS_HEADER> {
@@ -336,5 +341,43 @@ export function buildBarCsvRow(bar: Bar): CsvRow<typeof BARS_HEADER> {
     low: bar.low,
     close: bar.close,
     volume: bar.volume,
+  };
+}
+
+export type CandleAggregationRow = {
+  readonly ts: number;
+  readonly open: number;
+  readonly high: number;
+  readonly low: number;
+  readonly close: number;
+  readonly volume?: number;
+  readonly symbol?: string;
+};
+
+export function buildCandleAggregationRow(event: BaseEvent): CandleAggregationRow | null {
+  if (!isValidCandle(event)) {
+    return null;
+  }
+  const ts = toMsUtc(event.time ?? event.eventTime ?? null);
+  if (ts === null) {
+    return null;
+  }
+  const open = typeof event.open === 'number' && Number.isFinite(event.open) ? event.open : null;
+  const high = typeof event.high === 'number' && Number.isFinite(event.high) ? event.high : null;
+  const low = typeof event.low === 'number' && Number.isFinite(event.low) ? event.low : null;
+  const close = typeof event.close === 'number' && Number.isFinite(event.close) ? event.close : null;
+  if (open === null || high === null || low === null || close === null) {
+    return null;
+  }
+  const volume = typeof event.volume === 'number' && Number.isFinite(event.volume) ? event.volume : undefined;
+  const symbol = symbolFromEvent(event);
+  return {
+    ts,
+    open,
+    high,
+    low,
+    close,
+    volume,
+    ...(symbol ? { symbol } : {}),
   };
 }

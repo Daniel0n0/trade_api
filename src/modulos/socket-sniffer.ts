@@ -2,9 +2,10 @@ import path from 'node:path';
 import type { Page, WebSocket as PlaywrightWebSocket } from 'playwright';
 
 import { RotatingWriter, type RotatePolicy } from './rotating-writer.js';
-import { BarAggregator } from './timebar.js';
+import { BarAggregator, type AggregatedBarResult } from './timebar.js';
 import {
   buildBarCsvRow,
+  buildCandleAggregationRow,
   buildCandleCsvRow,
   buildQuoteAggregationRow,
   buildQuoteCsvRow,
@@ -32,6 +33,59 @@ const ROTATE_POLICY: RotatePolicy = {
   maxBytes: 50_000_000,
   maxMinutes: 60,
   gzipOnRotate: true,
+};
+
+const AGGREGATION_SPECS = {
+  '1s': { periodMs: 1_000 },
+  '1m': { periodMs: 60_000 },
+  '5m': { periodMs: 5 * 60_000 },
+  '15m': { periodMs: 15 * 60_000 },
+  '1h': { periodMs: 60 * 60_000 },
+  '1d': { periodMs: 24 * 60 * 60_000 },
+} as const;
+
+type AggregationTimeframeKey = keyof typeof AGGREGATION_SPECS;
+
+const DEFAULT_TIMEFRAMES: readonly AggregationTimeframeKey[] = ['1s', '1m', '5m', '15m', '1h', '1d'];
+
+const normalizeAggregationTimeframe = (value: string): AggregationTimeframeKey | null => {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) {
+    return null;
+  }
+  if (trimmed in AGGREGATION_SPECS) {
+    return trimmed as AggregationTimeframeKey;
+  }
+  if (/^\d+$/.test(trimmed)) {
+    const candidate = `${trimmed}m`;
+    if (candidate in AGGREGATION_SPECS) {
+      return candidate as AggregationTimeframeKey;
+    }
+  }
+  return null;
+};
+
+const uniqueTimeframes = (timeframes: readonly AggregationTimeframeKey[]): readonly AggregationTimeframeKey[] => {
+  const seen = new Set<AggregationTimeframeKey>();
+  const out: AggregationTimeframeKey[] = [];
+  for (const timeframe of timeframes) {
+    if (!seen.has(timeframe)) {
+      seen.add(timeframe);
+      out.push(timeframe);
+    }
+  }
+  return out;
+};
+
+const resolveEnabledTimeframes = (raw: string | undefined): readonly AggregationTimeframeKey[] => {
+  const parsed = (raw ?? '')
+    .split(',')
+    .map((token) => normalizeAggregationTimeframe(token))
+    .filter((token): token is AggregationTimeframeKey => token !== null);
+  if (parsed.length === 0) {
+    return DEFAULT_TIMEFRAMES;
+  }
+  return uniqueTimeframes(parsed);
 };
 
 export type SocketSnifferOptions = {
@@ -172,39 +226,35 @@ async function exposeLogger(
     CSV_HEADER_TEXT.quote,
   );
 
-  const SUPPORTED_TIMEFRAMES = new Set([1, 5, 15]);
-  const tfEnv = (process.env.BARS_TIMEFRAMES ?? '1,5,15')
-    .split(',')
-    .map((value) => Number.parseInt(value.trim(), 10))
-    .filter((value) => Number.isFinite(value) && SUPPORTED_TIMEFRAMES.has(value));
-  const enabledTFValues = tfEnv.length > 0 ? tfEnv : [1, 5, 15];
-  const enabledTF = new Set<number>(enabledTFValues);
+  const enabledTimeframes = resolveEnabledTimeframes(process.env.BARS_TIMEFRAMES);
+  type AggregationEntry = { readonly timeframe: AggregationTimeframeKey; readonly aggregator: BarAggregator };
+  const aggregations = enabledTimeframes.map<AggregationEntry>((timeframe) => ({
+    timeframe,
+    aggregator: new BarAggregator({ timeframe, periodMs: AGGREGATION_SPECS[timeframe].periodMs }),
+  }));
+  const aggregationMap = new Map<AggregationTimeframeKey, AggregationEntry>();
+  for (const entry of aggregations) {
+    aggregationMap.set(entry.timeframe, entry);
+  }
 
-  const agg1m = enabledTF.has(1) ? new BarAggregator(1) : null;
-  const agg5m = enabledTF.has(5) ? new BarAggregator(5) : null;
-  const agg15m = enabledTF.has(15) ? new BarAggregator(15) : null;
+  const barWriters = new Map<string, RotatingWriter>();
+  const getBarWriter = (symbol: string, timeframe: string) => {
+    const key = `${symbol}__${timeframe}`;
+    let writer = barWriters.get(key);
+    if (!writer) {
+      const baseFile = dataPath(symbol, `${perChannelPrefix}-bars-${timeframe}.csv`);
+      writer = new RotatingWriter(baseFile, ROTATE_POLICY, CSV_HEADER_TEXT.bars);
+      barWriters.set(key, writer);
+    }
+    return writer;
+  };
 
-  const bars1mCsv = enabledTF.has(1)
-    ? new RotatingWriter(
-        path.join(baseDir, `${perChannelPrefix}-bars-1m.csv`),
-        ROTATE_POLICY,
-        CSV_HEADER_TEXT.bars,
-      )
-    : null;
-  const bars5mCsv = enabledTF.has(5)
-    ? new RotatingWriter(
-        path.join(baseDir, `${perChannelPrefix}-bars-5m.csv`),
-        ROTATE_POLICY,
-        CSV_HEADER_TEXT.bars,
-      )
-    : null;
-  const bars15mCsv = enabledTF.has(15)
-    ? new RotatingWriter(
-        path.join(baseDir, `${perChannelPrefix}-bars-15m.csv`),
-        ROTATE_POLICY,
-        CSV_HEADER_TEXT.bars,
-      )
-    : null;
+  const writeAggregatedBars = (bars: readonly AggregatedBarResult[]) => {
+    for (const result of bars) {
+      const writer = getBarWriter(result.symbol, result.timeframe);
+      writer.write(toCsvLine(CSV_HEADERS.bars, buildBarCsvRow(result.bar)));
+    }
+  };
 
   const writeGeneral = (entry: Serializable) => {
     const payload: LogEntry = { ts: Date.now(), ...entry };
@@ -214,17 +264,11 @@ async function exposeLogger(
   writeGeneral({ kind: 'boot', msg: 'socket-sniffer up', start: meta.start, end: meta.end });
 
   const flushBars = (now: number) => {
-    const closed1 = agg1m?.drainClosed(now) ?? [];
-    for (const bar of closed1) {
-      bars1mCsv?.write(toCsvLine(CSV_HEADERS.bars, buildBarCsvRow(bar)));
-    }
-    const closed5 = agg5m?.drainClosed(now) ?? [];
-    for (const bar of closed5) {
-      bars5mCsv?.write(toCsvLine(CSV_HEADERS.bars, buildBarCsvRow(bar)));
-    }
-    const closed15 = agg15m?.drainClosed(now) ?? [];
-    for (const bar of closed15) {
-      bars15mCsv?.write(toCsvLine(CSV_HEADERS.bars, buildBarCsvRow(bar)));
+    for (const { aggregator } of aggregations) {
+      const closed = aggregator.drainClosed(now);
+      if (closed.length > 0) {
+        writeAggregatedBars(closed);
+      }
     }
   };
 
@@ -324,6 +368,13 @@ async function exposeLogger(
           const timeframe = resolveCandleTimeframe(event.eventSymbol);
           getCandleCsv(timeframe).write(toCsvLine(CSV_HEADERS.candle, candleRow));
         }
+        const candleAgg = buildCandleAggregationRow(event);
+        if (candleAgg) {
+          const timeframeKey = normalizeAggregationTimeframe(resolveCandleTimeframe(event.eventSymbol));
+          if (timeframeKey) {
+            aggregationMap.get(timeframeKey)?.aggregator.addCandle(candleAgg);
+          }
+        }
       }
 
       if (resolvedType === 'Quote') {
@@ -333,16 +384,16 @@ async function exposeLogger(
         }
         const quoteAgg = buildQuoteAggregationRow(event);
         if (quoteAgg) {
-          agg1m?.addQuote(quoteAgg);
-          agg5m?.addQuote(quoteAgg);
-          agg15m?.addQuote(quoteAgg);
+          for (const { aggregator } of aggregations) {
+            aggregator.addQuote(quoteAgg);
+          }
         }
       } else if (resolvedType === 'Trade' || resolvedType === 'TradeETH') {
         const trade = buildTradeAggregationRow(event, resolvedType);
         if (trade) {
-          agg1m?.addTrade(trade);
-          agg5m?.addTrade(trade);
-          agg15m?.addTrade(trade);
+          for (const { aggregator } of aggregations) {
+            aggregator.addTrade(trade);
+          }
         }
       }
     }
@@ -426,19 +477,13 @@ async function exposeLogger(
     clearInterval(healthbeat);
     try {
       const now = Date.now();
-      const remaining1 = agg1m?.drainAll() ?? [];
-      for (const bar of remaining1) {
-        bars1mCsv?.write(toCsvLine(CSV_HEADERS.bars, buildBarCsvRow(bar)));
-      }
-      const remaining5 = agg5m?.drainAll() ?? [];
-      for (const bar of remaining5) {
-        bars5mCsv?.write(toCsvLine(CSV_HEADERS.bars, buildBarCsvRow(bar)));
-      }
-      const remaining15 = agg15m?.drainAll() ?? [];
-      for (const bar of remaining15) {
-        bars15mCsv?.write(toCsvLine(CSV_HEADERS.bars, buildBarCsvRow(bar)));
-      }
       flushBars(now);
+      for (const { aggregator } of aggregations) {
+        const remaining = aggregator.drainAll();
+        if (remaining.length > 0) {
+          writeAggregatedBars(remaining);
+        }
+      }
     } catch (error) {
       void error;
     }
@@ -448,9 +493,9 @@ async function exposeLogger(
       writer.close();
     }
     quoteCsv.close();
-    bars1mCsv?.close();
-    bars5mCsv?.close();
-    bars15mCsv?.close();
+    for (const writer of barWriters.values()) {
+      writer.close();
+    }
     for (const writer of channelWriters.values()) {
       writer.close();
     }

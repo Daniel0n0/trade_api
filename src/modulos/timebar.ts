@@ -4,12 +4,24 @@ export type TradeLike = {
   readonly dayVolume?: number;
   readonly session?: string;
   readonly ts: number;
+  readonly symbol?: string;
 };
 
 export type QuoteLike = {
   readonly bidPrice?: number;
   readonly askPrice?: number;
   readonly ts: number;
+  readonly symbol?: string;
+};
+
+export type CandleLike = {
+  readonly ts: number;
+  readonly open: number;
+  readonly high: number;
+  readonly low: number;
+  readonly close: number;
+  readonly volume?: number;
+  readonly symbol?: string;
 };
 
 export type Bar = {
@@ -21,39 +33,82 @@ export type Bar = {
   volume: number;
 };
 
+type BucketSource = 'aggregated' | 'native' | 'mixed';
+
 type BucketState = {
+  readonly symbol: string;
+  readonly bucketStart: number;
   readonly bar: Bar;
   readonly lastDayVolumeBySession: Map<string, number>;
+  source: BucketSource;
 };
 
 const REGULAR_SESSION_KEY = 'REG';
 
+export type AggregatorConfig = {
+  readonly timeframe: string;
+  readonly periodMs: number;
+};
+
+export type AggregatedBarResult = {
+  readonly timeframe: string;
+  readonly symbol: string;
+  readonly bar: Bar;
+  readonly source: BucketSource;
+};
+
 export class BarAggregator {
-  private readonly tfMs: number;
+  private readonly timeframe: string;
 
-  private readonly buckets: Map<number, BucketState> = new Map();
+  private readonly periodMs: number;
 
-  constructor(tfMinutes: number) {
-    this.tfMs = tfMinutes * 60_000;
+  private readonly buckets: Map<string, BucketState> = new Map();
+
+  constructor(config: AggregatorConfig) {
+    this.timeframe = config.timeframe;
+    this.periodMs = config.periodMs;
+  }
+
+  private normalizeSymbol(symbol: string | undefined): string {
+    if (typeof symbol !== 'string') {
+      return 'GENERAL';
+    }
+    const trimmed = symbol.trim();
+    return trimmed || 'GENERAL';
   }
 
   private bucketStart(ts: number): number {
-    return Math.floor(ts / this.tfMs) * this.tfMs;
+    return Math.floor(ts / this.periodMs) * this.periodMs;
+  }
+
+  private buildBucketKey(symbol: string, bucketStart: number): string {
+    return `${symbol}__${bucketStart}`;
+  }
+
+  private ensureState(symbol: string, bucketStart: number, price: number): BucketState {
+    const key = this.buildBucketKey(symbol, bucketStart);
+    let state = this.buckets.get(key);
+    if (!state) {
+      const bar: Bar = { t: bucketStart, open: price, high: price, low: price, close: price, volume: 0 };
+      state = {
+        symbol,
+        bucketStart,
+        bar,
+        lastDayVolumeBySession: new Map(),
+        source: 'aggregated',
+      };
+      this.buckets.set(key, state);
+    }
+    return state;
   }
 
   addTrade(trade: TradeLike | undefined): void {
-    if (!trade || !Number.isFinite(trade.price)) {
+    if (!trade || !Number.isFinite(trade.price) || !Number.isFinite(trade.ts)) {
       return;
     }
+    const symbol = this.normalizeSymbol(trade.symbol);
     const start = this.bucketStart(trade.ts);
-    let state = this.buckets.get(start);
-    if (!state) {
-      state = {
-        bar: { t: start, open: trade.price, high: trade.price, low: trade.price, close: trade.price, volume: 0 },
-        lastDayVolumeBySession: new Map(),
-      };
-      this.buckets.set(start, state);
-    }
+    const state = this.ensureState(symbol, start, trade.price);
     const { bar, lastDayVolumeBySession } = state;
 
     if (trade.price > bar.high) {
@@ -73,6 +128,7 @@ export class BarAggregator {
         const delta = trade.dayVolume - last;
         if (delta > 0 && Number.isFinite(delta)) {
           bar.volume += delta;
+          state.source = state.source === 'native' ? 'mixed' : 'aggregated';
           return;
         }
       }
@@ -83,10 +139,11 @@ export class BarAggregator {
     } else {
       bar.volume += 1;
     }
+    state.source = state.source === 'native' ? 'mixed' : 'aggregated';
   }
 
   addQuote(quote: QuoteLike | undefined): void {
-    if (!quote) {
+    if (!quote || !Number.isFinite(quote.ts)) {
       return;
     }
     const bid = typeof quote.bidPrice === 'number' ? quote.bidPrice : undefined;
@@ -102,43 +159,90 @@ export class BarAggregator {
     if (mid === undefined || !Number.isFinite(mid) || mid <= 0) {
       return;
     }
+    const symbol = this.normalizeSymbol(quote.symbol);
     const start = this.bucketStart(quote.ts);
-    let state = this.buckets.get(start);
-    if (!state) {
-      state = {
-        bar: { t: start, open: mid, high: mid, low: mid, close: mid, volume: 0 },
-        lastDayVolumeBySession: new Map(),
-      };
-      this.buckets.set(start, state);
-    } else {
-      const bar = state.bar;
-      if (mid > bar.high) {
-        bar.high = mid;
-      }
-      if (mid < bar.low) {
-        bar.low = mid;
-      }
-      bar.close = mid;
+    const state = this.ensureState(symbol, start, mid);
+    const bar = state.bar;
+    if (mid > bar.high) {
+      bar.high = mid;
     }
+    if (mid < bar.low) {
+      bar.low = mid;
+    }
+    bar.close = mid;
+    state.source = state.source === 'native' ? 'mixed' : 'aggregated';
   }
 
-  drainClosed(nowTs: number): readonly Bar[] {
-    const out: Bar[] = [];
-    const cutoff = this.bucketStart(nowTs) - this.tfMs;
-    for (const [bucket, state] of this.buckets) {
-      if (bucket <= cutoff) {
-        out.push(state.bar);
-        this.buckets.delete(bucket);
+  addCandle(candle: CandleLike | undefined): void {
+    if (!candle) {
+      return;
+    }
+    const { ts, open, high, low, close, volume } = candle;
+    if (![ts, open, high, low, close].every((value) => typeof value === 'number' && Number.isFinite(value))) {
+      return;
+    }
+    const symbol = this.normalizeSymbol(candle.symbol);
+    const start = this.bucketStart(ts);
+    const key = this.buildBucketKey(symbol, start);
+    const existing = this.buckets.get(key);
+    const barVolume = typeof volume === 'number' && Number.isFinite(volume) ? volume : undefined;
+    if (!existing) {
+      const bar: Bar = {
+        t: start,
+        open,
+        high,
+        low,
+        close,
+        volume: barVolume ?? 0,
+      };
+      this.buckets.set(key, {
+        symbol,
+        bucketStart: start,
+        bar,
+        lastDayVolumeBySession: new Map(),
+        source: 'native',
+      });
+      return;
+    }
+
+    const bar = existing.bar;
+    bar.open = open;
+    bar.high = high;
+    bar.low = low;
+    bar.close = close;
+    if (barVolume !== undefined) {
+      bar.volume = barVolume;
+    }
+    existing.source = existing.source === 'aggregated' ? 'mixed' : 'native';
+  }
+
+  drainClosed(nowTs: number): readonly AggregatedBarResult[] {
+    const out: AggregatedBarResult[] = [];
+    const cutoff = this.bucketStart(nowTs) - this.periodMs;
+    for (const [key, state] of this.buckets) {
+      if (state.bucketStart <= cutoff) {
+        out.push({
+          timeframe: this.timeframe,
+          symbol: state.symbol,
+          bar: { ...state.bar },
+          source: state.source,
+        });
+        this.buckets.delete(key);
       }
     }
-    out.sort((a, b) => a.t - b.t);
+    out.sort((a, b) => (a.bar.t === b.bar.t ? a.symbol.localeCompare(b.symbol) : a.bar.t - b.bar.t));
     return out;
   }
 
-  drainAll(): readonly Bar[] {
-    const out = Array.from(this.buckets.values(), (state) => state.bar);
+  drainAll(): readonly AggregatedBarResult[] {
+    const out = Array.from(this.buckets.values(), (state) => ({
+      timeframe: this.timeframe,
+      symbol: state.symbol,
+      bar: { ...state.bar },
+      source: state.source,
+    }));
     this.buckets.clear();
-    out.sort((a, b) => a.t - b.t);
+    out.sort((a, b) => (a.bar.t === b.bar.t ? a.symbol.localeCompare(b.symbol) : a.bar.t - b.bar.t));
     return out;
   }
 }
