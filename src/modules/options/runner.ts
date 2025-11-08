@@ -24,17 +24,73 @@ import {
 } from '../messages.js';
 
 const MODULE_NAME: RunnerModule = 'options';
-const DEFAULT_URL = 'https://robinhood.com/options';
-const DEFAULT_SYMBOLS: readonly string[] = [];
 
-const URL_BY_MODULE: Record<string, string> = {
+export const DEFAULT_OPTIONS_URL = 'https://robinhood.com/options';
+export const DEFAULT_OPTIONS_SYMBOLS: readonly string[] = [];
+
+export const OPTIONS_URL_BY_MODULE: Record<string, string> = {
   'spy-options-chain': 'https://robinhood.com/options/SPY',
   'spx-options-chain': 'https://robinhood.com/options/SPX',
 };
 
-const SYMBOLS_BY_MODULE: Record<string, readonly string[]> = {
+export const OPTIONS_SYMBOLS_BY_MODULE: Record<string, readonly string[]> = {
   'spy-options-chain': ['SPY'],
   'spx-options-chain': ['SPX'],
+};
+
+export const resolveOptionsSymbols = (
+  args: ModuleArgs,
+  payload?: RunnerStartPayload,
+): readonly string[] => {
+  if (payload?.symbols && payload.symbols.length > 0) {
+    return payload.symbols;
+  }
+
+  if (args.symbols && args.symbols.length > 0) {
+    return args.symbols;
+  }
+
+  const mapped = OPTIONS_SYMBOLS_BY_MODULE[args.module];
+  if (mapped) {
+    return mapped;
+  }
+
+  return DEFAULT_OPTIONS_SYMBOLS;
+};
+
+export const resolveOptionsUrl = (
+  args: ModuleArgs,
+  payload: RunnerStartPayload | undefined,
+  symbols: readonly string[],
+): string => {
+  if (payload?.url) {
+    return payload.url;
+  }
+
+  const mode = args.urlMode ?? 'auto';
+  const primarySymbol = symbols[0];
+  const mapped = OPTIONS_URL_BY_MODULE[args.module];
+
+  if (mode === 'module') {
+    return mapped ?? DEFAULT_OPTIONS_URL;
+  }
+
+  if (mode === 'symbol') {
+    if (primarySymbol) {
+      return `https://robinhood.com/options/${primarySymbol}`;
+    }
+    return DEFAULT_OPTIONS_URL;
+  }
+
+  if (mapped) {
+    return mapped;
+  }
+
+  if (primarySymbol) {
+    return `https://robinhood.com/options/${primarySymbol}`;
+  }
+
+  return DEFAULT_OPTIONS_URL;
 };
 
 function toError(value: unknown): Error {
@@ -134,58 +190,6 @@ export async function runOptionsRunner(initialArgs: ModuleArgs): Promise<void> {
     browser = null;
   };
 
-  const resolveUrl = (
-    args: ModuleArgs,
-    payload: RunnerStartPayload | undefined,
-    symbols: readonly string[],
-  ): string => {
-    if (payload?.url) {
-      return payload.url;
-    }
-
-    const mode = args.urlMode ?? 'auto';
-    const primarySymbol = symbols[0];
-    const mapped = URL_BY_MODULE[args.module];
-
-    if (mode === 'module') {
-      return mapped ?? DEFAULT_URL;
-    }
-
-    if (mode === 'symbol') {
-      if (primarySymbol) {
-        return `https://robinhood.com/options/${primarySymbol}`;
-      }
-      return DEFAULT_URL;
-    }
-
-    if (mapped) {
-      return mapped;
-    }
-
-    if (primarySymbol) {
-      return `https://robinhood.com/options/${primarySymbol}`;
-    }
-
-    return DEFAULT_URL;
-  };
-
-  const resolveSymbols = (args: ModuleArgs, payload?: RunnerStartPayload): readonly string[] => {
-    if (payload?.symbols && payload.symbols.length > 0) {
-      return payload.symbols;
-    }
-
-    if (args.symbols && args.symbols.length > 0) {
-      return args.symbols;
-    }
-
-    const mapped = SYMBOLS_BY_MODULE[args.module];
-    if (mapped) {
-      return mapped;
-    }
-
-    return DEFAULT_SYMBOLS;
-  };
-
   const resolveLaunchOverrides = (args: ModuleArgs): PersistentLaunchOverrides => {
     return {
       mode: 'reuse',
@@ -208,8 +212,8 @@ export async function runOptionsRunner(initialArgs: ModuleArgs): Promise<void> {
     const startedAt = new Date().toISOString();
 
     const launch = async () => {
-      const symbols = resolveSymbols(messageArgs, payload);
-      const url = resolveUrl(messageArgs, payload, symbols);
+      const symbols = resolveOptionsSymbols(messageArgs, payload);
+      const url = resolveOptionsUrl(messageArgs, payload, symbols);
       const logPrefix = payload?.logPrefix ?? messageArgs.outPrefix ?? messageArgs.module;
       const startAt = payload?.start ?? messageArgs.start;
       const endAt = payload?.end ?? messageArgs.end;

@@ -6,6 +6,8 @@ import {
   collectOptionRecords,
   computeDte,
   deriveChainSymbol,
+  buildOptionsFilename,
+  formatExpirationForFilename,
   normalizeExpiration,
   normaliseOptionType,
   optionRowFromRecord,
@@ -137,4 +139,20 @@ test('normaliseOptionType normaliza variantes', () => {
   assert.strictEqual(normaliseOptionType('CALL'), 'CALL');
   assert.strictEqual(normaliseOptionType('p'), 'PUT');
   assert.strictEqual(normaliseOptionType('unknown'), undefined);
+});
+
+test('formatExpirationForFilename limpia caracteres no permitidos', () => {
+  assert.strictEqual(formatExpirationForFilename(undefined), 'undated');
+  assert.strictEqual(formatExpirationForFilename('2024-01-19'), '2024-01-19');
+  assert.strictEqual(formatExpirationForFilename('2024/01/19 Weekly'), '2024-01-19-Weekly');
+  assert.strictEqual(formatExpirationForFilename('2024-01-19T09:30:00Z'), '2024-01-19T09-30-00Z');
+});
+
+test('buildOptionsFilename usa el prefijo de log y expiración sanitizada', () => {
+  assert.strictEqual(buildOptionsFilename('spy', '2024-01-19'), 'spy-options-2024-01-19.csv');
+  assert.strictEqual(
+    buildOptionsFilename('spx-chain', '2024-01-19T09:30:00Z'),
+    'spx-chain-options-2024-01-19T09-30-00Z.csv',
+  );
+  assert.strictEqual(buildOptionsFilename('custom', undefined), 'custom-options-undated.csv');
 });
