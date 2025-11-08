@@ -9,12 +9,14 @@ import {
   buildCandleCsvRow,
   buildQuoteAggregationRow,
   buildQuoteCsvRow,
+  buildStatsCsvRow,
   buildTradeAggregationRow,
   CSV_HEADERS,
   CSV_HEADER_TEXT,
   isValidCandle,
   normalizeDxFeedRow,
   resolveCandleTimeframe,
+  type StatsCounts,
   toCsvLine,
   toMsUtc,
 } from '../io/row.js';
@@ -26,6 +28,7 @@ type Serializable = Record<string, unknown>;
 
 const DEFAULT_PREFIX = 'socket';
 const HEARTBEAT_INTERVAL_MS = 5_000;
+const STATS_SNAPSHOT_INTERVAL_MS = HEARTBEAT_INTERVAL_MS;
 const HEALTH_INTERVAL_MS = 30_000;
 const HOOK_GUARD_FLAG = '__socketSnifferHooked__';
 
@@ -36,32 +39,131 @@ const ROTATE_POLICY: RotatePolicy = {
 };
 
 const AGGREGATION_SPECS = {
-  '1s': { periodMs: 1_000 },
-  '1m': { periodMs: 60_000 },
-  '5m': { periodMs: 5 * 60_000 },
-  '15m': { periodMs: 15 * 60_000 },
+  '1sec': { periodMs: 1_000 },
+  '1min': { periodMs: 60_000 },
+  '5min': { periodMs: 5 * 60_000 },
+  '15min': { periodMs: 15 * 60_000 },
   '1h': { periodMs: 60 * 60_000 },
   '1d': { periodMs: 24 * 60 * 60_000 },
 } as const;
 
 type AggregationTimeframeKey = keyof typeof AGGREGATION_SPECS;
 
-const DEFAULT_TIMEFRAMES: readonly AggregationTimeframeKey[] = ['1s', '1m', '5m', '15m', '1h', '1d'];
+const AGGREGATION_FILE_SEGMENTS: Record<AggregationTimeframeKey, string> = {
+  '1sec': '1sec',
+  '1min': '1min',
+  '5min': '5min',
+  '15min': '15min',
+  '1h': '1h',
+  '1d': '1d',
+};
+
+const DEFAULT_TIMEFRAMES: readonly AggregationTimeframeKey[] = ['1sec', '1min', '5min', '15min', '1h', '1d'];
+
+const AGGREGATION_TIMEFRAME_ALIASES: Record<string, AggregationTimeframeKey> = {
+  '1s': '1sec',
+  '1sec': '1sec',
+  '1second': '1sec',
+  '1seconds': '1sec',
+  s: '1sec',
+  sec: '1sec',
+  seconds: '1sec',
+  '1m': '1min',
+  '1min': '1min',
+  '1minute': '1min',
+  '1minutes': '1min',
+  m: '1min',
+  min: '1min',
+  minute: '1min',
+  minutes: '1min',
+  '5m': '5min',
+  '5min': '5min',
+  '5minute': '5min',
+  '5minutes': '5min',
+  '15m': '15min',
+  '15min': '15min',
+  '15minute': '15min',
+  '15minutes': '15min',
+  '60m': '1h',
+  '60min': '1h',
+  '1h': '1h',
+  '1hour': '1h',
+  '1hours': '1h',
+  hour: '1h',
+  hours: '1h',
+  '24h': '1d',
+  '1d': '1d',
+  '1day': '1d',
+  '1days': '1d',
+  day: '1d',
+  days: '1d',
+};
 
 const normalizeAggregationTimeframe = (value: string): AggregationTimeframeKey | null => {
   const trimmed = value.trim().toLowerCase();
   if (!trimmed) {
     return null;
   }
+
   if (trimmed in AGGREGATION_SPECS) {
     return trimmed as AggregationTimeframeKey;
   }
-  if (/^\d+$/.test(trimmed)) {
-    const candidate = `${trimmed}m`;
+
+  const alias = AGGREGATION_TIMEFRAME_ALIASES[trimmed];
+  if (alias) {
+    return alias;
+  }
+
+  const sanitized = trimmed.replace(/[^0-9a-z]+/g, '');
+  if (!sanitized) {
+    return null;
+  }
+
+  if (sanitized in AGGREGATION_SPECS) {
+    return sanitized as AggregationTimeframeKey;
+  }
+
+  const sanitizedAlias = AGGREGATION_TIMEFRAME_ALIASES[sanitized];
+  if (sanitizedAlias) {
+    return sanitizedAlias;
+  }
+
+  if (/^\d+$/.test(sanitized)) {
+    const candidate = `${sanitized}min`;
+    const minutesAlias = AGGREGATION_TIMEFRAME_ALIASES[candidate];
+    if (minutesAlias) {
+      return minutesAlias;
+    }
     if (candidate in AGGREGATION_SPECS) {
       return candidate as AggregationTimeframeKey;
     }
   }
+
+  if (/^\d+m$/.test(sanitized)) {
+    const candidate = `${sanitized.slice(0, -1)}min`;
+    if (candidate in AGGREGATION_SPECS) {
+      return candidate as AggregationTimeframeKey;
+    }
+    const candidateAlias = AGGREGATION_TIMEFRAME_ALIASES[candidate];
+    if (candidateAlias) {
+      return candidateAlias;
+    }
+  }
+
+  if (/^\d+h$/.test(sanitized)) {
+    const candidateAlias = AGGREGATION_TIMEFRAME_ALIASES[sanitized];
+    if (candidateAlias) {
+      return candidateAlias;
+    }
+  }
+
+  if (/^\d+d$/.test(sanitized)) {
+    const candidateAlias = AGGREGATION_TIMEFRAME_ALIASES[sanitized];
+    if (candidateAlias) {
+      return candidateAlias;
+    }
+  }
+
   return null;
 };
 
@@ -250,9 +352,16 @@ async function exposeLogger(
   const baseName = path.basename(logPath, '.jsonl');
 
   const generalWriter = new RotatingWriter(path.join(baseDir, `${baseName}.jsonl`), ROTATE_POLICY);
+  const statsWriter = new RotatingWriter(
+    path.join(baseDir, 'stats.csv'),
+    ROTATE_POLICY,
+    CSV_HEADER_TEXT.stats,
+  );
+  const legendOptionsWriter = new RotatingWriter(path.join(baseDir, 'options.jsonl'), ROTATE_POLICY);
+  const newsWriter = new RotatingWriter(path.join(baseDir, 'news.jsonl'), ROTATE_POLICY);
   const VERBOSE = false; // Cambiado a false para reducir ruido por defecto
 
-  const counts = {
+  const counts: StatsCounts = {
     ch1: 0,
     ch3: 0,
     ch5: 0,
@@ -263,6 +372,24 @@ async function exposeLogger(
     total: 0,
   };
   const lastWriteTs: Record<string, number> = {};
+  let lastStatsSnapshotAt = 0;
+
+  const writeStatsSnapshot = (now: number, force = false) => {
+    if (!force && now - lastStatsSnapshotAt < STATS_SNAPSHOT_INTERVAL_MS) {
+      return;
+    }
+
+    lastStatsSnapshotAt = now;
+    const rss = typeof process.memoryUsage === 'function' ? process.memoryUsage().rss : undefined;
+    const uptimeSec = Math.floor(process.uptime());
+    const row = buildStatsCsvRow({
+      ts: now,
+      counts: { ...counts },
+      rss,
+      uptimeSec,
+    });
+    statsWriter.write(toCsvLine(CSV_HEADERS.stats, row));
+  };
 
   const bump = (channel: number, n: number) => {
     if (!Number.isFinite(n) || n <= 0) {
@@ -293,14 +420,6 @@ async function exposeLogger(
   };
 
   const channelWriters = new Map<string, RotatingWriter>();
-  const legendOptionsWriter = new RotatingWriter(
-    path.join(baseDir, `${perChannelPrefix}-legend-options.jsonl`),
-    ROTATE_POLICY,
-  );
-  const legendNewsWriter = new RotatingWriter(
-    path.join(baseDir, `${perChannelPrefix}-legend-news.jsonl`),
-    ROTATE_POLICY,
-  );
   let closed = false;
   const getChannelWriter = (channel: number, label: string) => {
     const key = `ch${channel}-${label}`;
@@ -391,7 +510,11 @@ async function exposeLogger(
   type AggregationEntry = { readonly timeframe: AggregationTimeframeKey; readonly aggregator: BarAggregator };
   const aggregations = enabledTimeframes.map<AggregationEntry>((timeframe) => ({
     timeframe,
-    aggregator: new BarAggregator({ timeframe, periodMs: AGGREGATION_SPECS[timeframe].periodMs }),
+    aggregator: new BarAggregator({
+      timeframe,
+      periodMs: AGGREGATION_SPECS[timeframe].periodMs,
+      preferNative: timeframe === '15min',
+    }),
   }));
   const aggregationMap = new Map<AggregationTimeframeKey, AggregationEntry>();
   for (const entry of aggregations) {
@@ -403,7 +526,8 @@ async function exposeLogger(
     const key = `${symbol}__${timeframe}`;
     let writer = barWriters.get(key);
     if (!writer) {
-      const baseFile = dataPath(symbol, `${perChannelPrefix}-bars-${timeframe}.csv`);
+      const segment = AGGREGATION_FILE_SEGMENTS[timeframe as AggregationTimeframeKey] ?? timeframe;
+      const baseFile = dataPath(symbol, `${segment}.csv`);
       writer = new RotatingWriter(baseFile, ROTATE_POLICY, CSV_HEADER_TEXT.bars);
       barWriters.set(key, writer);
     }
@@ -423,6 +547,7 @@ async function exposeLogger(
   };
 
   writeGeneral({ kind: 'boot', msg: 'socket-sniffer up', start: meta.start, end: meta.end });
+  writeStatsSnapshot(Date.now(), true);
 
   const flushBars = (now: number) => {
     for (const { aggregator } of aggregations) {
@@ -434,7 +559,9 @@ async function exposeLogger(
   };
 
   const heartbeat = setInterval(() => {
-    flushBars(Date.now());
+    const now = Date.now();
+    flushBars(now);
+    writeStatsSnapshot(now);
   }, HEARTBEAT_INTERVAL_MS);
 
   const healthbeat = setInterval(() => {
@@ -638,7 +765,7 @@ async function exposeLogger(
               writeLegendSink(legendOptionsWriter, 'legendOptions', classification.payload);
               break;
             case 'news':
-              writeLegendSink(legendNewsWriter, 'legendNews', classification.payload);
+              writeLegendSink(newsWriter, 'legendNews', classification.payload);
               break;
             case 'unknown': {
               const feed = extractFeed(entry.parsed);
@@ -685,8 +812,10 @@ async function exposeLogger(
     }
 
     generalWriter.close();
+    writeStatsSnapshot(Date.now(), true);
     legendOptionsWriter.close();
-    legendNewsWriter.close();
+    newsWriter.close();
+    statsWriter.close();
     for (const writer of candleCsvByTimeframe.values()) {
       writer.close();
     }
