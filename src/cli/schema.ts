@@ -5,6 +5,7 @@ import type {
   DataSink,
   LoginMode,
   CredentialSource,
+  UrlMode,
 } from '../orchestrator/messages.js';
 
 const NonEmptyString = z.string().trim().min(1, 'Debe proporcionar un valor.');
@@ -12,6 +13,7 @@ const NonEmptyString = z.string().trim().min(1, 'Debe proporcionar un valor.');
 export const DATA_SINK_VALUES: readonly DataSink[] = ['stdout', 'filesystem', 'noop'];
 export const LOGIN_MODE_VALUES: readonly LoginMode[] = ['auto', 'manual', 'skip'];
 export const CREDENTIAL_SOURCE_VALUES: readonly CredentialSource[] = ['env', 'prompt', 'keychain'];
+export const URL_MODE_VALUES: readonly UrlMode[] = ['auto', 'module', 'symbol'];
 
 export const CommonArgsSchema = z.object({
   module: NonEmptyString,
@@ -50,6 +52,7 @@ export const ModuleArgsSchema: z.ZodType<ModuleArgs> = z.object({
   credSource: z.enum(CREDENTIAL_SOURCE_VALUES as [CredentialSource, ...CredentialSource[]]).optional(),
   optionsDate: z.string().trim().min(1).optional(),
   optionsHorizon: z.number().finite().optional(),
+  urlMode: z.enum(URL_MODE_VALUES as [UrlMode, ...UrlMode[]]).optional(),
   persistCookies: z.boolean().optional(),
   persistIndexedDb: z.boolean().optional(),
   storageStatePath: z.string().trim().min(1).optional(),
@@ -67,4 +70,4 @@ export type AuthArgs = z.output<typeof AuthArgsSchema>;
 export type RunnerOptions = z.output<typeof RunnerOptionsSchema>;
 export type ModuleArgsOutput = z.output<typeof ModuleArgsSchema>;
 
-export type { ModuleArgs, DataSink, LoginMode, CredentialSource } from '../orchestrator/messages.js';
+export type { ModuleArgs, DataSink, LoginMode, CredentialSource, UrlMode } from '../orchestrator/messages.js';

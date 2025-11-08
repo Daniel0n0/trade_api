@@ -8,6 +8,8 @@ export type LoginMode = 'auto' | 'manual' | 'skip';
 
 export type CredentialSource = 'env' | 'prompt' | 'keychain';
 
+export type UrlMode = 'auto' | 'module' | 'symbol';
+
 export type ModuleArgs = {
   module: string;
   action: ModuleAction;
@@ -23,6 +25,7 @@ export type ModuleArgs = {
   credSource?: CredentialSource;
   optionsDate?: string;
   optionsHorizon?: number;
+  urlMode?: UrlMode;
   persistCookies?: boolean;
   persistIndexedDb?: boolean;
   storageStatePath?: string;
@@ -106,6 +109,7 @@ export function isModuleArgs(payload: unknown): payload is ModuleArgs {
     credSource,
     optionsDate,
     optionsHorizon,
+    urlMode,
     persistCookies,
     persistIndexedDb,
     storageStatePath,
@@ -166,6 +170,10 @@ export function isModuleArgs(payload: unknown): payload is ModuleArgs {
   }
 
   if (optionsHorizon !== undefined && (typeof optionsHorizon !== 'number' || !Number.isFinite(optionsHorizon))) {
+    return false;
+  }
+
+  if (urlMode !== undefined && urlMode !== 'auto' && urlMode !== 'module' && urlMode !== 'symbol') {
     return false;
   }
 

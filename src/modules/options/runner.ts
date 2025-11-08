@@ -11,6 +11,7 @@ import {
   runSocketSniffer,
   type SocketSnifferHandle,
 } from '../../modulos/socket-sniffer.js';
+import { installOptionsResponseRecorder, type OptionsRecorderHandle } from './interceptor.js';
 import {
   assertParentMessage,
   sendToParent,
@@ -49,6 +50,7 @@ export async function runOptionsRunner(initialArgs: ModuleArgs): Promise<void> {
   let browser: BrowserResources | null = null;
   let page: Page | null = null;
   let sniffer: SocketSnifferHandle | null = null;
+  let optionsRecorder: OptionsRecorderHandle | null = null;
   let shuttingDown = false;
   let exitResolver: (() => void) | null = null;
   let startPromise: Promise<void> | null = null;
@@ -132,14 +134,36 @@ export async function runOptionsRunner(initialArgs: ModuleArgs): Promise<void> {
     browser = null;
   };
 
-  const resolveUrl = (args: ModuleArgs, payload?: RunnerStartPayload): string => {
+  const resolveUrl = (
+    args: ModuleArgs,
+    payload: RunnerStartPayload | undefined,
+    symbols: readonly string[],
+  ): string => {
     if (payload?.url) {
       return payload.url;
     }
 
+    const mode = args.urlMode ?? 'auto';
+    const primarySymbol = symbols[0];
     const mapped = URL_BY_MODULE[args.module];
+
+    if (mode === 'module') {
+      return mapped ?? DEFAULT_URL;
+    }
+
+    if (mode === 'symbol') {
+      if (primarySymbol) {
+        return `https://robinhood.com/options/${primarySymbol}`;
+      }
+      return DEFAULT_URL;
+    }
+
     if (mapped) {
       return mapped;
+    }
+
+    if (primarySymbol) {
+      return `https://robinhood.com/options/${primarySymbol}`;
     }
 
     return DEFAULT_URL;
@@ -184,8 +208,8 @@ export async function runOptionsRunner(initialArgs: ModuleArgs): Promise<void> {
     const startedAt = new Date().toISOString();
 
     const launch = async () => {
-      const url = resolveUrl(messageArgs, payload);
       const symbols = resolveSymbols(messageArgs, payload);
+      const url = resolveUrl(messageArgs, payload, symbols);
       const logPrefix = payload?.logPrefix ?? messageArgs.outPrefix ?? messageArgs.module;
       const startAt = payload?.start ?? messageArgs.start;
       const endAt = payload?.end ?? messageArgs.end;
@@ -213,6 +237,26 @@ export async function runOptionsRunner(initialArgs: ModuleArgs): Promise<void> {
       }
 
       page = localPage;
+
+      try {
+        optionsRecorder = installOptionsResponseRecorder({
+          page: localPage,
+          logPrefix,
+          symbols,
+          optionsDate: messageArgs.optionsDate,
+          horizonDays: messageArgs.optionsHorizon,
+          urlMode: messageArgs.urlMode,
+          onPrimaryExpirationChange: (expiration) => {
+            sendStatus(status, { optionsPrimaryExpiration: expiration });
+          },
+          updateInfo: (info) => {
+            updateInfo(info);
+          },
+        });
+      } catch (error) {
+        const err = toError(error);
+        console.warn('[options-runner] No se pudo instalar el interceptor de opciones:', err);
+      }
 
       sendStatus('navigating');
 
@@ -278,6 +322,13 @@ export async function runOptionsRunner(initialArgs: ModuleArgs): Promise<void> {
 
     closeSniffer();
 
+    try {
+      await optionsRecorder?.close();
+    } catch (error) {
+      console.warn('[options-runner] Error al cerrar el interceptor de opciones:', error);
+    }
+    optionsRecorder = null;
+
     if (page) {
       try {
         await page.close({ runBeforeUnload: true });
@@ -289,7 +340,6 @@ export async function runOptionsRunner(initialArgs: ModuleArgs): Promise<void> {
     }
 
     await closeBrowser();
-
     const finalStatus: RunnerStatus = reason === 'error' ? 'error' : 'stopped';
     sendStatus(finalStatus);
     sendEnded(reason, undefined, error);

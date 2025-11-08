@@ -4,7 +4,13 @@ import { Command } from 'commander';
 
 import { loadRunConfig } from '../../orchestrator/config.js';
 import type { ModuleArgsInput } from '../schema.js';
-import { deriveOutPrefix, mapEnvFallbacks, mergeArgChain, normalizeModuleArgs } from '../normalize.js';
+import {
+  deriveOutPrefix,
+  mapEnvFallbacks,
+  mergeArgChain,
+  normalizeModuleArgs,
+  parseSymbols,
+} from '../normalize.js';
 import type { ModuleArgs } from '../../orchestrator/messages.js';
 import { CommandContext, resolveEnv } from './shared.js';
 
@@ -18,6 +24,10 @@ const ENV_MAPPING: Partial<Record<keyof ModuleArgsInput, string | readonly strin
   storageStatePath: ['TRADE_API_STORAGE_STATE_PATH', 'ORCHESTRATOR_STORAGE_STATE_PATH'],
   indexedDbSeed: ['TRADE_API_INDEXEDDB_SEED', 'ORCHESTRATOR_INDEXEDDB_SEED'],
   indexedDbProfile: ['TRADE_API_INDEXEDDB_PROFILE', 'ORCHESTRATOR_INDEXEDDB_PROFILE'],
+  symbols: ['TRADE_API_SYMBOLS', 'ORCHESTRATOR_SYMBOLS'],
+  optionsDate: ['TRADE_API_OPTIONS_DATE', 'ORCHESTRATOR_OPTIONS_DATE'],
+  optionsHorizon: ['TRADE_API_OPTIONS_HORIZON', 'ORCHESTRATOR_OPTIONS_HORIZON'],
+  urlMode: ['TRADE_API_URL_MODE', 'ORCHESTRATOR_URL_MODE'],
 };
 
 type StartOptions = {
@@ -31,6 +41,10 @@ type StartOptions = {
   indexeddbSeed?: string;
   indexeddbProfile?: string;
   config?: string;
+  symbols?: string | readonly string[];
+  optionsHorizon?: string | number;
+  optionsDate?: string;
+  urlMode?: string;
 };
 
 type StartCliArgs = [module?: string, action?: string, options?: StartOptions, command?: Command];
@@ -77,6 +91,25 @@ function buildCliArgs(
 
   if (options.indexeddbProfile !== undefined) {
     result.indexedDbProfile = options.indexeddbProfile;
+  }
+
+  if (options.symbols !== undefined) {
+    const parsed = parseSymbols(options.symbols);
+    if (parsed) {
+      result.symbols = parsed as ModuleArgsInput['symbols'];
+    }
+  }
+
+  if (options.optionsHorizon !== undefined) {
+    result.optionsHorizon = options.optionsHorizon as ModuleArgsInput['optionsHorizon'];
+  }
+
+  if (options.optionsDate !== undefined) {
+    result.optionsDate = options.optionsDate;
+  }
+
+  if (options.urlMode !== undefined) {
+    result.urlMode = options.urlMode as ModuleArgsInput['urlMode'];
   }
 
   return result;
@@ -139,6 +172,10 @@ export function registerStartCommand(program: Command, context: CommandContext):
     .option('--storage-state <path>', 'Ruta a un archivo de estado de almacenamiento.')
     .option('--indexeddb-seed <value>', 'Semilla de IndexedDB que se cargará antes de iniciar.')
     .option('--indexeddb-profile <path>', 'Directorio de perfil de IndexedDB.')
+    .option('--symbols <lista>', 'Lista de símbolos separados por comas o espacios.')
+    .option('--options-horizon <días>', 'Máximo de días hasta la expiración objetivo.')
+    .option('--options-date <iso>', 'Expiración principal para opciones (YYYY-MM-DD).')
+    .option('--url-mode <modo>', 'Modo de resolución de URL (auto|module|symbol).')
     .option('-c, --config <path>', 'Archivo YAML con argumentos por defecto para este comando.')
     .action(async (...args: StartCliArgs) => {
       const [moduleArg, actionArg, options = {}, command] = args;

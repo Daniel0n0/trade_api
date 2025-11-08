@@ -64,6 +64,12 @@ test('normalizeModuleArgs convierte banderas y fechas', () => {
   assert.strictEqual(normalized.persistCookies, false);
 });
 
+test('normalizeModuleArgs acepta urlMode válidos', () => {
+  const normalized = normalizeModuleArgs({ module: 'options', action: 'now', urlMode: 'symbol' });
+  assert.strictEqual(normalized.urlMode, 'symbol');
+  assert.throws(() => normalizeModuleArgs({ module: 'options', action: 'now', urlMode: 'invalid' }), /urlMode/);
+});
+
 test('mergeArgChain aplica precedencia de derecha a izquierda', () => {
   const defaults = { action: 'now' } satisfies Partial<ModuleArgsInput>;
   const env = { action: 'bars' } satisfies Partial<ModuleArgsInput>;
