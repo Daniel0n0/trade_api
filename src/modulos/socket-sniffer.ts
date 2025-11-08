@@ -1,5 +1,6 @@
 import path from 'node:path';
 import type { Page, WebSocket as PlaywrightWebSocket } from 'playwright';
+import { DateTime } from 'luxon';
 
 import { RotatingWriter, type RotatePolicy } from './rotating-writer.js';
 import { BarAggregator, type AggregatedBarResult } from './timebar.js';
@@ -30,6 +31,31 @@ const DEFAULT_PREFIX = 'socket';
 const HEARTBEAT_INTERVAL_MS = 5_000;
 const STATS_SNAPSHOT_INTERVAL_MS = HEARTBEAT_INTERVAL_MS;
 const HEALTH_INTERVAL_MS = 30_000;
+const LAG_WARN_COOLDOWN_MS = 60_000;
+
+const MARKET_TZ = 'America/New_York';
+const MARKET_OPEN_MINUTES = 9 * 60 + 30; // 09:30
+const MARKET_CLOSE_MINUTES = 16 * 60 + 15; // 16:15 to allow for late prints
+const WATCHDOG_INTERVAL_MS = 15_000;
+const WATCHDOG_THRESHOLD_MS = 90_000;
+const WATCHDOG_KEY = 'bar:1min';
+const WATCHDOG_COOLDOWN_MS = 120_000;
+
+const LAG_WARN_THRESHOLDS_MS: Record<string, number> = {
+  ch1: 10_000,
+  ch3: 10_000,
+  ch5: 10_000,
+  ch7: 10_000,
+  other: 30_000,
+  legendOptions: 180_000,
+  legendNews: 180_000,
+  'bar:1sec': 20_000,
+  'bar:1min': WATCHDOG_THRESHOLD_MS,
+  'bar:5min': 6 * 60_000,
+  'bar:15min': 20 * 60_000,
+  'bar:1h': 2 * 60 * 60_000,
+  'bar:1d': 26 * 60 * 60_000,
+};
 const HOOK_GUARD_FLAG = '__socketSnifferHooked__';
 
 const ROTATE_POLICY: RotatePolicy = {
@@ -188,6 +214,30 @@ const resolveEnabledTimeframes = (raw: string | undefined): readonly Aggregation
     return DEFAULT_TIMEFRAMES;
   }
   return uniqueTimeframes(parsed);
+};
+
+const isMarketHours = (now: number): boolean => {
+  const dt = DateTime.fromMillis(now, { zone: MARKET_TZ });
+  if (!dt.isValid) {
+    return false;
+  }
+
+  if (dt.weekday === 6 || dt.weekday === 7) {
+    return false;
+  }
+
+  const minutes = dt.hour * 60 + dt.minute;
+  return minutes >= MARKET_OPEN_MINUTES && minutes <= MARKET_CLOSE_MINUTES;
+};
+
+const computeLagMs = (now: number, timestamps: Record<string, number>): Record<string, number> => {
+  const out: Record<string, number> = {};
+  for (const [key, ts] of Object.entries(timestamps)) {
+    if (typeof ts === 'number' && Number.isFinite(ts) && ts > 0) {
+      out[key] = now - ts;
+    }
+  }
+  return out;
 };
 
 export type SocketSnifferOptions = {
@@ -361,6 +411,11 @@ async function exposeLogger(
   const newsWriter = new RotatingWriter(path.join(baseDir, 'news.jsonl'), ROTATE_POLICY);
   const VERBOSE = false; // Cambiado a false para reducir ruido por defecto
 
+  const writeGeneral = (entry: Serializable) => {
+    const payload: LogEntry = { ts: Date.now(), ...entry };
+    generalWriter.write(JSON.stringify(payload));
+  };
+
   const counts: StatsCounts = {
     ch1: 0,
     ch3: 0,
@@ -372,7 +427,33 @@ async function exposeLogger(
     total: 0,
   };
   const lastWriteTs: Record<string, number> = {};
+  const lastLagWarnAt = new Map<string, number>();
   let lastStatsSnapshotAt = 0;
+
+  const checkLagThresholds = (now: number, lagMs: Record<string, number>) => {
+    for (const [key, threshold] of Object.entries(LAG_WARN_THRESHOLDS_MS)) {
+      const currentLag = lagMs[key];
+      if (currentLag === undefined) {
+        continue;
+      }
+
+      if (currentLag > threshold) {
+        const previousWarnAt = lastLagWarnAt.get(key) ?? 0;
+        if (now - previousWarnAt > LAG_WARN_COOLDOWN_MS) {
+          writeGeneral({
+            kind: 'lag-warn',
+            source: 'health',
+            key,
+            lagMs: currentLag,
+            thresholdMs: threshold,
+          });
+          lastLagWarnAt.set(key, now);
+        }
+      } else if (lastLagWarnAt.has(key)) {
+        lastLagWarnAt.delete(key);
+      }
+    }
+  };
 
   const writeStatsSnapshot = (now: number, force = false) => {
     if (!force && now - lastStatsSnapshotAt < STATS_SNAPSHOT_INTERVAL_MS) {
@@ -540,12 +621,8 @@ async function exposeLogger(
     for (const result of bars) {
       const writer = getBarWriter(result.symbol, result.timeframe);
       writer.write(toCsvLine(CSV_HEADERS.bars, buildBarCsvRow(result.bar)));
+      lastWriteTs[`bar:${result.timeframe}`] = Date.now();
     }
-  };
-
-  const writeGeneral = (entry: Serializable) => {
-    const payload: LogEntry = { ts: Date.now(), ...entry };
-    generalWriter.write(JSON.stringify(payload));
   };
 
   writeGeneral({ kind: 'boot', msg: 'socket-sniffer up', start: meta.start, end: meta.end });
@@ -569,15 +646,61 @@ async function exposeLogger(
   const healthbeat = setInterval(() => {
     const now = Date.now();
     const rss = typeof process.memoryUsage === 'function' ? process.memoryUsage().rss : undefined;
+    const lagMs = computeLagMs(now, lastWriteTs);
     writeGeneral({
       kind: 'health',
       ts: now,
       counts: { ...counts },
       lastWriteTs: { ...lastWriteTs },
+      lagMs,
       rss,
       uptimeSec: Math.floor(process.uptime()),
     });
+    checkLagThresholds(now, lagMs);
   }, HEALTH_INTERVAL_MS);
+
+  let watchdogReloadInFlight = false;
+  let lastWatchdogActionAt = 0;
+  const watchdog = setInterval(() => {
+    void (async () => {
+      const now = Date.now();
+      if (!isMarketHours(now)) {
+        return;
+      }
+
+      const lastWrite = lastWriteTs[WATCHDOG_KEY];
+      if (!lastWrite) {
+        return;
+      }
+
+      if (now - lastWatchdogActionAt < WATCHDOG_COOLDOWN_MS) {
+        return;
+      }
+
+      const lag = now - lastWrite;
+      if (lag <= WATCHDOG_THRESHOLD_MS || watchdogReloadInFlight || page.isClosed()) {
+        return;
+      }
+
+      watchdogReloadInFlight = true;
+      try {
+        writeGeneral({
+          kind: 'watchdog-reload',
+          key: WATCHDOG_KEY,
+          lagMs: lag,
+          thresholdMs: WATCHDOG_THRESHOLD_MS,
+        });
+        await page.reload({ waitUntil: 'domcontentloaded' });
+        lastWatchdogActionAt = Date.now();
+      } catch (error) {
+        /* eslint-disable no-console */
+        console.error('[socket-sniffer] watchdog reload failed:', error);
+        /* eslint-enable no-console */
+      } finally {
+        watchdogReloadInFlight = false;
+      }
+    })();
+  }, WATCHDOG_INTERVAL_MS);
 
   const resolveEventSymbol = (event: BaseEvent): string | undefined => {
     const candidates = [event.eventSymbol, event.symbol];
@@ -812,6 +935,7 @@ async function exposeLogger(
     closed = true;
     clearInterval(heartbeat);
     clearInterval(healthbeat);
+    clearInterval(watchdog);
     try {
       const now = Date.now();
       flushBars(now);
