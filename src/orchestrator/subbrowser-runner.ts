@@ -4,6 +4,7 @@ import type { ModuleArgs } from './messages.js';
 import { runSpotRunner } from '../modules/spot/runner.js';
 import { runOptionsRunner } from '../modules/options/runner.js';
 import { runFuturesRunner } from '../modules/futures/runner.js';
+import { FUTURES_MODULE_NAMES } from '../modules/futures/routes.js';
 
 const RUNNERS: Record<string, (args: ModuleArgs) => Promise<void>> = {
   spot: runSpotRunner,
@@ -13,6 +14,10 @@ const RUNNERS: Record<string, (args: ModuleArgs) => Promise<void>> = {
   'spx-options-chain': runOptionsRunner,
   futures: runFuturesRunner,
 };
+
+for (const moduleName of FUTURES_MODULE_NAMES) {
+  RUNNERS[moduleName] = runFuturesRunner;
+}
 
 export async function runSubBrowser(args: ModuleArgs): Promise<void> {
   const runner = RUNNERS[args.module];
