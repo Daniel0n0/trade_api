@@ -488,16 +488,18 @@ async function exposeLogger(
       CSV_HEADER_TEXT[headerKey],
     );
 
-  const candleCsvByTimeframe = new Map<string, RotatingWriter>();
-  const getCandleCsv = (timeframe: string) => {
+  type CandleWriterEntry = { writer: RotatingWriter; lastTimestamp?: number };
+  const candleCsvByTimeframe = new Map<string, CandleWriterEntry>();
+  const getCandleWriter = (timeframe: string) => {
     const key = timeframe || 'general';
-    let writer = candleCsvByTimeframe.get(key);
-    if (!writer) {
+    let entry = candleCsvByTimeframe.get(key);
+    if (!entry) {
       const suffix = key === 'general' ? 'candle' : `candle-${key}`;
-      writer = createCsvWriter(suffix, 'candle');
-      candleCsvByTimeframe.set(key, writer);
+      const writer = createCsvWriter(suffix, 'candle');
+      entry = { writer };
+      candleCsvByTimeframe.set(key, entry);
     }
-    return writer;
+    return entry;
   };
 
   const quoteCsv = new RotatingWriter(
@@ -654,7 +656,19 @@ async function exposeLogger(
         const candleRow = buildCandleCsvRow(event);
         if (candleRow) {
           const timeframe = resolveCandleTimeframe(event.eventSymbol);
-          getCandleCsv(timeframe).write(toCsvLine(CSV_HEADERS.candle, candleRow));
+          const candleEntry = getCandleWriter(timeframe);
+          const timestamp = typeof candleRow.t === 'number' ? candleRow.t : undefined;
+          if (
+            timestamp !== undefined &&
+            candleEntry.lastTimestamp !== undefined &&
+            timestamp < candleEntry.lastTimestamp
+          ) {
+            continue;
+          }
+          if (timestamp !== undefined) {
+            candleEntry.lastTimestamp = timestamp;
+          }
+          candleEntry.writer.write(toCsvLine(CSV_HEADERS.candle, candleRow));
         }
         const candleAgg = buildCandleAggregationRow(event);
         if (candleAgg) {
@@ -816,8 +830,8 @@ async function exposeLogger(
     legendOptionsWriter.close();
     newsWriter.close();
     statsWriter.close();
-    for (const writer of candleCsvByTimeframe.values()) {
-      writer.close();
+    for (const entry of candleCsvByTimeframe.values()) {
+      entry.writer.close();
     }
     quoteCsv.close();
     for (const writer of barWriters.values()) {

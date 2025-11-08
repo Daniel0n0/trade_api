@@ -197,8 +197,41 @@ export function isValidCandle(event: BaseEvent): boolean {
   if (event.eventFlags === CANDLE_INVALID_FLAG) {
     return false;
   }
-  const values = [event.open, event.high, event.low, event.close, event.volume];
-  return values.every((value) => typeof value === 'number' && Number.isFinite(value));
+
+  const open = event.open;
+  const high = event.high;
+  const low = event.low;
+  const close = event.close;
+  const volume = event.volume;
+
+  const priceValues = [open, high, low, close];
+  if (!priceValues.every((value) => typeof value === 'number' && Number.isFinite(value))) {
+    return false;
+  }
+
+  if (typeof volume !== 'number' || !Number.isFinite(volume) || volume < 0) {
+    return false;
+  }
+
+  const numericHigh = high as number;
+  const numericLow = low as number;
+
+  if (numericHigh < numericLow) {
+    return false;
+  }
+
+  const numericOpen = open as number;
+  const numericClose = close as number;
+
+  if (numericOpen < numericLow || numericOpen > numericHigh) {
+    return false;
+  }
+
+  if (numericClose < numericLow || numericClose > numericHigh) {
+    return false;
+  }
+
+  return true;
 }
 
 export type StatsCounts = {
