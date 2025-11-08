@@ -6,6 +6,7 @@ import 'dotenv/config';
 import { Command } from 'commander';
 
 import { attachHelp } from './help.js';
+import { registerSessionCommand } from './commands/session.js';
 import { registerStartCommand } from './commands/start.js';
 import { registerStopCommand } from './commands/stop.js';
 import { registerStatusCommand } from './commands/status.js';
@@ -242,6 +243,7 @@ function buildProgram(manager: ProcessManager): Command {
     waitForIdle: () => waitForIdle(manager),
   };
 
+  registerSessionCommand(program, context);
   registerStartCommand(program, context);
   registerStopCommand(program, context);
   registerStatusCommand(program, context);
@@ -268,7 +270,7 @@ export async function runCli(argv: readonly string[] = process.argv.slice(2)): P
   const program = buildProgram(manager);
 
   try {
-    await program.parseAsync(['node', 'trade-api', ...argv], { from: 'user' });
+    await program.parseAsync(['node', 'trade-api', ...argv]);
   } catch (error) {
     if (error instanceof Error && 'code' in error && (error as { code?: string }).code === 'commander.helpDisplayed') {
       return;
