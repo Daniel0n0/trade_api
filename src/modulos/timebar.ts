@@ -103,11 +103,15 @@ export class BarAggregator {
       return;
     }
     const start = this.bucketStart(quote.ts);
-    let bar = this.buckets.get(start);
-    if (!bar) {
-      bar = { t: start, open: mid, high: mid, low: mid, close: mid, volume: 0 };
-      this.buckets.set(start, bar);
+    let state = this.buckets.get(start);
+    if (!state) {
+      state = {
+        bar: { t: start, open: mid, high: mid, low: mid, close: mid, volume: 0 },
+        lastDayVolumeBySession: new Map(),
+      };
+      this.buckets.set(start, state);
     } else {
+      const bar = state.bar;
       if (mid > bar.high) {
         bar.high = mid;
       }

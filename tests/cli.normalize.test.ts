@@ -56,7 +56,7 @@ test('normalizeModuleArgs convierte banderas y fechas', () => {
     module: 'quotes',
     action: 'stream',
     start: '2024-01-01T00:00:00Z',
-    persistCookies: 'false',
+    persistCookies: false,
   });
   assert.strictEqual(normalized.module, 'quotes');
   assert.strictEqual(normalized.action, 'stream');
