@@ -21,6 +21,11 @@ import {
   type RunnerStartPayload,
   type RunnerStatus,
 } from '../messages.js';
+import {
+  FUTURES_SYMBOLS_BY_MODULE,
+  FUTURES_URL_BY_MODULE,
+} from './routes.js';
+import { installFuturesRecorder, type FuturesRecorderHandle } from './interceptor.js';
 
 const MODULE_NAME: RunnerModule = 'futures';
 const DEFAULT_URL = 'https://robinhood.com/us/en/markets/futures/';
@@ -28,9 +33,12 @@ const DEFAULT_SYMBOLS: readonly string[] = [];
 
 const URL_BY_MODULE: Record<string, string> = {
   futures: DEFAULT_URL,
+  ...FUTURES_URL_BY_MODULE,
 };
 
-const SYMBOLS_BY_MODULE: Record<string, readonly string[]> = {};
+const SYMBOLS_BY_MODULE: Record<string, readonly string[]> = {
+  ...FUTURES_SYMBOLS_BY_MODULE,
+};
 
 function toError(value: unknown): Error {
   if (value instanceof Error) {
@@ -45,6 +53,7 @@ export async function runFuturesRunner(initialArgs: ModuleArgs): Promise<void> {
   let browser: BrowserResources | null = null;
   let page: Page | null = null;
   let sniffer: SocketSnifferHandle | null = null;
+  let futuresRecorder: FuturesRecorderHandle | null = null;
   let shuttingDown = false;
   let exitResolver: (() => void) | null = null;
   let startPromise: Promise<void> | null = null;
@@ -210,6 +219,16 @@ export async function runFuturesRunner(initialArgs: ModuleArgs): Promise<void> {
 
       page = localPage;
 
+      try {
+        futuresRecorder = installFuturesRecorder({
+          page: localPage,
+          symbols,
+        });
+      } catch (error) {
+        const err = toError(error);
+        console.warn('[futures-runner] No se pudo instalar el interceptor de futuros:', err);
+      }
+
       sendStatus('navigating');
 
       try {
@@ -273,6 +292,13 @@ export async function runFuturesRunner(initialArgs: ModuleArgs): Promise<void> {
     sendStatus('stopping', { finishedAt: new Date().toISOString(), reason });
 
     closeSniffer();
+
+    try {
+      await futuresRecorder?.close();
+    } catch (error) {
+      console.warn('[futures-runner] Error al cerrar el interceptor de futuros:', error);
+    }
+    futuresRecorder = null;
 
     if (page) {
       try {
