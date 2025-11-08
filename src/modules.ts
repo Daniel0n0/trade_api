@@ -102,7 +102,7 @@ export async function openModuleTabs(context: BrowserContext): Promise<Page[]> {
     const runner = MODULE_RUNNERS[module.name];
     if (runner) {
       await ensureNoModalConsent(page);
-      const args: ModuleArgs = { moduleName: module.name, action: 'preview' };
+      const args: ModuleArgs = { module: module.name, action: 'preview' };
       runner(args, { context, page }).catch((error: unknown) => {
         /* eslint-disable no-console */
         console.error(`Error al ejecutar el módulo "${module.name}":`, error);

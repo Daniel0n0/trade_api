@@ -27,7 +27,7 @@ function printStatus(json: boolean, snapshots: readonly ProcessSnapshot[]): void
   for (const snapshot of snapshots) {
     const parts = [
       `ctx=${snapshot.ctxId}`,
-      `module=${snapshot.moduleName}`,
+      `module=${snapshot.module}`,
       `action=${snapshot.action}`,
       `status=${snapshot.status}`,
       `desired=${snapshot.desiredState}`,

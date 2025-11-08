@@ -1,7 +1,11 @@
 import process from 'node:process';
 import type { Page } from 'playwright';
 
-import { launchPersistentBrowser, type BrowserResources } from '../../browser.js';
+import {
+  launchPersistentBrowser,
+  type BrowserResources,
+  type PersistentLaunchOverrides,
+} from '../../browser.js';
 import type { ModuleArgs } from '../../orchestrator/messages.js';
 import {
   runSocketSniffer,
@@ -49,7 +53,7 @@ export async function runSpotRunner(initialArgs: ModuleArgs): Promise<void> {
   let exitResolver: (() => void) | null = null;
   let startPromise: Promise<void> | null = null;
   let currentInfo: RunnerInfo = {
-    moduleName: initialArgs.moduleName,
+    module: initialArgs.module,
     action: initialArgs.action,
     pid: process.pid,
   };
@@ -133,7 +137,7 @@ export async function runSpotRunner(initialArgs: ModuleArgs): Promise<void> {
       return payload.url;
     }
 
-    const mapped = URL_BY_MODULE[args.moduleName];
+    const mapped = URL_BY_MODULE[args.module];
     if (mapped) {
       return mapped;
     }
@@ -146,12 +150,27 @@ export async function runSpotRunner(initialArgs: ModuleArgs): Promise<void> {
       return payload.symbols;
     }
 
-    const mapped = SYMBOLS_BY_MODULE[args.moduleName];
+    if (args.symbols && args.symbols.length > 0) {
+      return args.symbols;
+    }
+
+    const mapped = SYMBOLS_BY_MODULE[args.module];
     if (mapped) {
       return mapped;
     }
 
     return DEFAULT_SYMBOLS;
+  };
+
+  const resolveLaunchOverrides = (args: ModuleArgs): PersistentLaunchOverrides => {
+    const overrides: PersistentLaunchOverrides = { mode: 'reuse' };
+    if (typeof args.headless === 'boolean') {
+      overrides.headless = args.headless;
+    }
+    if (args.storageStatePath) {
+      overrides.storageStatePath = args.storageStatePath;
+    }
+    return overrides;
   };
 
   const start = async (messageArgs: ModuleArgs, payload?: RunnerStartPayload) => {
@@ -170,14 +189,14 @@ export async function runSpotRunner(initialArgs: ModuleArgs): Promise<void> {
     const launch = async () => {
       const url = resolveUrl(messageArgs, payload);
       const symbols = resolveSymbols(messageArgs, payload);
-      const logPrefix = payload?.logPrefix ?? messageArgs.moduleName;
-      const startAt = payload?.startAt ?? messageArgs.startAt;
-      const endAt = payload?.endAt ?? messageArgs.endAt;
+      const logPrefix = payload?.logPrefix ?? messageArgs.outPrefix ?? messageArgs.module;
+      const startAt = payload?.start ?? messageArgs.start;
+      const endAt = payload?.end ?? messageArgs.end;
 
       sendStatus('launching-browser', { startedAt, url, symbols, logPrefix });
 
       try {
-        browser = await launchPersistentBrowser({ mode: 'reuse' });
+        browser = await launchPersistentBrowser(resolveLaunchOverrides(messageArgs));
       } catch (error) {
         const err = toError(error);
         sendStatus('error', { phase: 'launch' });
@@ -214,8 +233,8 @@ export async function runSpotRunner(initialArgs: ModuleArgs): Promise<void> {
         sniffer = await runSocketSniffer(page, {
           symbols,
           logPrefix,
-          startAt,
-          endAt,
+          start: startAt,
+          end: endAt,
         });
       } catch (error) {
         const err = toError(error);

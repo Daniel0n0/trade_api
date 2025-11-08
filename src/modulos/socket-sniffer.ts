@@ -36,8 +36,8 @@ const ROTATE_POLICY: RotatePolicy = {
 export type SocketSnifferOptions = {
   readonly symbols?: readonly string[];
   readonly logPrefix?: string;
-  readonly startAt?: string;
-  readonly endAt?: string;
+  readonly start?: string;
+  readonly end?: string;
 };
 
 export type SocketSnifferHandle = {
@@ -74,7 +74,7 @@ async function exposeLogger(
   page: Page,
   logPath: string,
   perChannelPrefix: string,
-  meta: { startAt?: string; endAt?: string } = {},
+  meta: { start?: string; end?: string } = {},
 ): Promise<() => void> {
   const baseDir = path.dirname(logPath);
   const baseName = path.basename(logPath, '.jsonl');
@@ -189,7 +189,7 @@ async function exposeLogger(
     generalWriter.write(JSON.stringify(payload));
   };
 
-  writeGeneral({ kind: 'boot', msg: 'socket-sniffer up', startAt: meta.startAt, endAt: meta.endAt });
+  writeGeneral({ kind: 'boot', msg: 'socket-sniffer up', start: meta.start, end: meta.end });
 
   const flushBars = (now: number) => {
     const closed1 = agg1m?.drainClosed(now) ?? [];
@@ -673,8 +673,8 @@ export async function runSocketSniffer(
   /* eslint-enable no-console */
 
   const closeLogger = await exposeLogger(page, logPath, prefix, {
-    startAt: options.startAt,
-    endAt: options.endAt,
+    start: options.start,
+    end: options.end,
   });
 
   const pageWithSniffer = page as PageWithSnifferBinding;

@@ -8,8 +8,8 @@ export const runSpy5m1mModule: ModuleRunner = async (args, { page }) => {
   const handle = await runSocketSniffer(page, {
     symbols: MODULE_SYMBOLS,
     logPrefix: 'spy-5m-1m',
-    startAt: args.startAt,
-    endAt: args.endAt,
+    start: args.start,
+    end: args.end,
   });
 
   registerCloser(handle.close);

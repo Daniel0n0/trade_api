@@ -11,10 +11,10 @@ import { CommandContext, resolveEnv } from './shared.js';
 const DEFAULT_CONFIG = 'orchestrator.yaml';
 
 const ENV_MAPPING: Record<keyof ModuleArgsInput, string | readonly string[]> = {
-  moduleName: ['TRADE_API_MODULE', 'ORCHESTRATOR_MODULE'],
+  module: ['TRADE_API_MODULE', 'ORCHESTRATOR_MODULE'],
   action: ['TRADE_API_ACTION', 'ORCHESTRATOR_ACTION'],
-  startAt: ['TRADE_API_START_AT', 'ORCHESTRATOR_START_AT'],
-  endAt: ['TRADE_API_END_AT', 'ORCHESTRATOR_END_AT'],
+  start: ['TRADE_API_START', 'ORCHESTRATOR_START', 'TRADE_API_START_AT', 'ORCHESTRATOR_START_AT'],
+  end: ['TRADE_API_END', 'ORCHESTRATOR_END', 'TRADE_API_END_AT', 'ORCHESTRATOR_END_AT'],
   persistCookies: ['TRADE_API_PERSIST_COOKIES', 'ORCHESTRATOR_PERSIST_COOKIES'],
   persistIndexedDb: ['TRADE_API_PERSIST_INDEXEDDB', 'ORCHESTRATOR_PERSIST_INDEXEDDB'],
   storageStatePath: ['TRADE_API_STORAGE_STATE_PATH', 'ORCHESTRATOR_STORAGE_STATE_PATH'],
@@ -25,8 +25,8 @@ const ENV_MAPPING: Record<keyof ModuleArgsInput, string | readonly string[]> = {
 type RunConfigOptions = {
   config?: string;
   action?: string;
-  startAt?: string;
-  endAt?: string;
+  start?: string;
+  end?: string;
   persistCookies?: string | boolean;
   persistIndexeddb?: string | boolean;
   storageState?: string;
@@ -45,12 +45,12 @@ function buildOverrides(options: RunConfigOptions): Partial<ModuleArgsInput> {
     overrides.action = options.action;
   }
 
-  if (options.startAt !== undefined) {
-    overrides.startAt = options.startAt;
+  if (options.start !== undefined) {
+    overrides.start = options.start;
   }
 
-  if (options.endAt !== undefined) {
-    overrides.endAt = options.endAt;
+  if (options.end !== undefined) {
+    overrides.end = options.end;
   }
 
   if (options.persistCookies !== undefined) {
@@ -85,7 +85,7 @@ function filterJobs(jobs: readonly RunConfigJob[], options: RunConfigOptions): R
 
   const allowedModules = symbols?.map((symbol) => symbol.toLowerCase());
   return jobs.filter((job) => {
-    const moduleName = job.args.moduleName.toLowerCase();
+    const moduleName = job.args.module.toLowerCase();
     if (moduleFilter && moduleName !== moduleFilter.toLowerCase()) {
       return false;
     }
@@ -131,7 +131,7 @@ function printDryRun(
   for (const job of jobs) {
     const label = job.label ? ` (${job.label})` : '';
     const merged = mergeArgChain(envArgs, job.args, overrides);
-    console.log(`- ${job.args.moduleName}${label} -> acción ${merged.action ?? job.args.action}`);
+    console.log(`- ${job.args.module}${label} -> acción ${merged.action ?? job.args.action}`);
   }
 }
 
@@ -148,7 +148,7 @@ function printLaunchResult(
           launched: started.map(({ ctxId, job, prefix }) => ({
             ctxId,
             label: job.label,
-            moduleName: job.args.moduleName,
+            module: job.args.module,
             action: job.args.action,
             prefix,
           })),
@@ -168,7 +168,7 @@ function printLaunchResult(
   console.log(`Se lanzaron ${started.length} trabajo(s) definidos en ${configPath}:`);
   for (const { ctxId, job, prefix } of started) {
     const label = job.label ? ` (${job.label})` : '';
-    console.log(`- ctx=${ctxId} module=${job.args.moduleName}${label} action=${job.args.action} -> ${prefix}`);
+    console.log(`- ctx=${ctxId} module=${job.args.module}${label} action=${job.args.action} -> ${prefix}`);
   }
 }
 
@@ -179,8 +179,8 @@ export function registerRunConfigCommand(program: Command, context: CommandConte
     .argument('[path]', 'Ruta al archivo de configuración (por defecto orchestrator.yaml).')
     .option('-c, --config <path>', 'Ruta al archivo de configuración a utilizar.')
     .option('-a, --action <name>', 'Sobrescribe la acción para todos los trabajos.')
-    .option('--start-at <iso>', 'Sobrescribe la fecha de inicio en formato ISO 8601.')
-    .option('--end-at <iso>', 'Sobrescribe la fecha de fin en formato ISO 8601.')
+    .option('--start <iso>', 'Sobrescribe la fecha de inicio en formato ISO 8601.')
+    .option('--end <iso>', 'Sobrescribe la fecha de fin en formato ISO 8601.')
     .option('--persist-cookies [value]', 'Sobrescribe el flag de persistencia de cookies (true/false).')
     .option('--persist-indexeddb [value]', 'Sobrescribe el flag de persistencia de IndexedDB (true/false).')
     .option('--storage-state <path>', 'Sobrescribe la ruta del storage state.')
@@ -211,7 +211,7 @@ export function registerRunConfigCommand(program: Command, context: CommandConte
         const merged = mergeArgChain(envArgs, job.args, overrides);
         const moduleArgs = normalizeModuleArgs(merged);
         const ref = context.manager.startRunner(moduleArgs);
-        const prefix = deriveOutPrefix({ moduleName: moduleArgs.moduleName, action: moduleArgs.action });
+        const prefix = deriveOutPrefix({ module: moduleArgs.module, action: moduleArgs.action });
         started.push({ ctxId: ref.ctxId, job: { ...job, args: moduleArgs }, prefix });
       }
 

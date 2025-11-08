@@ -70,7 +70,7 @@ function ensureLogging(manager: ProcessManagerLike): void {
           {
             event: 'started',
             ctxId,
-            moduleName: ref.moduleName,
+            module: ref.module,
             action: ref.action,
             pid: ref.child?.pid ?? null,
           },
@@ -82,7 +82,7 @@ function ensureLogging(manager: ProcessManagerLike): void {
     }
 
     console.log(
-      `[orchestrator] started ctx=${ctxId} module=${ref.moduleName} action=${ref.action} pid=${ref.child?.pid ?? 'n/a'}`,
+      `[orchestrator] started ctx=${ctxId} module=${ref.module} action=${ref.action} pid=${ref.child?.pid ?? 'n/a'}`,
     );
   });
 
@@ -93,7 +93,7 @@ function ensureLogging(manager: ProcessManagerLike): void {
           {
             event: 'ready',
             ctxId,
-            moduleName: ref.moduleName,
+            module: ref.module,
             action: ref.action,
           },
           null,
@@ -102,7 +102,7 @@ function ensureLogging(manager: ProcessManagerLike): void {
       );
       return;
     }
-    console.log(`[orchestrator] ready ctx=${ctxId} module=${ref.moduleName} action=${ref.action}`);
+    console.log(`[orchestrator] ready ctx=${ctxId} module=${ref.module} action=${ref.action}`);
   });
 
   manager.on('message', ({ ctxId, message }) => {
@@ -142,7 +142,7 @@ function ensureLogging(manager: ProcessManagerLike): void {
           {
             event: 'stopped',
             ctxId,
-            moduleName: ref.moduleName,
+            module: ref.module,
             action: ref.action,
             exit,
           },
@@ -153,7 +153,7 @@ function ensureLogging(manager: ProcessManagerLike): void {
       return;
     }
     console.log(
-      `[orchestrator] stopped ctx=${ctxId} module=${ref.moduleName} action=${ref.action} exit=${exit.code ?? 'null'}/${exit.signal ?? 'null'}`,
+      `[orchestrator] stopped ctx=${ctxId} module=${ref.module} action=${ref.action} exit=${exit.code ?? 'null'}/${exit.signal ?? 'null'}`,
     );
   });
 
@@ -164,7 +164,7 @@ function ensureLogging(manager: ProcessManagerLike): void {
           {
             event: 'failed',
             ctxId,
-            moduleName: ref.moduleName,
+            module: ref.module,
             action: ref.action,
             exit,
           },
@@ -175,7 +175,7 @@ function ensureLogging(manager: ProcessManagerLike): void {
       return;
     }
     console.error(
-      `[orchestrator] failed ctx=${ctxId} module=${ref.moduleName} action=${ref.action} exit=${exit.code ?? 'null'}/${exit.signal ?? 'null'}`,
+      `[orchestrator] failed ctx=${ctxId} module=${ref.module} action=${ref.action} exit=${exit.code ?? 'null'}/${exit.signal ?? 'null'}`,
     );
   });
 
@@ -204,7 +204,7 @@ function ensureLogging(manager: ProcessManagerLike): void {
           {
             event: 'heartbeat-timeout',
             ctxId,
-            moduleName: ref.moduleName,
+            module: ref.module,
             action: ref.action,
           },
           null,
@@ -214,7 +214,7 @@ function ensureLogging(manager: ProcessManagerLike): void {
       return;
     }
     console.error(
-      `[orchestrator] heartbeat-timeout ctx=${ctxId} module=${ref.moduleName} action=${ref.action}`,
+      `[orchestrator] heartbeat-timeout ctx=${ctxId} module=${ref.module} action=${ref.action}`,
     );
   });
 }

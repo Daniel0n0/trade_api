@@ -1,7 +1,7 @@
 import process from 'node:process';
 
 import { runSubBrowser } from './subbrowser-runner.js';
-import type { ModuleArgs } from './messages.js';
+import { assertModuleArgs, type ModuleArgs } from './messages.js';
 
 function parseArgs(argv: readonly string[]): ModuleArgs {
   const payload = argv[2];
@@ -18,22 +18,11 @@ function parseArgs(argv: readonly string[]): ModuleArgs {
     );
   }
 
-  const args = parsed as Partial<ModuleArgs>;
-  if (!args || typeof args.moduleName !== 'string' || typeof args.action !== 'string') {
-    throw new Error('Serialized arguments must include "moduleName" and "action".');
-  }
+  assertModuleArgs(parsed);
 
-  return {
-    moduleName: args.moduleName,
-    action: args.action,
-    startAt: args.startAt,
-    endAt: args.endAt,
-    persistCookies: args.persistCookies,
-    persistIndexedDb: args.persistIndexedDb,
-    storageStatePath: args.storageStatePath,
-    indexedDbSeed: args.indexedDbSeed,
-    indexedDbProfile: args.indexedDbProfile,
-  } satisfies ModuleArgs;
+  const args = parsed satisfies ModuleArgs;
+
+  return args;
 }
 
 const argv = process.argv;

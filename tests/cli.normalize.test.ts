@@ -33,7 +33,7 @@ test('coerceISO acepta cadenas y números', () => {
 
 test('deriveOutPrefix compone un nombre legible', () => {
   const prefix = deriveOutPrefix({
-    moduleName: 'quotes-stream',
+    module: 'quotes-stream',
     action: 'now',
     symbols: ['AAPL', 'MSFT'],
     timestamp: '2024-05-01T12:34:56Z',
@@ -47,28 +47,28 @@ test('mapEnvFallbacks usa variables de entorno cuando faltan valores', () => {
     TRADE_API_ACTION: 'stream',
   } as NodeJS.ProcessEnv;
   const base: Partial<ModuleArgsInput> = {};
-  const mapped = mapEnvFallbacks(base, { moduleName: 'TRADE_API_MODULE', action: 'TRADE_API_ACTION' }, env);
-  assert.deepEqual(mapped, { action: 'stream', moduleName: 'alpha' });
+  const mapped = mapEnvFallbacks(base, { module: 'TRADE_API_MODULE', action: 'TRADE_API_ACTION' }, env);
+  assert.deepEqual(mapped, { action: 'stream', module: 'alpha' });
 });
 
 test('normalizeModuleArgs convierte banderas y fechas', () => {
   const normalized = normalizeModuleArgs({
-    moduleName: 'quotes',
+    module: 'quotes',
     action: 'stream',
-    startAt: '2024-01-01T00:00:00Z',
+    start: '2024-01-01T00:00:00Z',
     persistCookies: 'false',
   });
-  assert.strictEqual(normalized.moduleName, 'quotes');
+  assert.strictEqual(normalized.module, 'quotes');
   assert.strictEqual(normalized.action, 'stream');
-  assert.strictEqual(normalized.startAt, '2024-01-01T00:00:00Z');
+  assert.strictEqual(normalized.start, '2024-01-01T00:00:00Z');
   assert.strictEqual(normalized.persistCookies, false);
 });
 
 test('mergeArgChain aplica precedencia de derecha a izquierda', () => {
   const defaults = { action: 'now' } satisfies Partial<ModuleArgsInput>;
   const env = { action: 'bars' } satisfies Partial<ModuleArgsInput>;
-  const config = { action: 'stream', moduleName: 'alpha' } satisfies Partial<ModuleArgsInput>;
-  const cli = { moduleName: 'beta' } satisfies Partial<ModuleArgsInput>;
+  const config = { action: 'stream', module: 'alpha' } satisfies Partial<ModuleArgsInput>;
+  const cli = { module: 'beta' } satisfies Partial<ModuleArgsInput>;
   const merged = mergeArgChain(defaults, env, config, cli);
-  assert.deepEqual(merged, { action: 'stream', moduleName: 'beta' });
+  assert.deepEqual(merged, { action: 'stream', module: 'beta' });
 });
