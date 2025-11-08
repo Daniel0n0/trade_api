@@ -9,6 +9,7 @@ import {
   normalizeExpiration,
   normaliseOptionType,
   optionRowFromRecord,
+  isValidOptionRow,
 } from '../src/modules/options/interceptor.js';
 
 const samplePayload = {
@@ -102,6 +103,28 @@ test('optionRowFromRecord respeta horizonDays y símbolos', () => {
     primaryExpiration: undefined,
   });
   assert.strictEqual(rejectedBySymbol, null);
+});
+
+test('isValidOptionRow rechaza strikes no positivos y valores negativos', () => {
+  const [record] = collectOptionRecords(samplePayload);
+  const now = DateTime.fromISO('2024-01-10T15:00:00Z');
+  const baseRow = optionRowFromRecord(record, {
+    url: 'https://api.robinhood.com/options/',
+    now,
+    allowedSymbols: new Set(['SPY']),
+    horizonDays: 30,
+    primarySymbol: 'SPY',
+    primaryExpiration: undefined,
+  });
+
+  assert.ok(baseRow);
+  assert.ok(isValidOptionRow(baseRow!));
+
+  const zeroStrike = { ...baseRow!, strike: 0 };
+  assert.strictEqual(isValidOptionRow(zeroStrike), false);
+
+  const negativeBid = { ...baseRow!, bid: -1 };
+  assert.strictEqual(isValidOptionRow(negativeBid), false);
 });
 
 test('computeDte devuelve días decimales', () => {

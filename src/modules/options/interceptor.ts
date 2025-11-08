@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+
 import type { BrowserContext, Page, Response } from 'playwright';
 import { DateTime } from 'luxon';
 
@@ -80,6 +82,101 @@ const FLATTEN_KEYS = [
 ];
 
 const OPTION_TYPE_TOKENS = new Set(['call', 'put', 'c', 'p']);
+
+const POSITIVE_FIELDS: (keyof OptionCsvRow)[] = [
+  'bid',
+  'ask',
+  'mark',
+  'last',
+  'volume',
+  'openInterest',
+  'impliedVolatility',
+  'underlyingPrice',
+];
+
+const STRICT_POSITIVE_FIELDS: (keyof OptionCsvRow)[] = ['strike'];
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim().length > 0;
+
+const isValidOptionRow = (row: OptionCsvRow): boolean => {
+  if (!isFiniteNumber(row.t) || row.t <= 0) {
+    return false;
+  }
+  if (!isNonEmptyString(row.chainSymbol)) {
+    return false;
+  }
+  if (!isNonEmptyString(row.expiration)) {
+    return false;
+  }
+  if (row.type !== 'CALL' && row.type !== 'PUT') {
+    return false;
+  }
+
+  for (const field of STRICT_POSITIVE_FIELDS) {
+    const value = row[field];
+    if (!isFiniteNumber(value) || value <= 0) {
+      return false;
+    }
+  }
+
+  for (const field of POSITIVE_FIELDS) {
+    const value = row[field];
+    if (value === undefined) {
+      continue;
+    }
+    if (!isFiniteNumber(value) || value < 0) {
+      return false;
+    }
+  }
+
+  if (row.dte !== undefined && (!isFiniteNumber(row.dte) || row.dte < 0)) {
+    return false;
+  }
+
+  return true;
+};
+
+const readLastTimestamp = (filePath: string, headerLine: string): number | undefined => {
+  if (!fs.existsSync(filePath)) {
+    return undefined;
+  }
+  try {
+    const stats = fs.statSync(filePath);
+    if (stats.size === 0) {
+      return undefined;
+    }
+    const fd = fs.openSync(filePath, 'r');
+    try {
+      const chunkSize = Math.min(64_000, stats.size);
+      const buffer = Buffer.alloc(chunkSize);
+      const start = Math.max(stats.size - chunkSize, 0);
+      const { bytesRead } = fs.readSync(fd, buffer, 0, chunkSize, start);
+      const content = buffer.slice(0, bytesRead).toString('utf8');
+      const lines = content.trim().split(/\r?\n/);
+      for (let i = lines.length - 1; i >= 0; i -= 1) {
+        const line = lines[i]?.trim();
+        if (!line || line === headerLine) {
+          continue;
+        }
+        const commaIndex = line.indexOf(',');
+        const firstToken = commaIndex === -1 ? line : line.slice(0, commaIndex);
+        const parsed = Number.parseFloat(firstToken);
+        if (Number.isFinite(parsed)) {
+          return parsed;
+        }
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (error) {
+    console.warn('[options-interceptor] No se pudo leer último timestamp:', error);
+  }
+  return undefined;
+};
 
 const sanitizeExpirationSegment = (expiration: string | undefined): string => {
   if (!expiration) {
@@ -365,13 +462,20 @@ export type OptionsRecorderOptions = {
   readonly updateInfo?: (info: Record<string, unknown>) => void;
 };
 
+type OptionsWriterEntry = {
+  path: string;
+  write: (line: string) => void;
+  stream: NodeJS.WritableStream;
+  lastTimestamp?: number;
+};
+
 export function installOptionsResponseRecorder(options: OptionsRecorderOptions): OptionsRecorderHandle {
   const { page, logPrefix, symbols = [], optionsDate, horizonDays, onPrimaryExpirationChange, updateInfo } = options;
   const context: BrowserContext = page.context();
   const allowedSymbols = new Set(symbols.map((symbol) => symbol.toUpperCase()));
   const primarySymbol = symbols[0];
   let primaryExpiration = normalizeExpiration(optionsDate);
-  const writerMap = new Map<string, { path: string; write: (line: string) => void; stream: NodeJS.WritableStream }>();
+  const writerMap = new Map<string, OptionsWriterEntry>();
   const pending = new Set<Promise<void>>();
 
   updateInfo?.({
@@ -391,7 +495,12 @@ export function installOptionsResponseRecorder(options: OptionsRecorderOptions):
       const write = (line: string) => {
         stream.write(`${line}\n`);
       };
-      entry = { path: targetPath, write, stream };
+      entry = {
+        path: targetPath,
+        write,
+        stream,
+        lastTimestamp: readLastTimestamp(targetPath, OPTION_HEADER_TEXT),
+      };
       writerMap.set(key, entry);
     }
     return entry;
@@ -446,11 +555,13 @@ export function installOptionsResponseRecorder(options: OptionsRecorderOptions):
       rows.push(row);
     }
 
-    if (rows.length === 0) {
+    const validRows = rows.filter(isValidOptionRow);
+
+    if (validRows.length === 0) {
       return;
     }
 
-    const expirations = rows
+    const expirations = validRows
       .map((row) => row.expiration)
       .filter((value): value is string => typeof value === 'string');
     if (expirations.length > 0) {
@@ -458,16 +569,23 @@ export function installOptionsResponseRecorder(options: OptionsRecorderOptions):
       updatePrimaryExpiration(sorted[0]);
     }
 
-    for (const row of rows) {
+    for (const row of validRows) {
       const targetExpiration = row.expiration ?? primaryExpiration ?? 'undated';
       const targetSymbol = (row.chainSymbol ?? primarySymbol ?? 'OPTIONS').toUpperCase();
       const writer = resolveWriter(targetSymbol, targetExpiration);
+      const timestamp = typeof row.t === 'number' ? row.t : undefined;
+      if (timestamp !== undefined && writer.lastTimestamp !== undefined && timestamp < writer.lastTimestamp) {
+        continue;
+      }
+      if (timestamp !== undefined) {
+        writer.lastTimestamp = timestamp;
+      }
       writer.write(toCsvLine(OPTION_HEADER, row));
     }
 
     updateInfo?.({
       optionsLastUrl: response.url(),
-      optionsLastCount: rows.length,
+      optionsLastCount: validRows.length,
       optionsPrimaryExpiration: primaryExpiration,
       optionsLastAt: now.toISO(),
     });
@@ -510,4 +628,5 @@ export {
   normalizeExpiration,
   optionRowFromRecord,
   normaliseOptionType,
+  isValidOptionRow,
 };

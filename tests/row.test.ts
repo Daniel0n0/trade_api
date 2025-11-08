@@ -55,6 +55,32 @@ test('buildCandleCsvRow honours headers order', () => {
   assert.strictEqual(line, '1700000000000,100,110,95,105,1000,AAPL{=1m}');
 });
 
+test('buildCandleCsvRow rechaza velas con volumen negativo o precios fuera de rango', () => {
+  const negativeVolume = BaseEvent.parse({
+    eventType: 'Candle',
+    eventSymbol: 'AAPL{=1m}',
+    time: 1_700_000_000,
+    open: 100,
+    high: 110,
+    low: 95,
+    close: 105,
+    volume: -1,
+  });
+  assert.strictEqual(buildCandleCsvRow(negativeVolume), null);
+
+  const outOfRange = BaseEvent.parse({
+    eventType: 'Candle',
+    eventSymbol: 'AAPL{=1m}',
+    time: 1_700_000_000,
+    open: 120,
+    high: 110,
+    low: 95,
+    close: 105,
+    volume: 1_000,
+  });
+  assert.strictEqual(buildCandleCsvRow(outOfRange), null);
+});
+
 test('buildQuoteCsvRow uses quote timestamps in milliseconds', () => {
   const event = BaseEvent.parse({
     eventType: 'Quote',
