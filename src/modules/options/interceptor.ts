@@ -178,11 +178,16 @@ const readLastTimestamp = (filePath: string, headerLine: string): number | undef
   return undefined;
 };
 
-const sanitizeExpirationSegment = (expiration: string | undefined): string => {
+const formatExpirationForFilename = (expiration: string | undefined): string => {
   if (!expiration) {
     return 'undated';
   }
   return expiration.replace(/[^0-9a-zA-Z-]+/g, '-');
+};
+
+const buildOptionsFilename = (logPrefix: string, expiration: string | undefined): string => {
+  const sanitized = formatExpirationForFilename(expiration);
+  return `${logPrefix}-options-${sanitized}.csv`;
 };
 
 const normalizeExpiration = (raw: string | undefined): string | undefined => {
@@ -485,12 +490,12 @@ export function installOptionsResponseRecorder(options: OptionsRecorderOptions):
   });
 
   const resolveWriter = (chainSymbol: string, expiration: string) => {
-    const normalizedExpiration = sanitizeExpirationSegment(expiration);
+    const normalizedExpiration = formatExpirationForFilename(expiration);
     const symbolDir = chainSymbol || primarySymbol || 'OPTIONS';
     const key = `${symbolDir}__${normalizedExpiration}`;
     let entry = writerMap.get(key);
     if (!entry) {
-      const targetPath = dataPath(symbolDir, `${logPrefix}-options-${normalizedExpiration}.csv`);
+      const targetPath = dataPath(symbolDir, buildOptionsFilename(logPrefix, expiration));
       const stream = getCsvWriter(targetPath, OPTION_HEADER_TEXT);
       const write = (line: string) => {
         stream.write(`${line}\n`);
@@ -622,9 +627,11 @@ export function installOptionsResponseRecorder(options: OptionsRecorderOptions):
 }
 
 export {
+  buildOptionsFilename,
   computeDte,
   collectOptionRecords,
   deriveChainSymbol,
+  formatExpirationForFilename,
   normalizeExpiration,
   optionRowFromRecord,
   normaliseOptionType,

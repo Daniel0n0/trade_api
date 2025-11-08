@@ -66,6 +66,12 @@ Los accesos directos declarados en `package.json` (`npm run sub:spy-5m-1m:now`,
 `npm run sub:spy-5m-1m:stream`, `npm run sub:spy-5m-1m:bars`, etc.) delegan en el mismo comando para
 alternar acciones sin repetir argumentos.
 
+#### Captura de expiraciones en opciones
+
+Para instrucciones paso a paso sobre cómo cambiar expiraciones, monitorear las peticiones interceptadas
+y validar los archivos generados para SPY/SPX (incluyendo Legend), consulta
+[`docs/options/expirations.md`](docs/options/expirations.md).
+
 ### Environment flags
 
 Runtime behaviour can be adjusted with environment variables stored in `.env` and overridden in
