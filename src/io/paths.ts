@@ -1,5 +1,9 @@
-import fs from 'node:fs';
 import path from 'node:path';
+import {
+  ensureDirectoryForFileSync,
+  ensureDirectorySync,
+  formatStrikeForFilename,
+} from './dir.js';
 
 const DEFAULT_SYMBOL = 'GENERAL';
 
@@ -29,9 +33,7 @@ const currentDateFolder = (): string => {
 
 export function ensureSymbolDateDir(symbol?: string): string {
   const base = path.join(process.cwd(), 'data', sanitizeSegment(symbol), currentDateFolder());
-  if (!fs.existsSync(base)) {
-    fs.mkdirSync(base, { recursive: true });
-  }
+  ensureDirectorySync(base);
   return base;
 }
 
@@ -41,9 +43,15 @@ export function dataPath(symbol: string | undefined, ...segments: string[]): str
     return baseDir;
   }
   const target = path.join(baseDir, ...segments);
-  const dir = path.dirname(target);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+  ensureDirectoryForFileSync(target);
   return target;
+}
+
+export function strikeDataPath(
+  symbol: string | undefined,
+  strike: number | string | null | undefined,
+  ...segments: string[]
+): string {
+  const strikeSegment = formatStrikeForFilename(strike);
+  return dataPath(symbol, strikeSegment, ...segments);
 }

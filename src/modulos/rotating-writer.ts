@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
+import { ensureDirectoryForFileSync } from '../io/dir.js';
 
 export type RotatePolicy = {
   readonly maxBytes?: number;
@@ -29,13 +30,6 @@ export class RotatingWriter {
     this.header = header;
   }
 
-  private ensureDir(filePath: string) {
-    const dir = path.dirname(filePath);
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-  }
-
   private tsName() {
     const date = new Date();
     const pad = (value: number) => String(value).padStart(2, '0');
@@ -53,7 +47,7 @@ export class RotatingWriter {
     const ext = path.extname(this.basePath);
     const root = ext ? this.basePath.slice(0, -ext.length) : this.basePath;
     const file = `${root}-${this.tsName()}${ext}`;
-    this.ensureDir(file);
+    ensureDirectoryForFileSync(file);
     this.stream = fs.createWriteStream(file, { flags: 'a' });
     this.startTs = Date.now();
     this.bytes = 0;

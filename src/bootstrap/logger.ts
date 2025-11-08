@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { ensureDirectorySync } from '../io/dir.js';
 
 export type ProcessLogger = {
   readonly logPath: string;
@@ -55,7 +56,7 @@ function serialiseLog(level: string, message: string, metadata: readonly unknown
 export function createProcessLogger(options: ProcessLoggerOptions = {}): ProcessLogger {
   const { name = 'process', directory = path.join(process.cwd(), 'logs') } = options;
 
-  fs.mkdirSync(directory, { recursive: true });
+  ensureDirectorySync(directory);
 
   const timestamp = formatTimestamp().replace(/[:.]/g, '-');
   const logPath = path.join(directory, `${name}-${timestamp}.log`);

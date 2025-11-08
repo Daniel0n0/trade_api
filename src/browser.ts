@@ -1,9 +1,9 @@
-import { existsSync, mkdirSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { chromium, type BrowserContext } from 'playwright';
 import { ENV } from './utils/env.js';
 import { normaliseFramePayload } from './utils/payload.js';
+import { ensureDirectoryForFileSync, ensureDirectorySync } from './io/dir.js';
 
 // Añade tipos oficiales si quieres máxima precisión
 type WSFramePayload = { readonly payloadData?: unknown };
@@ -85,19 +85,6 @@ export async function launchPersistentBrowser(
   return launchReusedContext(options, storageStatePath, headless);
 }
 
-function ensureProfileDirectory(path: string): void {
-  if (!existsSync(path)) {
-    mkdirSync(path, { recursive: true });
-  }
-}
-
-function ensureDirectoryForFile(filePath: string): void {
-  const directory = dirname(filePath);
-  if (directory && directory !== '.') {
-    ensureProfileDirectory(directory);
-  }
-}
-
 function defaultStorageStatePath(): string {
   return join(process.cwd(), 'state', 'robinhood.json');
 }
@@ -117,7 +104,7 @@ async function cleanupProfile(path: string): Promise<void> {
 }
 
 async function launchBootstrapContext(options: LaunchOptions, headless: boolean): Promise<BrowserResources> {
-  ensureProfileDirectory(options.userDataDir);
+  ensureDirectorySync(options.userDataDir);
 
   // Primera vez (interactiva):
   const browser = await chromium.launch({
@@ -224,7 +211,7 @@ async function launchBootstrapContext(options: LaunchOptions, headless: boolean)
   // -> loguéate manualmente
   await page.waitForURL(/robinhood\.com\/(home|account|legend)/, { timeout: 120_000 });
   const storageStatePath = defaultStorageStatePath();
-  ensureDirectoryForFile(storageStatePath);
+  ensureDirectoryForFileSync(storageStatePath);
   await context.storageState({ path: storageStatePath });
 
   const enableNetworkBlocking = configureNetworkBlocking(context, options.blockTrackingDomains);
@@ -243,7 +230,7 @@ async function launchBootstrapContext(options: LaunchOptions, headless: boolean)
     close: async () => {
       if (options.tracingEnabled) {
         const tracePath = defaultTracePath();
-        ensureDirectoryForFile(tracePath);
+        ensureDirectoryForFileSync(tracePath);
         await context.tracing.stop({ path: tracePath });
       }
       await context.close();
@@ -288,7 +275,7 @@ async function launchReusedContext(
     close: async () => {
       if (options.tracingEnabled) {
         const tracePath = defaultTracePath();
-        ensureDirectoryForFile(tracePath);
+        ensureDirectoryForFileSync(tracePath);
         await context.tracing.stop({ path: tracePath });
       }
       await context.close();
@@ -298,7 +285,7 @@ async function launchReusedContext(
 }
 
 async function launchPersistentContext(options: LaunchOptions, headless: boolean): Promise<BrowserResources> {
-  ensureProfileDirectory(options.userDataDir);
+  ensureDirectorySync(options.userDataDir);
 
   const context = await chromium.launchPersistentContext(options.userDataDir, {
     headless,
@@ -326,7 +313,7 @@ async function launchPersistentContext(options: LaunchOptions, headless: boolean
     close: async () => {
       if (options.tracingEnabled) {
         const tracePath = defaultTracePath();
-        ensureDirectoryForFile(tracePath);
+        ensureDirectoryForFileSync(tracePath);
         await context.tracing.stop({ path: tracePath });
       }
       await context.close();
