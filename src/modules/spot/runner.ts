@@ -163,14 +163,11 @@ export async function runSpotRunner(initialArgs: ModuleArgs): Promise<void> {
   };
 
   const resolveLaunchOverrides = (args: ModuleArgs): PersistentLaunchOverrides => {
-    const overrides: PersistentLaunchOverrides = { mode: 'reuse' };
-    if (typeof args.headless === 'boolean') {
-      overrides.headless = args.headless;
-    }
-    if (args.storageStatePath) {
-      overrides.storageStatePath = args.storageStatePath;
-    }
-    return overrides;
+    return {
+      mode: 'reuse',
+      ...(typeof args.headless === 'boolean' ? { headless: args.headless } : {}),
+      ...(args.storageStatePath ? { storageStatePath: args.storageStatePath } : {}),
+    };
   };
 
   const start = async (messageArgs: ModuleArgs, payload?: RunnerStartPayload) => {

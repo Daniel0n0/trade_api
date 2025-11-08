@@ -60,23 +60,29 @@ export type LaunchMode = 'bootstrap' | 'reuse' | 'persistent';
 export interface PersistentLaunchOverrides extends Partial<LaunchOptions> {
   readonly mode?: LaunchMode;
   readonly storageStatePath?: string;
+  readonly headless?: boolean;
 }
 
 export async function launchPersistentBrowser(
   overrides: PersistentLaunchOverrides = {},
 ): Promise<BrowserResources> {
-  const { mode = 'bootstrap', storageStatePath = defaultStorageStatePath(), ...rest } = overrides;
+  const {
+    mode = 'bootstrap',
+    storageStatePath = defaultStorageStatePath(),
+    headless = HEADLESS,
+    ...rest
+  } = overrides;
   const options: LaunchOptions = { ...defaultLaunchOptions, ...rest };
 
   if (mode === 'bootstrap') {
-    return launchBootstrapContext(options);
+    return launchBootstrapContext(options, headless);
   }
 
   if (mode === 'persistent') {
-    return launchPersistentContext(options);
+    return launchPersistentContext(options, headless);
   }
 
-  return launchReusedContext(options, storageStatePath);
+  return launchReusedContext(options, storageStatePath, headless);
 }
 
 function ensureProfileDirectory(path: string): void {
@@ -110,12 +116,12 @@ async function cleanupProfile(path: string): Promise<void> {
   }
 }
 
-async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserResources> {
+async function launchBootstrapContext(options: LaunchOptions, headless: boolean): Promise<BrowserResources> {
   ensureProfileDirectory(options.userDataDir);
 
   // Primera vez (interactiva):
   const browser = await chromium.launch({
-    headless: HEADLESS,
+    headless,
     slowMo: options.slowMo,
     channel: CHANNEL,
     args: BROWSER_ARGS,
@@ -249,9 +255,13 @@ async function launchBootstrapContext(options: LaunchOptions): Promise<BrowserRe
   };
 }
 
-async function launchReusedContext(options: LaunchOptions, storageStatePath: string): Promise<BrowserResources> {
+async function launchReusedContext(
+  options: LaunchOptions,
+  storageStatePath: string,
+  headless: boolean,
+): Promise<BrowserResources> {
   const browser = await chromium.launch({
-    headless: HEADLESS,
+    headless,
     slowMo: options.slowMo,
     channel: CHANNEL,
     args: BROWSER_ARGS,
@@ -287,11 +297,11 @@ async function launchReusedContext(options: LaunchOptions, storageStatePath: str
   };
 }
 
-async function launchPersistentContext(options: LaunchOptions): Promise<BrowserResources> {
+async function launchPersistentContext(options: LaunchOptions, headless: boolean): Promise<BrowserResources> {
   ensureProfileDirectory(options.userDataDir);
 
   const context = await chromium.launchPersistentContext(options.userDataDir, {
-    headless: HEADLESS,
+    headless,
     slowMo: options.slowMo,
     viewport: null,
     channel: CHANNEL,
