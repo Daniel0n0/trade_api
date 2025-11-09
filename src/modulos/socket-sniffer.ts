@@ -293,6 +293,7 @@ type LogEntry = Serializable & {
 };
 
 const LEGEND_WS_PATTERN = /marketdata\/streaming\/legend\//i;
+const ORDERS_WS_PATTERN = /marketdata\/streaming\/orders\//i;
 
 type LegendMessageKind = 'marketdata' | 'options' | 'news' | 'ignore' | 'unknown';
 
@@ -1229,10 +1230,20 @@ export async function runSocketSniffer(
   const pageWithSniffer = page as PageWithSnifferBinding;
   const ctx = page.context();
 
+  const isLegend = (url: string): boolean => LEGEND_WS_PATTERN.test(url);
+  const isOrders = (url: string): boolean => ORDERS_WS_PATTERN.test(url);
+
   // Handler común
   const onWs = (ws: PlaywrightWebSocket) => {
     const url = ws.url();
-    console.log('[socket-sniffer] WS detectado:', url);
+    if (!isLegend(url)) {
+      if (isOrders(url)) {
+        console.log('[socket-sniffer] WS órdenes ignorado:', url);
+      }
+      return;
+    }
+
+    console.log('[socket-sniffer] WS legend detectado:', url);
 
     // Acepta cualquier wss de robinhood; filtramos por contenido más adelante
     if (!/^wss:\/\/.*robinhood\.com/i.test(url)) return;
@@ -1281,10 +1292,12 @@ export async function runSocketSniffer(
   };
 
   // Escucha en page Y en context (hay sockets que no emite `page`)
-  page.on('websocket', onWs);
-  ctx.on('page', (p: Page) => {
+  const subscribeToLegendWebSockets = (p: Page) => {
     p.on('websocket', onWs);
-  });
+  };
+
+  subscribeToLegendWebSockets(page);
+  ctx.on('page', subscribeToLegendWebSockets);
 
 
   const hookScriptString = `(${buildHookScript.toString()})({
