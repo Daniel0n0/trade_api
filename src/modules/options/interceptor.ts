@@ -614,7 +614,22 @@ export function installOptionsResponseRecorder(options: OptionsRecorderOptions):
       }
       payload = JSON.parse(text);
     } catch (error) {
-      console.warn('[options-interceptor] No se pudo leer cuerpo JSON:', error);
+      const resourceType = (() => {
+        try {
+          return response.request().resourceType();
+        } catch (_requestError) {
+          return undefined;
+        }
+      })();
+
+      console.warn('[options-interceptor] No se pudo leer cuerpo JSON', {
+        error,
+        url: response.url(),
+        status: response.status(),
+        statusText: response.statusText(),
+        resourceType,
+        headers: response.headers(),
+      });
       return;
     }
 

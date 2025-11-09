@@ -35,25 +35,34 @@ test('resolveOptionsUrl usa mapeos de módulo para SPY y SPX', () => {
   const spySymbols = resolveOptionsSymbols(baseArgs);
   const spxSymbols = resolveOptionsSymbols(spxArgs);
 
-  assert.strictEqual(resolveOptionsUrl(baseArgs, undefined, spySymbols), 'https://robinhood.com/options/SPY');
-  assert.strictEqual(resolveOptionsUrl(spxArgs, undefined, spxSymbols), 'https://robinhood.com/options/SPX');
+  assert.strictEqual(
+    resolveOptionsUrl(baseArgs, undefined, spySymbols),
+    'https://robinhood.com/options/chains/SPY',
+  );
+  assert.strictEqual(
+    resolveOptionsUrl(spxArgs, undefined, spxSymbols),
+    'https://robinhood.com/options/chains/SPX',
+  );
 });
 
 test('resolveOptionsUrl prioriza payload.url y urlMode', () => {
   const args: ModuleArgs = { module: 'options', action: 'now', urlMode: 'symbol' };
   const symbols = resolveOptionsSymbols(args);
-  const overrideUrlPayload: RunnerStartPayload = { url: 'https://robinhood.com/options/QQQ' };
+  const overrideUrlPayload: RunnerStartPayload = { url: 'https://robinhood.com/options/chains/QQQ' };
   const overrideSymbolsPayload: RunnerStartPayload = { symbols: ['AAPL'] };
 
-  assert.strictEqual(resolveOptionsUrl(args, overrideUrlPayload, symbols), 'https://robinhood.com/options/QQQ');
+  assert.strictEqual(
+    resolveOptionsUrl(args, overrideUrlPayload, symbols),
+    'https://robinhood.com/options/chains/QQQ',
+  );
 
   const symbolBasedUrl = resolveOptionsUrl(args, overrideSymbolsPayload, ['AAPL']);
-  assert.strictEqual(symbolBasedUrl, 'https://robinhood.com/options/AAPL');
+  assert.strictEqual(symbolBasedUrl, 'https://robinhood.com/options/chains/AAPL');
 
   const moduleArgs: ModuleArgs = { module: 'spy-options-chain', action: 'now', urlMode: 'module' };
   const moduleSymbols = resolveOptionsSymbols(moduleArgs);
   assert.strictEqual(
     resolveOptionsUrl(moduleArgs, undefined, moduleSymbols),
-    'https://robinhood.com/options/SPY',
+    'https://robinhood.com/options/chains/SPY',
   );
 });
