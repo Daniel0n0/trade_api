@@ -33,7 +33,7 @@ export function attachPageDebugObservers(page: Page): void {
       const text = message.text();
 
       if (
-        /honeycomb|opentelemetry|woff2|COEP|NotSameOrigin|status of 403|404/i.test(
+        /honeycomb|opentelemetry|woff2|COEP|NotSameOrigin|status of 403|404|Content Security Policy|CSP|singular|linkedin|doubleclick|googletag|refused to (?:execute inline script|load the script|load the image)/i.test(
           text,
         ) ||
         text.toLowerCase().includes('updatecandles failed')
