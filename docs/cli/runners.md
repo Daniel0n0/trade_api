@@ -99,14 +99,14 @@ npx trade-api start options-generic now \
   --options-date 2024-08-16 \
   --options-horizon 2 \
   --url-mode symbol \
-  --url-code 00000000-0000-0000-0000-000000000102
+  --url-code <LEGEND_UUID>
 ```
 
 - Define siempre `--symbols` para limitar el sniffer a los contratos deseados.
 - Los CSV se generan en `data/options/<fecha>/<SIMBOLO>/options/*-options-*.csv` y los eventos
   Legend en `*-options.jsonl`.
-- Ajusta `--url-code` cuando necesites otro layout personalizado (por ejemplo,
-  una lista de vigilancia propia).
+- Ajusta `--url-code` con el UUID real del layout Legend que deseas hidratar. Puedes capturarlo
+  desde la URL del navegador y almacenarlo con `TRADE_API_URL_CODE_OPTIONS_GENERIC`.
 
 ## Runner `stocks-generic-chart`
 
@@ -118,20 +118,22 @@ npx trade-api start stocks-generic-chart now \
   --symbols NVDA \
   --start 2024-05-20T13:30:00Z \
   --end 2024-05-20T20:00:00Z \
-  --url-code 00000000-0000-0000-0000-000000000101
+  --url-code <LEGEND_UUID>
 ```
 
 - Los archivos se almacenan en `data/stock/<fecha>/<SIMBOLO>/bars/` con CSV rotados por
   timeframe (`1min`, `5min`, etc.) y los *logs* en `logs/stocks-generic-chart-*.log`.
-- Cambia `--url-code` para reutilizar tus propios layouts Legend guardados.
+- Cambia `--url-code` para reutilizar tus propios layouts Legend guardados. Asigna el valor a
+  `TRADE_API_URL_CODE_STOCKS_GENERIC_CHART` si deseas reutilizarlo sin pasar la bandera cada vez.
 - Omite `--start`/`--end` si deseas capturar en tiempo real sin recorte.
 
 ## Runners diarios de acciones
 
 Los módulos `stock-daily-stats`, `stock-daily-news` y `stock-daily-orderbook`
 se publican como plantillas documentadas. Por ahora no generan artefactos, pero
-puedes invocarlos para validar la navegación automática con `--url-code` y
-añadir la lógica de captura correspondiente en futuras iteraciones.
+puedes invocarlos para validar la navegación automática con un `--url-code`
+válido (o la variable `TRADE_API_URL_CODE_*` correspondiente) y añadir la lógica
+de captura en futuras iteraciones.
 
 ## Runners de futuros
 

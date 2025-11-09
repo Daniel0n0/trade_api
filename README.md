@@ -158,8 +158,28 @@ bootstrap flow whenever the file is missing.
    `https://robinhood.com/legend/layout?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT`
    has loaded before proceeding.
 4. After the dashboard is visible, the automation pauses for two seconds, opens dedicated tabs for
-   the configured SPY/SPX modules, and then visits the portfolio and watchlist pages. The browser
-   remains visible until you close it manually.
+   the vetted modules and then visits the portfolio and watchlist pages. The browser remains visible
+   until you close it manually.
+
+The default session launches the following modules automatically:
+
+- `spy-5m-1m`
+- `spy-options-chain`
+- `spx-options-chain`
+- `options`
+- `daily-stats`
+- `daily-news`
+- `daily-order-book`
+- `futures`
+- `futures-mes`
+- `futures-mnq`
+- `futures-overview`
+- `futures-detail`
+
+Modules that rely on custom Legend layouts (for example `stocks-generic-chart`, `options-generic` and
+the daily stock dashboards) now require an explicit `--url-code` flag or matching
+`TRADE_API_URL_CODE_*` environment variable. They stay out of the default session until a real layout
+UUID is supplied.
 
 > ℹ️ **Network blocking timing:** Tracking domains are blocked only after the script confirms that
 > the post-login UI is ready (either the home dashboard or the `/stocks/SPY` fallback view). This
