@@ -39,6 +39,8 @@ export type OptionCsvRow = Partial<Record<OptionCsvHeader[number], string | numb
 const OPTION_HEADER_TEXT = OPTION_HEADER.join(',');
 
 const OPTION_URL_PATTERN = /(marketdata\/options|\/options\/|\/options_chains\/|\/option_marketdata)/i;
+const ROBINHOOD_DOMAIN_PATTERN = /(api\.robinhood\.com|robinhood\.com\/(options|marketdata|instruments|greeks|historicals))/i;
+const TRACKER_URL_PATTERN = /(linkedin\.com|doubleclick|googletag|tiktok|snap|parsely|celtra|heapanalytics|singular|facebook|google-analytics|bing|twitter|reddit|ads|permutive)/i;
 const JSON_MIME_PATTERN = /application\/json/i;
 
 const SYMBOL_REGEX = /^(?:[A-Z]+:)?([A-Z.]{1,6})\d{6}[CP]/i;
@@ -439,6 +441,12 @@ const shouldProcessResponse = (response: Response): boolean => {
   if (!OPTION_URL_PATTERN.test(url)) {
     return false;
   }
+  if (!ROBINHOOD_DOMAIN_PATTERN.test(url)) {
+    return false;
+  }
+  if (TRACKER_URL_PATTERN.test(url)) {
+    return false;
+  }
   const status = response.status();
   if (status >= 400) {
     return false;
@@ -447,6 +455,22 @@ const shouldProcessResponse = (response: Response): boolean => {
   const contentType = headers['content-type'] ?? headers['Content-Type'];
   if (!contentType || !JSON_MIME_PATTERN.test(contentType)) {
     return false;
+  }
+  const contentLengthRaw = headers['content-length'] ?? headers['Content-Length'];
+  if (contentLengthRaw) {
+    const parsed = Number.parseInt(String(contentLengthRaw), 10);
+    if (Number.isFinite(parsed) && parsed > 5_000_000) {
+      return false;
+    }
+  }
+  const request = response.request();
+  try {
+    const resourceType = typeof request.resourceType === 'function' ? request.resourceType() : undefined;
+    if (resourceType && resourceType !== 'xhr' && resourceType !== 'fetch') {
+      return false;
+    }
+  } catch (error) {
+    void error;
   }
   return true;
 };
@@ -495,7 +519,7 @@ export function installOptionsResponseRecorder(options: OptionsRecorderOptions):
     const key = `${symbolDir}__${normalizedExpiration}`;
     let entry = writerMap.get(key);
     if (!entry) {
-      const targetPath = dataPath(symbolDir, buildOptionsFilename(logPrefix, expiration));
+      const targetPath = dataPath(symbolDir, 'options', buildOptionsFilename(logPrefix, expiration));
       const stream = getCsvWriter(targetPath, OPTION_HEADER_TEXT);
       const write = (line: string) => {
         stream.write(`${line}\n`);
@@ -530,9 +554,13 @@ export function installOptionsResponseRecorder(options: OptionsRecorderOptions):
 
     let payload: unknown;
     try {
-      payload = await response.json();
+      const text = await response.text();
+      if (!text) {
+        return;
+      }
+      payload = JSON.parse(text);
     } catch (error) {
-      console.warn('[options-interceptor] No se pudo parsear JSON:', error);
+      console.warn('[options-interceptor] No se pudo leer cuerpo JSON:', error);
       return;
     }
 
@@ -599,7 +627,7 @@ export function installOptionsResponseRecorder(options: OptionsRecorderOptions):
   const handler = (response: Response) => {
     const task = processResponse(response);
     pending.add(task);
-    task.finally(() => {
+    void task.finally(() => {
       pending.delete(task);
     });
   };

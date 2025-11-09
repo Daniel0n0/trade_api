@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { Page, WebSocket as PlaywrightWebSocket } from 'playwright';
+import type { Page } from 'playwright';
 import { DateTime } from 'luxon';
 
 import { RotatingWriter, type RotatePolicy } from './rotating-writer.js';
@@ -24,7 +24,7 @@ import {
 import { dataPath } from '../io/paths.js';
 import { ensureDirectoryForFileSync } from '../io/dir.js';
 import { BaseEvent } from '../io/schemas.js';
-import { extractFeed, MAX_WS_ENTRY_TEXT_LENGTH, normaliseFramePayload } from '../utils/payload.js';
+import { extractFeed, MAX_WS_ENTRY_TEXT_LENGTH } from '../utils/payload.js';
 
 type Serializable = Record<string, unknown>;
 
@@ -60,29 +60,17 @@ const LAG_WARN_THRESHOLDS_MS: Record<string, number> = {
 };
 const HOOK_GUARD_FLAG = '__socketSnifferHooked__';
 
-/**
- * Controls whether rotated log files should be compressed. Defaults to `false`
- * but can be toggled by setting `process.env.GZIP_ROTATE` to a truthy value
- * ("1", "true", "yes" or "on").
- */
-const GZIP_ROTATE_ENV = process.env.GZIP_ROTATE;
-const SHOULD_GZIP_ON_ROTATE = (() => {
-  if (!GZIP_ROTATE_ENV) {
-    return false;
-  }
-
-  const normalized = GZIP_ROTATE_ENV.trim().toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-
-  return ['1', 'true', 'yes', 'on'].includes(normalized);
-})();
+const HOOK_POLYFILL = `
+;window.__name = window.__name || ((fn, name) => {
+  try { Object.defineProperty(fn, "name", { value: name, configurable: true }); } catch {}
+  return fn;
+});
+`;
 
 const ROTATE_POLICY: RotatePolicy = {
   maxBytes: 50_000_000,
   maxMinutes: 60,
-  gzipOnRotate: SHOULD_GZIP_ON_ROTATE,
+  gzipOnRotate: false,
 };
 
 const LEGEND_CHANNELS = new Set<number>([1, 3, 5, 7]);
@@ -288,16 +276,11 @@ type WsMessageEntry = {
 
 type SnifferBindingEntry = WsMessageEntry | Serializable;
 
-type PageWithSnifferBinding = Page & {
-  socketSnifferLog?: (entry: SnifferBindingEntry) => void;
-};
-
 type LogEntry = Serializable & {
   readonly ts: number;
 };
 
 const LEGEND_WS_PATTERN = /marketdata\/streaming\/legend\//i;
-const ORDERS_WS_PATTERN = /marketdata\/streaming\/orders\//i;
 
 type LegendMessageKind = 'marketdata' | 'options' | 'news' | 'ignore' | 'unknown';
 
@@ -1050,12 +1033,6 @@ const sanitizeLogPrefix = (raw: string | undefined): string => {
 
 const resolveLogBaseName = (prefix: string): string => `${prefix}-socket-sniffer`;
 
-const resolveHookArgs = (symbols: readonly string[]) => ({
-  wantedSymbols: symbols,
-  maxTextLength: MAX_WS_ENTRY_TEXT_LENGTH,
-  hookGuardFlag: HOOK_GUARD_FLAG,
-});
-
 export async function runSocketSniffer(
   page: Page,
   options: SocketSnifferOptions = {},
@@ -1072,11 +1049,27 @@ export async function runSocketSniffer(
     end: options.end,
   });
 
-  const hookScript = buildHookScript();
-  const hookArgs = resolveHookArgs(symbols);
+  const hookScriptString = buildHookPlainSource({
+    wantedSymbols: symbols,
+    maxTextLength: MAX_WS_ENTRY_TEXT_LENGTH,
+    hookGuardFlag: HOOK_GUARD_FLAG,
+  });
 
-  await page.addInitScript(hookScript, hookArgs);
-  await page.evaluate(hookScript, hookArgs);
+  try {
+    await page.context().addInitScript({ content: hookScriptString });
+  } catch (error) {
+    console.warn('[socket-sniffer] addInitScript failed:', error);
+  }
+
+  try {
+    await page.evaluate((script) => {
+      // eslint-disable-next-line no-new-func
+      const runner = new Function(script);
+      runner();
+    }, hookScriptString);
+  } catch (error) {
+    console.warn('[socket-sniffer] hook evaluate failed; continuing in CDP-only mode:', error);
+  }
 
   const logPattern = path.join(process.cwd(), 'logs', `${baseName}*.jsonl`);
 
@@ -1090,207 +1083,185 @@ export async function runSocketSniffer(
   } satisfies SocketSnifferHandle;
 }
 
-function buildHookScript() {
-  return (
-    (params: { wantedSymbols: readonly string[]; maxTextLength: number; hookGuardFlag: string }) => {
-      const { wantedSymbols, maxTextLength, hookGuardFlag } = params;
-      const globalObject = window as typeof window & {
-        socketSnifferLog?: (entry: Serializable) => void;
-        [key: string]: unknown;
-      };
-
-      const guardKey = hookGuardFlag || '__socketSnifferHooked__';
-      if (globalObject[guardKey]) {
-        return;
-      }
-
-      globalObject[guardKey] = true;
-
-      try {
-        globalObject.__socketHookInstalled = true;
-        console.log('[socket-sniffer][HOOK] instalado en', location.href);
-        globalObject.socketSnifferLog?.({ kind: 'hook-installed', href: location.href });
-      } catch (error) {
-        void error;
-      }
-
-      try {
-        globalObject.socketSnifferLog?.({ kind: 'hook-installed', href: window.location.href });
-      } catch (error) {
-        void error;
-      }
-
-      const upperSymbols = new Set(
-        (wantedSymbols ?? [])
-          .map((symbol) => (typeof symbol === 'string' ? symbol.trim().toUpperCase() : ''))
-          .filter((symbol) => symbol.length > 0),
-      );
-
-      const shouldKeep = (payload: unknown): boolean => {
-        if (!upperSymbols.size) {
-          return true;
-        }
-
-        const extractSymbol = (value: unknown): string | undefined => {
-          if (!value || typeof value !== 'object') {
-            return undefined;
-          }
-          const data = value as Record<string, unknown>;
-          const candidates = [
-            data?.data && (data.data as Record<string, unknown>).eventSymbol,
-            data?.eventSymbol,
-            data?.symbol,
-            data?.result && (data.result as Record<string, unknown>).symbol,
-          ];
-          for (const candidate of candidates) {
-            if (typeof candidate === 'string' && candidate.trim()) {
-              return candidate.trim().toUpperCase();
-            }
-          }
-          return undefined;
-        };
-
-        const symbol = extractSymbol(payload);
-        return !symbol || upperSymbols.has(symbol);
-      };
-
-      const safeLog = (entry: Serializable) => {
-        try {
-          globalObject.socketSnifferLog?.(entry);
-        } catch (error) {
-          // eslint-disable-next-line no-console
-          console.error('[socket-sniffer] Error al enviar log:', error);
-        }
-      };
-
-      const truncate = (text: string | null): string | null => {
-        if (typeof text !== 'string') {
-          return null;
-        }
-        return text.length > maxTextLength ? text.slice(0, maxTextLength) : text;
-      };
-
-      // --- WebSocket hook ---
-      (() => {
-        const OriginalWebSocket = window.WebSocket;
-        const originalSend = OriginalWebSocket.prototype.send;
-
-        const shouldKeepByUrl = (socketUrl: string): boolean =>
-          /^wss:\/\/.*robinhood\.com/i.test(socketUrl);
-
-        const wrapMessage = (url: string, text: string | null, parsed: unknown, kind: 'ws-message' | 'ws-send') => {
-          const entry: Serializable = { kind, url, text: truncate(text) };
-          if (parsed !== undefined) {
-            entry.parsed = parsed as Serializable;
-          }
-          safeLog(entry);
-        };
-
-        const normaliseUrl = (arg: unknown): string => {
-          if (typeof arg === 'string') {
-            return arg;
-          }
-          if (arg instanceof URL) {
-            return arg.toString();
-          }
-          return '';
-        };
-
-        function PatchedWebSocket(this: WebSocket, ...args: ConstructorParameters<typeof WebSocket>) {
-          const ws = new OriginalWebSocket(...args);
-          const url = normaliseUrl(args?.[0]);
-
-          ws.addEventListener('message', (event) => {
-            let parsed: unknown;
-            let text: string | null = null;
-
-            if (typeof event.data === 'string') {
-              text = event.data;
-              try {
-                parsed = JSON.parse(event.data);
-              } catch (error) {
-                void error;
-              }
-            }
-
-            if (!shouldKeepByUrl(url)) {
-              return;
-            }
-
-            if (parsed && !shouldKeep(parsed)) {
-              return;
-            }
-
-            wrapMessage(url, text, parsed, 'ws-message');
-          });
-
-          return ws;
-        }
-
-        PatchedWebSocket.prototype = OriginalWebSocket.prototype;
-        window.WebSocket = PatchedWebSocket as unknown as typeof WebSocket;
-
-        OriginalWebSocket.prototype.send = function patchedSend(
-          this: WebSocket,
-          data: Parameters<WebSocket['send']>[0],
-        ) {
-          let text: string | null = null;
-          let parsed: unknown;
-
-          if (typeof data === 'string') {
-            text = data;
-            try {
-              parsed = JSON.parse(data);
-            } catch (error) {
-              void error;
-            }
-            if (parsed && !shouldKeep(parsed)) {
-              return originalSend.apply(this, [data]);
-            }
-          }
-
-          const url = (this as { url?: string }).url ?? '';
-          if (shouldKeepByUrl(url)) {
-            wrapMessage(url, text, parsed, 'ws-send');
-          }
-          return originalSend.apply(this, [data]);
-        };
-      })();
-
-      // --- fetch hook ---
-      (() => {
-        const originalFetch = window.fetch.bind(window);
-
-        window.fetch = async (...args: Parameters<typeof fetch>): Promise<Response> => {
-          const request = args[0];
-          let url = '';
-          if (typeof request === 'string') {
-            url = request;
-          } else if (request instanceof Request) {
-            url = request.url;
-          } else if (request instanceof URL) {
-            url = request.toString();
-          }
-          try {
-            const response = await originalFetch(...args);
-            try {
-              if (/quotes\/historicals|instruments|options/i.test(url)) {
-                const clone = response.clone();
-                const text = await clone.text();
-                safeLog({ kind: 'http', url, text: truncate(text) });
-              }
-            } catch (error) {
-              void error;
-            }
-            return response;
-          } catch (error) {
-            safeLog({ kind: 'http-error', url, error: error instanceof Error ? error.message : String(error) });
-            throw error;
-          }
-        };
-      })();
+function buildHookPlainSource(params: {
+  readonly wantedSymbols: readonly string[];
+  readonly maxTextLength: number;
+  readonly hookGuardFlag: string;
+}): string {
+  return `
+${HOOK_POLYFILL}
+(function __name_wrapper(){
+  (function(params){
+    const { wantedSymbols, maxTextLength, hookGuardFlag } = params || {};
+    const globalObject = window;
+    const guardKey = hookGuardFlag || '${HOOK_GUARD_FLAG}';
+    if (globalObject[guardKey]) {
+      return;
     }
-  );
+
+    globalObject[guardKey] = true;
+
+    try {
+      globalObject.__socketHookInstalled = true;
+      console.log('[socket-sniffer][HOOK] instalado en', location.href);
+      globalObject.socketSnifferLog && globalObject.socketSnifferLog({ kind: 'hook-installed', href: location.href });
+    } catch (error) {
+      void error;
+    }
+
+    const upperSymbols = new Set((wantedSymbols || []).map((symbol) => {
+      if (typeof symbol !== 'string') { return ''; }
+      const text = symbol.trim();
+      return text ? text.toUpperCase() : '';
+    }).filter(Boolean));
+
+    const shouldKeep = (payload) => {
+      if (!upperSymbols.size) {
+        return true;
+      }
+      if (!payload || typeof payload !== 'object') {
+        return true;
+      }
+      const record = payload;
+      const candidates = [
+        record && record.data && record.data.eventSymbol,
+        record && record.eventSymbol,
+        record && record.symbol,
+        record && record.result && record.result.symbol,
+      ];
+      for (const candidate of candidates) {
+        if (typeof candidate === 'string' && candidate.trim()) {
+          return upperSymbols.has(candidate.trim().toUpperCase());
+        }
+      }
+      return true;
+    };
+
+    const truncate = (text) => {
+      if (typeof text !== 'string') {
+        return null;
+      }
+      return text.length > maxTextLength ? text.slice(0, maxTextLength) : text;
+    };
+
+    const safeLog = (entry) => {
+      try {
+        globalObject.socketSnifferLog && globalObject.socketSnifferLog(entry);
+      } catch (error) {
+        console.warn('[socket-sniffer] Error al enviar log:', error);
+      }
+    };
+
+    // --- WebSocket hook ---
+    (function(){
+      const OriginalWebSocket = window.WebSocket;
+      const originalSend = OriginalWebSocket.prototype.send;
+      const LEGEND_RE = new RegExp('^wss://api\\.robinhood\\.com/marketdata/streaming/legend/?', 'i');
+
+      const normaliseUrl = (arg) => {
+        if (typeof arg === 'string') {
+          return arg;
+        }
+        if (arg instanceof URL) {
+          return String(arg);
+        }
+        return '';
+      };
+
+      const emit = (kind, url, text, parsed) => {
+        if (!LEGEND_RE.test(url)) {
+          return;
+        }
+        if (parsed && !shouldKeep(parsed)) {
+          return;
+        }
+        const entry = { kind, url, text: truncate(text) };
+        if (parsed !== undefined) {
+          entry.parsed = parsed;
+        }
+        safeLog(entry);
+      };
+
+      function PatchedWebSocket(...args){
+        const ws = new OriginalWebSocket(...args);
+        const targetUrl = normaliseUrl(args && args[0]);
+
+        ws.addEventListener('message', (event) => {
+          let parsed;
+          let text = null;
+          if (typeof event.data === 'string') {
+            text = event.data;
+            try {
+              parsed = JSON.parse(event.data);
+            } catch (error) {
+              void error;
+            }
+          }
+          emit('ws-message', targetUrl, text, parsed);
+        });
+
+        return ws;
+      }
+
+      PatchedWebSocket.prototype = OriginalWebSocket.prototype;
+      window.WebSocket = PatchedWebSocket;
+
+      OriginalWebSocket.prototype.send = function patchedSend(data){
+        let parsed;
+        let text = null;
+        if (typeof data === 'string') {
+          text = data;
+          try {
+            parsed = JSON.parse(data);
+          } catch (error) {
+            void error;
+          }
+        }
+        emit('ws-send', this && this.url, text, parsed);
+        return originalSend.apply(this, [data]);
+      };
+    })();
+
+    // --- fetch hook ---
+    (function(){
+      const originalFetch = window.fetch.bind(window);
+      const WANT = /(marketdata|options|instruments|greeks|historicals)/i;
+
+      window.fetch = async (...args) => {
+        let url = '';
+        const candidate = args[0];
+        if (typeof candidate === 'string') {
+          url = candidate;
+        } else if (candidate instanceof Request) {
+          url = candidate.url;
+        } else if (candidate instanceof URL) {
+          url = String(candidate);
+        }
+
+        const response = await originalFetch(...args);
+        try {
+          if (!WANT.test(url)) {
+            return response;
+          }
+          const contentType = response.headers && response.headers.get && response.headers.get('content-type');
+          const normalizedContentType =
+            typeof contentType === 'string' ? contentType.toLowerCase() : '';
+          if (!normalizedContentType.includes('application/json')) {
+            return response;
+          }
+          const clone = response.clone();
+          const text = await clone.text();
+          safeLog({ kind: 'http', url, text: truncate(text) });
+        } catch (error) {
+          console.warn('[socket-sniffer] fetch hook error:', error);
+        }
+        return response;
+      };
+    })();
+
+  })(${JSON.stringify(params)});
+})();
+`;
 }
 
 function isLegend(sourceUrl: string): boolean {
