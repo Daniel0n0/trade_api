@@ -2,7 +2,7 @@ import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { chromium, type BrowserContext } from 'playwright';
 import { ENV } from './utils/env.js';
-import { normaliseFramePayload } from './utils/payload.js';
+import { LEGEND_WS_PATTERN, normaliseFramePayload } from './utils/payload.js';
 import { ensureDirectoryForFileSync, ensureDirectorySync } from './io/dir.js';
 
 // Añade tipos oficiales si quieres máxima precisión
@@ -145,7 +145,9 @@ async function launchBootstrapContext(options: LaunchOptions, headless: boolean)
       if (e.requestId && e.url) {
         socketUrlByRequestId.set(e.requestId, e.url);
       }
-      console.log('[socket-sniffer][CDP] WS creado:', e.url);
+      if (DEBUG_NETWORK) {
+        console.log('[socket-sniffer][CDP] WS creado:', e.url);
+      }
     });
 
     cdp.on('Network.webSocketWillSendHandshakeRequest', (e: WebSocketHandshakeEvent) => {
@@ -157,6 +159,9 @@ async function launchBootstrapContext(options: LaunchOptions, headless: boolean)
     cdp.on('Network.webSocketFrameReceived', async (e: WebSocketFrameEvent) => {
       try {
         const url = resolveUrl(e);
+        if (!LEGEND_WS_PATTERN.test(url)) {
+          return;
+        }
         const { text, parsed } = normaliseFramePayload(e.response?.payloadData);
         if (!page.isClosed()) {
           try {
@@ -182,6 +187,9 @@ async function launchBootstrapContext(options: LaunchOptions, headless: boolean)
     cdp.on('Network.webSocketFrameSent', async (e: WebSocketFrameEvent) => {
       try {
         const url = resolveUrl(e);
+        if (!LEGEND_WS_PATTERN.test(url)) {
+          return;
+        }
         const { text, parsed } = normaliseFramePayload(e.response?.payloadData);
         if (!page.isClosed()) {
           try {
