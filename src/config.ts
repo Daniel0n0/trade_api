@@ -72,7 +72,7 @@ const LEGEND_DEFAULT_QUERY = `?default_web_client=${LEGEND_DEFAULT_WEB_CLIENT}` 
 
 export const MODULE_URL_CODES: Readonly<Record<string, string>> = {
   'spy-daily-hourly-15m': '6bb41212-dbb4-4dc0-a0a7-7a75e4aaf9da',
-  'spy-5m-1m': '9a624e15-84c5-4a0e-8391-69f32b32d8d5',
+  'spy-5m-1m': '6bb41212-dbb4-4dc0-a0a7-7a75e4aaf9da',
   'spy-options-chain': 'c59d5a8e-397f-421a-a6e4-8ffe753c3456',
   'spx-options-chain': '0413b972-f84e-4ce7-8eae-c0a50b96cc90',
   // Los siguientes códigos sirven como marcadores hasta que se capture el UUID
