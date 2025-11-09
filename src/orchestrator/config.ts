@@ -138,7 +138,7 @@ function toModuleArgsFromJob(job: JobConfig): ModuleArgs {
     optionsDate: job.optionsDate ?? undefined,
     optionsHorizon: job.optionsHorizon ?? undefined,
     urlMode: job.urlMode ?? undefined,
-    urlCode: job.urlCode ?? MODULE_URL_CODES[moduleId] ?? undefined,
+    urlCode: job.urlCode ?? MODULE_URL_CODES[moduleId as keyof typeof MODULE_URL_CODES] ?? undefined,
     persistCookies: job.persistCookies,
     persistIndexedDb: job.persistIndexedDb,
     storageStatePath: job.storageStatePath ?? undefined,
