@@ -6,8 +6,8 @@ import { dataPath } from '../../io/paths.js';
 import { toCsvLine } from '../../io/row.js';
 import { safeJsonParse } from '../../utils/payload.js';
 
-const FUTURES_HISTORICAL_PATTERN = /marketdata\/futures\/historicals/i;
-const FUTURES_SNAPSHOT_PATTERN = /marketdata\/futures\/(?:prices|snapshots)/i;
+export const FUTURES_HISTORICAL_PATTERN = /marketdata\/futures\/historicals/i;
+export const FUTURES_SNAPSHOT_PATTERN = /marketdata\/futures\/(?:prices|snapshots)/i;
 
 export const FUTURES_BARS_HEADER = [
   'beginsAt',
@@ -354,6 +354,7 @@ type FuturesRecorderOptions = {
   readonly page: Page;
   readonly logPrefix?: string;
   readonly symbols?: readonly string[];
+  readonly onDiscoveredSymbols?: (symbols: readonly string[]) => void;
 };
 
 export type FuturesRecorderHandle = {
@@ -372,6 +373,7 @@ export function installFuturesRecorder(options: FuturesRecorderOptions): Futures
   const { page } = options;
   const fallbackSymbol = options.symbols?.[0];
   const tracked = new Set<WriteStream>();
+  const seenSymbols = new Set<string>();
 
   const getWriter = (file: string, header: readonly string[]): WriteStream => {
     const writer = getCsvWriter(file, header);
@@ -407,6 +409,41 @@ export function installFuturesRecorder(options: FuturesRecorderOptions): Futures
     tracked.clear();
   };
 
+  const notifyDiscoveredSymbols = (candidates: Iterable<string>) => {
+    if (!options.onDiscoveredSymbols) {
+      return;
+    }
+
+    const fresh: string[] = [];
+    for (const candidate of candidates) {
+      const normalized = normaliseSymbol(candidate);
+      if (!normalized || seenSymbols.has(normalized)) {
+        continue;
+      }
+      seenSymbols.add(normalized);
+      fresh.push(normalized);
+    }
+
+    if (fresh.length > 0) {
+      try {
+        options.onDiscoveredSymbols(fresh);
+      } catch (error) {
+        console.warn('[futures-recorder] Error al notificar símbolos descubiertos:', error);
+      }
+    }
+  };
+
+  const extractSymbolsFromRows = <T extends readonly string[]>(rows: readonly FuturesCsvRow<T>[]): string[] => {
+    const symbols: string[] = [];
+    for (const row of rows) {
+      const candidate = normaliseSymbol((row.symbol as string | undefined) ?? fallbackSymbol);
+      if (candidate) {
+        symbols.push(candidate);
+      }
+    }
+    return symbols;
+  };
+
   const handleBars = (payload: unknown, url: string | undefined) => {
     const rows = normalizeFuturesBars(payload, { url, fallbackSymbol });
     for (const row of rows) {
@@ -414,6 +451,7 @@ export function installFuturesRecorder(options: FuturesRecorderOptions): Futures
       const filePath = dataPath({ assetClass: 'futures', symbol }, 'bars', 'futures-bars.csv');
       getWriter(filePath, FUTURES_BARS_HEADER).write(toCsvLine(FUTURES_BARS_HEADER, row));
     }
+    notifyDiscoveredSymbols(extractSymbolsFromRows(rows));
   };
 
   const handleSnapshots = (payload: unknown, url: string | undefined) => {
@@ -423,6 +461,7 @@ export function installFuturesRecorder(options: FuturesRecorderOptions): Futures
       const filePath = dataPath({ assetClass: 'futures', symbol }, 'snapshots', 'futures-snapshots.csv');
       getWriter(filePath, FUTURES_SNAPSHOT_HEADER).write(toCsvLine(FUTURES_SNAPSHOT_HEADER, row));
     }
+    notifyDiscoveredSymbols(extractSymbolsFromRows(rows));
   };
 
   const handleResponse = async (response: Response) => {
