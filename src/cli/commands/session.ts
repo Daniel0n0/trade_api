@@ -7,7 +7,7 @@ import { FLAGS } from '../../bootstrap/env.js';
 import { createProcessLogger } from '../../bootstrap/logger.js';
 import { bindProcessSignals, registerCloser } from '../../bootstrap/signals.js';
 import { bindContextDebugObservers, attachPageDebugObservers } from '../../debugging.js';
-import { openModuleTabs } from '../../modules.js';
+import { openModuleWindows } from '../../modules.js';
 import { ensureLoggedInByUrlFlow } from '../../sessionFlow.js';
 import { ensureDirectoryForFile } from '../../io/dir.js';
 import type { CommandContext, GlobalOptions } from './shared.js';
@@ -117,7 +117,19 @@ async function runInteractiveSession(globals: GlobalOptions): Promise<SessionOut
           console.log('El navegador permanecerá abierto hasta que detengas el proceso manualmente.');
         }
 
-        await openModuleTabs(context);
+        const moduleWindows = await openModuleWindows(browser);
+        for (const { context: moduleContext } of moduleWindows) {
+          registerCloser(async () => {
+            try {
+              await moduleContext.close();
+            } catch (error) {
+              if (!json) {
+                // eslint-disable-next-line no-console
+                console.error('Error al cerrar un contexto adicional del navegador:', error);
+              }
+            }
+          });
+        }
       } else {
         outcome = 'missing';
         processLogger.warn('session-missing');

@@ -1,9 +1,10 @@
-import type { BrowserContext, Page } from 'playwright';
+import type { Browser, BrowserContext, Page } from 'playwright';
 
 import { MODULES, getModuleDefaultArgs, resolveModuleUrl } from './config.js';
 import { MODULE_RUNNERS } from './modulos/index.js';
 import type { ModuleArgs } from './orchestrator/messages.js';
 import { hydrateModulePage } from './modules/session-transfer.js';
+import { bindContextDebugObservers } from './debugging.js';
 
 const CONSENT_CONTAINER_SELECTORS = [
   '[data-testid*="consent"]',
@@ -77,8 +78,10 @@ async function ensureNoModalConsent(page: Page): Promise<void> {
   }
 }
 
-export async function openModuleTabs(context: BrowserContext): Promise<Page[]> {
-  const openedPages: Page[] = [];
+export type ModuleWindow = { readonly context: BrowserContext; readonly page: Page };
+
+export async function openModuleWindows(browser: Browser): Promise<ModuleWindow[]> {
+  const openedWindows: ModuleWindow[] = [];
   let firstHydrationSuccessful = false;
   let firstHydrationAttempted = false;
 
@@ -94,76 +97,94 @@ export async function openModuleTabs(context: BrowserContext): Promise<Page[]> {
       continue;
     }
 
-    const page = await context.newPage();
+    const context = await browser.newContext({ viewport: null });
+    bindContextDebugObservers(context);
+
+    let shouldKeepContext = false;
+    let abortFurtherModules = false;
 
     try {
-      await page.goto('about:blank');
-    } catch (error) {
-      /* eslint-disable no-console */
-      console.warn('No se pudo inicializar la pestaña en blanco antes de hidratar la sesión:', error);
-      /* eslint-enable no-console */
-    }
+      const page = await context.newPage();
 
-    const hydration = await hydrateModulePage(context, page);
-
-    if (hydration.warnings.length > 0) {
-      /* eslint-disable no-console */
-      for (const warning of hydration.warnings) {
-        console.warn(`[session-transfer] ${warning}`);
+      try {
+        await page.goto('about:blank');
+      } catch (error) {
+        /* eslint-disable no-console */
+        console.warn('No se pudo inicializar la pestaña en blanco antes de hidratar la sesión:', error);
+        /* eslint-enable no-console */
       }
-      /* eslint-enable no-console */
-    }
 
-    const isFirstHydratedModule = !firstHydrationAttempted;
-    firstHydrationAttempted = true;
+      const hydration = await hydrateModulePage(context, page);
 
-    if (isFirstHydratedModule) {
-      if (hydration.ok) {
-        firstHydrationSuccessful = true;
-      } else {
+      if (hydration.warnings.length > 0) {
+        /* eslint-disable no-console */
+        for (const warning of hydration.warnings) {
+          console.warn(`[session-transfer] ${warning}`);
+        }
+        /* eslint-enable no-console */
+      }
+
+      const isFirstHydratedModule = !firstHydrationAttempted;
+      firstHydrationAttempted = true;
+
+      if (isFirstHydratedModule) {
+        if (hydration.ok) {
+          firstHydrationSuccessful = true;
+        } else {
+          /* eslint-disable no-console */
+          console.warn(
+            `[session-transfer] La hidratación inicial de la sesión falló para "${module.name}". No se abrirán ventanas adicionales para evitar reintentos de autenticación.`,
+          );
+          /* eslint-enable no-console */
+        }
+      } else if (!firstHydrationSuccessful) {
         /* eslint-disable no-console */
         console.warn(
-          `[session-transfer] La hidratación inicial de la sesión falló para "${module.name}". No se abrirán pestañas adicionales para evitar reintentos de autenticación.`,
+          `[session-transfer] Se omite el módulo "${module.name}" porque la sesión no se hidrató en la primera pestaña.`,
         );
         /* eslint-enable no-console */
+        abortFurtherModules = true;
       }
-    } else if (!firstHydrationSuccessful) {
-      /* eslint-disable no-console */
-      console.warn(
-        `[session-transfer] Se omite el módulo "${module.name}" porque la sesión no se hidrató en la primera pestaña.`,
-      );
-      /* eslint-enable no-console */
-      await page.close();
-      break;
+
+      if (!abortFurtherModules) {
+        /* eslint-disable no-console */
+        console.log(
+          `Abriendo módulo "${module.name}" (${module.description}) en ${resolvedUrl}...`,
+        );
+        /* eslint-enable no-console */
+
+        await page.goto(resolvedUrl, { waitUntil: 'domcontentloaded' });
+        await page
+          .waitForLoadState('networkidle', { timeout: 15_000 })
+          .catch(() => page.waitForTimeout(2_000));
+
+        openedWindows.push({ context, page });
+        shouldKeepContext = true;
+
+        const runner = MODULE_RUNNERS[module.name];
+        if (runner) {
+          await ensureNoModalConsent(page);
+          const args: ModuleArgs = {
+            module: module.name,
+            action: 'preview',
+            ...(defaultArgs.urlCode ? { urlCode: defaultArgs.urlCode } : {}),
+            ...(defaultArgs.symbols ? { symbols: defaultArgs.symbols } : {}),
+          };
+          runner(args, { context, page }).catch((error: unknown) => {
+            /* eslint-disable no-console */
+            console.error(`Error al ejecutar el módulo "${module.name}":`, error);
+            /* eslint-enable no-console */
+          });
+        }
+      }
+    } finally {
+      if (!shouldKeepContext) {
+        await context.close().catch(() => undefined);
+      }
     }
 
-    openedPages.push(page);
-
-    /* eslint-disable no-console */
-    console.log(
-      `Abriendo módulo "${module.name}" (${module.description}) en ${resolvedUrl}...`,
-    );
-    /* eslint-enable no-console */
-
-    await page.goto(resolvedUrl, { waitUntil: 'domcontentloaded' });
-    await page
-      .waitForLoadState('networkidle', { timeout: 15_000 })
-      .catch(() => page.waitForTimeout(2_000));
-
-    const runner = MODULE_RUNNERS[module.name];
-    if (runner) {
-      await ensureNoModalConsent(page);
-      const args: ModuleArgs = {
-        module: module.name,
-        action: 'preview',
-        ...(defaultArgs.urlCode ? { urlCode: defaultArgs.urlCode } : {}),
-        ...(defaultArgs.symbols ? { symbols: defaultArgs.symbols } : {}),
-      };
-      runner(args, { context, page }).catch((error: unknown) => {
-        /* eslint-disable no-console */
-        console.error(`Error al ejecutar el módulo "${module.name}":`, error);
-        /* eslint-enable no-console */
-      });
+    if (abortFurtherModules) {
+      break;
     }
   }
 
@@ -173,5 +194,5 @@ export async function openModuleTabs(context: BrowserContext): Promise<Page[]> {
     /* eslint-enable no-console */
   }
 
-  return openedPages;
+  return openedWindows;
 }
