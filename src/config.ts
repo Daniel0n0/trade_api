@@ -111,7 +111,7 @@ export const buildLegendLayoutUrl = (code: string): string =>
   `${ROBINHOOD_LEGEND_LAYOUT_BASE}/${code}${LEGEND_DEFAULT_QUERY}`;
 
 const LEGEND_URL_TEMPLATE = `${ROBINHOOD_LEGEND_LAYOUT_BASE}/{urlCode}${LEGEND_DEFAULT_QUERY}` as const;
-const OPTIONS_URL_TEMPLATE = 'https://robinhood.com/options/{symbol}' as const;
+const OPTIONS_URL_TEMPLATE = 'https://robinhood.com/options/chains/{symbol}' as const;
 const STOCK_STATS_URL_TEMPLATE = 'https://robinhood.com/us/en/stocks/{symbol}/stats/' as const;
 const STOCK_NEWS_URL_TEMPLATE = 'https://robinhood.com/us/en/stocks/{symbol}/news/' as const;
 const STOCK_ORDER_BOOK_URL_TEMPLATE = 'https://robinhood.com/us/en/stocks/{symbol}/order-book/' as const;
@@ -245,21 +245,21 @@ export const MODULES: readonly ModuleDefinition[] = [
     name: 'spy-options-chain',
     description: 'Cadena de opciones para SPY',
     urlTemplate: OPTIONS_URL_TEMPLATE,
-    url: 'https://robinhood.com/options',
+    url: 'https://robinhood.com/options/chains/SPY',
     defaultSymbols: ['SPY'],
   },
   {
     name: 'spx-options-chain',
     description: 'Cadena de opciones para SPX',
     urlTemplate: OPTIONS_URL_TEMPLATE,
-    url: 'https://robinhood.com/options',
+    url: 'https://robinhood.com/options/chains/SPX',
     defaultSymbols: ['SPX'],
   },
   {
     name: 'options',
     description: 'Navegador genérico de opciones por símbolo',
     urlTemplate: OPTIONS_URL_TEMPLATE,
-    url: 'https://robinhood.com/options',
+    url: 'https://robinhood.com/options/chains/SPY',
     defaultSymbols: ['SPY'],
   },
   {
