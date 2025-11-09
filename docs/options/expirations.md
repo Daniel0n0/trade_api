@@ -18,8 +18,10 @@ vista tradicional como en **Legend**.
    ```bash
    npm run orchestrator -- --module spy-options-chain --action now --outPrefix=spy-chain
    ```
-2. Espera a que el navegador abra `https://robinhood.com/options/SPY`. El estado del runner cambia a
+2. Espera a que el navegador abra `https://robinhood.com/options/chains/SPY`. El estado del runner cambia a
    `sniffing` cuando el interceptor y el *socket sniffer* están activos.
+   - Si tu sesión te redirige a la vista clásica, relanza el orquestador con
+     `--urlMode=module` para forzar el layout Legend mediante la URL del módulo.
 3. En la interfaz de Robinhood, abre el desplegable **Expiration** y selecciona una fecha distinta.
    Cada cambio dispara solicitudes `options/` que se registran automáticamente.
 4. Observa la consola del orquestador: después de cada respuesta válida se imprimen claves como
