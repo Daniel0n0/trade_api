@@ -30,8 +30,35 @@ export function attachPageDebugObservers(page: Page): void {
 
   if (FLAGS.debugConsole) {
     page.on('console', (message) => {
+      const text = message.text();
+
+      if (
+        /honeycomb|opentelemetry|woff2|COEP|NotSameOrigin|status of 403|404/i.test(
+          text,
+        ) ||
+        text.toLowerCase().includes('updatecandles failed')
+      ) {
+        return;
+      }
+
+      const type = message.type();
+      const method: keyof Console = (() => {
+        switch (type) {
+          case 'warning':
+            return 'warn';
+          case 'debug':
+          case 'error':
+          case 'info':
+          case 'log':
+            return type;
+          default:
+            return 'log';
+        }
+      })();
+
       /* eslint-disable no-console */
-      console.log(`[console:${message.type()}] ${message.text()}`);
+      const logger = console[method] ?? console.log;
+      logger.call(console, `[console:${type}] ${text}`);
       /* eslint-enable no-console */
     });
   }
