@@ -89,7 +89,7 @@ const applyModuleUrlCodeOverrides = <T extends Record<string, string>>(
 
 const DEFAULT_MODULE_URL_CODES = {
   'spy-daily-hourly-15m': 'a9615d6b-6934-4d35-9e15-c0b5acafcfd7',
-  'spy-5m-1m': 'fe5d1cd6-27de-49f6-9d9a-b56e905f3a8f',
+  'spy-5m-1m': '6bb41212-dbb4-4dc0-a0a7-7a75e4aaf9da',
   'spy-options-chain': 'c59d5a8e-397f-421a-a6e4-8ffe753c3456',
   'spx-options-chain': '0413b972-f84e-4ce7-8eae-c0a50b96cc90',
   // Los siguientes códigos sirven como marcadores hasta que se capture el UUID

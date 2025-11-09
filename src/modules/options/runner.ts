@@ -25,12 +25,12 @@ import {
 
 const MODULE_NAME: RunnerModule = 'options';
 
-export const DEFAULT_OPTIONS_URL = 'https://robinhood.com/options';
+export const DEFAULT_OPTIONS_URL = 'https://robinhood.com/options/chains';
 export const DEFAULT_OPTIONS_SYMBOLS: readonly string[] = [];
 
 export const OPTIONS_URL_BY_MODULE: Record<string, string> = {
-  'spy-options-chain': 'https://robinhood.com/options/SPY',
-  'spx-options-chain': 'https://robinhood.com/options/SPX',
+  'spy-options-chain': 'https://robinhood.com/options/chains/SPY',
+  'spx-options-chain': 'https://robinhood.com/options/chains/SPX',
 };
 
 export const OPTIONS_SYMBOLS_BY_MODULE: Record<string, readonly string[]> = {
@@ -77,7 +77,7 @@ export const resolveOptionsUrl = (
 
   if (mode === 'symbol') {
     if (primarySymbol) {
-      return `https://robinhood.com/options/${primarySymbol}`;
+      return `https://robinhood.com/options/chains/${primarySymbol}`;
     }
     return DEFAULT_OPTIONS_URL;
   }
@@ -87,7 +87,7 @@ export const resolveOptionsUrl = (
   }
 
   if (primarySymbol) {
-    return `https://robinhood.com/options/${primarySymbol}`;
+    return `https://robinhood.com/options/chains/${primarySymbol}`;
   }
 
   return DEFAULT_OPTIONS_URL;
