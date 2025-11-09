@@ -433,10 +433,10 @@ export function installFuturesRecorder(options: FuturesRecorderOptions): Futures
     }
   };
 
-  const extractSymbolsFromRows = <T extends readonly string[]>(rows: readonly FuturesCsvRow<T>[]): string[] => {
+  const extractSymbolsFromRows = <T extends readonly string[] & readonly ["symbol", ...string[]]>(rows: readonly FuturesCsvRow<T>[]): string[] => {
     const symbols: string[] = [];
     for (const row of rows) {
-      const candidate = normaliseSymbol((row.symbol as string | undefined) ?? fallbackSymbol);
+      const candidate = normaliseSymbol((row["symbol" as T[number]] as string | undefined) ?? fallbackSymbol);
       if (candidate) {
         symbols.push(candidate);
       }
