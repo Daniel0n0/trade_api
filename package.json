@@ -10,6 +10,7 @@
     "dev": "tsx watch src/main.ts",
     "start:robinhood": "tsx src/main.ts",
     "trade-api": "tsx src/cli/index.ts",
+    "orchestrator": "tsx src/orchestrator/cli.ts",
     "clean:profile": "tsx scripts/clean-profile.ts",
     "lint": "eslint \"src/**/*.ts\" \"scripts/**/*.ts\"",
     "typecheck": "tsc --noEmit",
