@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 import { test } from 'node:test';
 import { DateTime } from 'luxon';
 
@@ -7,12 +9,15 @@ import {
   computeDte,
   deriveChainSymbol,
   buildOptionsFilename,
+  computeOptionsWindowSegment,
   formatExpirationForFilename,
   normalizeExpiration,
   normaliseOptionType,
   optionRowFromRecord,
   isValidOptionRow,
+  readLastTimestamp,
 } from '../src/modules/options/interceptor.js';
+import { dataPath } from '../src/io/paths.js';
 
 const samplePayload = {
   data: {
@@ -148,11 +153,89 @@ test('formatExpirationForFilename limpia caracteres no permitidos', () => {
   assert.strictEqual(formatExpirationForFilename('2024-01-19T09:30:00Z'), '2024-01-19T09-30-00Z');
 });
 
-test('buildOptionsFilename usa el prefijo de log y expiración sanitizada', () => {
-  assert.strictEqual(buildOptionsFilename('spy', '2024-01-19'), 'spy-options-2024-01-19.csv');
-  assert.strictEqual(
-    buildOptionsFilename('spx-chain', '2024-01-19T09:30:00Z'),
-    'spx-chain-options-2024-01-19T09-30-00Z.csv',
+test('buildOptionsFilename incorpora tipo y strike', () => {
+  assert.strictEqual(buildOptionsFilename('spy', '2024-01-19', 'CALL', 450), 'CALL_strike_450.csv');
+  assert.strictEqual(buildOptionsFilename('spy', '2024-01-19', 'put', 12.5), 'PUT_strike_12p5.csv');
+  assert.strictEqual(buildOptionsFilename('custom', undefined), 'UNKNOWN_strike_UNKNOWN-STRIKE.csv');
+});
+
+test('computeOptionsWindowSegment detecta proximas dos semanas', () => {
+  assert.strictEqual(computeOptionsWindowSegment(5, 14), 'proximas2semanas');
+  assert.strictEqual(computeOptionsWindowSegment(undefined, 14), 'proximas2semanas');
+  assert.strictEqual(computeOptionsWindowSegment(20, 14), 'fuera_ventana');
+  assert.strictEqual(computeOptionsWindowSegment(10, undefined), 'sin_horizonte');
+});
+
+test('resolveWriter crea rutas proximas2semanas y reanuda lastTimestamp', async (t) => {
+  const headerLine = [
+    't',
+    'chainSymbol',
+    'occSymbol',
+    'instrumentId',
+    'expiration',
+    'dte',
+    'strike',
+    'type',
+    'bid',
+    'ask',
+    'mark',
+    'last',
+    'volume',
+    'openInterest',
+    'impliedVolatility',
+    'delta',
+    'gamma',
+    'theta',
+    'vega',
+    'rho',
+    'underlyingPrice',
+    'source',
+  ].join(',');
+
+  const dataRoot = path.join(process.cwd(), 'data');
+  t.after(() => {
+    fs.rmSync(dataRoot, { recursive: true, force: true });
+  });
+
+  const expiration = '2024-05-20';
+  const normalizedExpiration = formatExpirationForFilename(expiration);
+  const nearWindowSegment = computeOptionsWindowSegment(10, 14);
+  const nearFileName = buildOptionsFilename('spy', expiration, 'CALL', 450);
+  const nearPath = dataPath(
+    { assetClass: 'stock', symbol: 'SPY', date: '2024-05-10' },
+    'options',
+    nearWindowSegment,
+    normalizedExpiration,
+    nearFileName,
   );
-  assert.strictEqual(buildOptionsFilename('custom', undefined), 'custom-options-undated.csv');
+
+  assert.ok(
+    nearPath.endsWith(
+      path.join('options', 'proximas2semanas', normalizedExpiration, nearFileName),
+    ),
+    `unexpected path ${nearPath}`,
+  );
+
+  fs.writeFileSync(
+    nearPath,
+    `${headerLine}\n1710000000000,SPY,\n1710000005000,SPY,\n`,
+    'utf8',
+  );
+
+  assert.strictEqual(readLastTimestamp(nearPath, headerLine), 1710000005000);
+
+  const farWindowSegment = computeOptionsWindowSegment(25, 14);
+  const farFileName = buildOptionsFilename('spy', expiration, 'PUT', 455);
+  const farPath = dataPath(
+    { assetClass: 'stock', symbol: 'SPY', date: '2024-05-10' },
+    'options',
+    farWindowSegment,
+    normalizedExpiration,
+    farFileName,
+  );
+
+  assert.ok(
+    farPath.endsWith(path.join('options', 'fuera_ventana', normalizedExpiration, farFileName)),
+    `unexpected path ${farPath}`,
+  );
 });
