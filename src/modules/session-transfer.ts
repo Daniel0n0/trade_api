@@ -1,7 +1,25 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import type { BrowserContext, Page, StorageState } from 'playwright';
+import type { BrowserContext, Page } from 'playwright';
+
+// Define StorageState type if not using @playwright/test
+type StorageState = {
+  cookies: Array<{
+    name: string;
+    value: string;
+    domain: string;
+    path: string;
+    expires: number;
+    httpOnly: boolean;
+    secure: boolean;
+    sameSite: 'Strict' | 'Lax' | 'None';
+  }>;
+  origins?: Array<{
+    origin: string;
+    localStorage?: Array<{ name: string; value: string }>;
+  }>;
+};
 
 import { FLAGS } from '../bootstrap/env.js';
 
@@ -351,9 +369,21 @@ export async function hydrateModulePage(context: BrowserContext, page: Page): Pr
 
                   for (const storeSeed of databaseSeed.objectStores) {
                     const hasStore = db.objectStoreNames.contains(storeSeed.name);
+                    // Convert readonly keyPath to mutable array if necessary
+                    let options = storeSeed.options ? { ...storeSeed.options } : undefined;
+                    if (options && Array.isArray(options.keyPath)) {
+                      // Always convert to mutable array (string[])
+                      options.keyPath = Array.from(options.keyPath);
+                    }
+                    // Ensure keyPath is mutable or undefined/null
+                    if (options && options.keyPath !== undefined && options.keyPath !== null) {
+                      if (Array.isArray(options.keyPath)) {
+                        options.keyPath = options.keyPath.slice();
+                      }
+                    }
                     const store = hasStore
                       ? upgradeTx.objectStore(storeSeed.name)
-                      : db.createObjectStore(storeSeed.name, storeSeed.options ?? undefined);
+                      : db.createObjectStore(storeSeed.name, options as IDBObjectStoreParameters | undefined);
 
                     const existingIndexes = Array.from(store.indexNames);
                     if (storeSeed.indexes && storeSeed.indexes.length > 0) {
@@ -367,7 +397,7 @@ export async function hydrateModulePage(context: BrowserContext, page: Page): Pr
                         if (!store.indexNames.contains(indexSeed.name)) {
                           store.createIndex(
                             indexSeed.name,
-                            indexSeed.keyPath as IDBKeyPath,
+                            indexSeed.keyPath as string | string[],
                             indexSeed.options ?? undefined,
                           );
                         }
