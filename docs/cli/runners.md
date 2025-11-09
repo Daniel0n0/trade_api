@@ -25,7 +25,7 @@ captura.
 
 ## Runner `spy-5m-1m`
 
-Captura el *socket sniffer* para SPY en marcos de 5 y 1 minuto.
+Captura el *socket sniffer* para SPY cubriendo los marcos 1D, 1H, 15m, 5m, 1m y 1s.
 
 ```bash
 npx trade-api start spy-5m-1m now \
@@ -40,20 +40,6 @@ npx trade-api start spy-5m-1m now \
   sugerido (`spy-5m-1m-now-YYYYMMDD-HHMMSS-SPY`).
 - Los *logs* del sniffer se guardan bajo `logs/spy-5m-1m-socket-sniffer.log` y
   las capturas en `data/stock/<fecha>/SPY/`.
-
-## Runner `spy-daily-hourly-15m`
-
-Placeholder para vistas Legend de SPY en 1D/1H/15m. Aunque actualmente no
-emite archivos, sirve para validar la integración con el orquestador.
-
-```bash
-npx trade-api start spy-daily-hourly-15m now --persist-cookies false
-```
-
-- Útil para comprobar que el orquestador inicia y finaliza módulos sin lógica
-  adicional.
-- El comando responde inmediatamente con el `ctxId`; puedes seguir su estado
-  con `npx trade-api status`.
 
 ## Runner `spy-options-chain`
 

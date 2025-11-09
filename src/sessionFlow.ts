@@ -7,7 +7,6 @@ const LOGIN_URL = 'https://robinhood.com/login/';
 
 const LEGEND_CANDIDATES = new Set<string>([
   buildLegendLayoutUrl(MODULE_URL_CODES['spy-5m-1m']),
-  buildLegendLayoutUrl(MODULE_URL_CODES['spy-daily-hourly-15m']),
   'https://robinhood.com/legend/layout',
 ]);
 

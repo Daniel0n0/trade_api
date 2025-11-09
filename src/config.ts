@@ -88,7 +88,6 @@ const applyModuleUrlCodeOverrides = <T extends Record<string, string>>(
 };
 
 const DEFAULT_MODULE_URL_CODES = {
-  'spy-daily-hourly-15m': 'a9615d6b-6934-4d35-9e15-c0b5acafcfd7',
   'spy-5m-1m': '6bb41212-dbb4-4dc0-a0a7-7a75e4aaf9da',
   'spy-options-chain': 'c59d5a8e-397f-421a-a6e4-8ffe753c3456',
   'spx-options-chain': '0413b972-f84e-4ce7-8eae-c0a50b96cc90',
@@ -229,16 +228,8 @@ export const getModuleDefaultArgs = (definition: ModuleDefinition): ModuleUrlArg
 
 export const MODULES: readonly ModuleDefinition[] = [
   {
-    name: 'spy-daily-hourly-15m',
-    description: 'Gráficas Legend de SPY en 1D, 1H y 15m',
-    urlTemplate: LEGEND_URL_TEMPLATE,
-    urlCode: MODULE_URL_CODES['spy-daily-hourly-15m'],
-    requiresUrlCode: true,
-    defaultSymbols: ['SPY'],
-  },
-  {
     name: 'spy-5m-1m',
-    description: 'Gráficas Legend de SPY en 5m y 1m',
+    description: 'Gráficas Legend de SPY en 1D/1H/15m/5m/1m/1s',
     urlTemplate: LEGEND_URL_TEMPLATE,
     urlCode: MODULE_URL_CODES['spy-5m-1m'],
     requiresUrlCode: true,
@@ -310,12 +301,6 @@ export const MODULES: readonly ModuleDefinition[] = [
     urlTemplate: FUTURES_DETAIL_URL_TEMPLATE,
     defaultSymbols: ['MNQ'],
     requiresSymbols: true,
-  },
-  {
-    name: 'spy-daily-hourly-15m',
-    description: 'Vista Legend de SPY (1D/1H/15m)',
-    url: buildLegendLayoutUrl(MODULE_URL_CODES['spy-daily-hourly-15m']),
-    urlCode: MODULE_URL_CODES['spy-daily-hourly-15m'],
   },
   {
     name: 'spy-options-chain',
