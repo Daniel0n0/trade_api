@@ -83,6 +83,8 @@ const ROTATE_POLICY: RotatePolicy = {
   gzipOnRotate: SHOULD_GZIP_ON_ROTATE,
 };
 
+const LEGEND_CHANNELS = new Set<number>([1, 3, 5, 7]);
+
 const AGGREGATION_SPECS = {
   '1sec': { periodMs: 1_000 },
   '1min': { periodMs: 60_000 },
@@ -492,13 +494,14 @@ async function exposeLogger(
     statsWriter.write(toCsvLine(CSV_HEADERS.stats, row));
   };
 
-  const bump = (channel: number, n: number) => {
+  const bump = (channel: number, n: number, options: { allowNoise?: boolean } = {}) => {
     if (!Number.isFinite(n) || n <= 0) {
       return;
     }
 
-    counts.total += n;
-    let key: string;
+    const { allowNoise = false } = options;
+
+    let key: string | undefined;
     if (channel === 1) {
       counts.ch1 += n;
       key = 'ch1';
@@ -511,12 +514,17 @@ async function exposeLogger(
     } else if (channel === 7) {
       counts.ch7 += n;
       key = 'ch7';
-    } else {
+    } else if (allowNoise) {
       counts.other += n;
       key = `ch${channel}`;
       lastWriteTs.other = Date.now();
     }
 
+    if (!key) {
+      return;
+    }
+
+    counts.total += n;
     lastWriteTs[key] = Date.now();
   };
 
@@ -735,9 +743,25 @@ async function exposeLogger(
     return undefined;
   };
 
-  const writeChannelRows = (channel: number, rows: readonly unknown[]) => {
+  const writeChannelRows = (
+    channel: number,
+    rows: readonly unknown[],
+    context: { allowNoise?: boolean; sourceUrl?: string } = {},
+  ) => {
     if (!rows?.length) {
       return;
+    }
+
+    const { allowNoise = false, sourceUrl } = context;
+
+    if (!allowNoise) {
+      if (sourceUrl !== undefined && !isLegend(sourceUrl)) {
+        return;
+      }
+
+      if (!LEGEND_CHANNELS.has(channel)) {
+        return;
+      }
     }
 
     const label =
@@ -751,7 +775,7 @@ async function exposeLogger(
         ? 'quote'
         : 'raw';
     const writer = getChannelWriter(channel, label);
-    bump(channel, rows.length);
+    bump(channel, rows.length, { allowNoise });
 
     let lastNow = Date.now();
     for (const row of rows) {
@@ -908,37 +932,46 @@ async function exposeLogger(
       writeGeneral(entry);
 
       if (isWsMessageEntry(entry)) {
+        let cachedFeed: ReturnType<typeof extractFeed> | undefined;
+        const resolveFeed = () => {
+          if (cachedFeed === undefined) {
+            cachedFeed = extractFeed(entry.parsed);
+          }
+          return cachedFeed;
+        };
+        const writeFeedIfValid = () => {
+          const feed = resolveFeed();
+          if (!feed || !feed.data.length) {
+            return;
+          }
+
+          if (!isLegend(entry.url) || !LEGEND_CHANNELS.has(feed.channel)) {
+            return;
+          }
+
+          writeChannelRows(feed.channel, feed.data, { sourceUrl: entry.url });
+        };
+
         const classification = legendClassification ?? classifyLegendWsMessage(entry);
         if (classification.matched) {
           switch (classification.kind) {
-            case 'marketdata': {
-              const feed = extractFeed(entry.parsed);
-              if (feed && feed.data.length) {
-                writeChannelRows(feed.channel, feed.data);
-              }
+            case 'marketdata':
+              writeFeedIfValid();
               break;
-            }
             case 'options':
               writeLegendSink(legendOptionsWriter, 'legendOptions', classification.payload);
               break;
             case 'news':
               writeLegendSink(newsWriter, 'legendNews', classification.payload);
               break;
-            case 'unknown': {
-              const feed = extractFeed(entry.parsed);
-              if (feed && feed.data.length) {
-                writeChannelRows(feed.channel, feed.data);
-              }
+            case 'unknown':
+              writeFeedIfValid();
               break;
-            }
             case 'ignore':
               break;
           }
         } else {
-          const feed = extractFeed(entry.parsed);
-          if (feed && feed.data.length) {
-            writeChannelRows(feed.channel, feed.data);
-          }
+          writeFeedIfValid();
         }
       }
     } catch (error) {
