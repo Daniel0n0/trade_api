@@ -76,13 +76,18 @@ const MODULE_URL_CODE_ENV_PREFIX = 'TRADE_API_URL_CODE_';
 const normalizeModuleEnvKey = (module: string): string =>
   module.replace(/[^a-z0-9]/giu, '_').toUpperCase();
 
+const getModuleUrlCodeOverride = (module: string): string | undefined => {
+  const envKey = `${MODULE_URL_CODE_ENV_PREFIX}${normalizeModuleEnvKey(module)}`;
+  const override = process.env[envKey]?.trim();
+  return override && override.length > 0 ? override : undefined;
+};
+
 const applyModuleUrlCodeOverrides = <T extends Record<string, string>>(
   defaults: T,
 ): Readonly<Record<keyof T, string>> => {
   const entries = Object.entries(defaults).map(([module, fallback]) => {
-    const envKey = `${MODULE_URL_CODE_ENV_PREFIX}${normalizeModuleEnvKey(module)}`;
-    const override = process.env[envKey]?.trim();
-    return [module, override && override.length > 0 ? override : fallback];
+    const override = getModuleUrlCodeOverride(module);
+    return [module, override ?? fallback];
   });
   return Object.freeze(Object.fromEntries(entries) as Record<keyof T, string>);
 };
@@ -91,21 +96,45 @@ const DEFAULT_MODULE_URL_CODES = {
   'spy-5m-1m': '6bb41212-dbb4-4dc0-a0a7-7a75e4aaf9da',
   'spy-options-chain': 'c59d5a8e-397f-421a-a6e4-8ffe753c3456',
   'spx-options-chain': '0413b972-f84e-4ce7-8eae-c0a50b96cc90',
-  // Los siguientes códigos sirven como marcadores hasta que se capture el UUID
-  // definitivo de cada layout Legend. Puedes sobrescribirlos con `--url-code`
-  // al ejecutar un runner o con variables de entorno `TRADE_API_URL_CODE_*`
-  // para capturar nuevos layouts sin recompilar.
-  'stocks-generic-chart': '00000000-0000-0000-0000-000000000101',
-  'options-generic': '00000000-0000-0000-0000-000000000102',
-  'stock-daily-stats': '00000000-0000-0000-0000-000000000103',
-  'stock-daily-news': '00000000-0000-0000-0000-000000000104',
-  'stock-daily-orderbook': '00000000-0000-0000-0000-000000000105',
-  'futures-overview': '00000000-0000-0000-0000-000000000106',
-  'futures-detail': '00000000-0000-0000-0000-000000000107',
 } as const satisfies Record<string, string>;
 
 export const MODULE_URL_CODES: Readonly<Record<keyof typeof DEFAULT_MODULE_URL_CODES, string>> =
   applyModuleUrlCodeOverrides(DEFAULT_MODULE_URL_CODES);
+
+const OPTIONAL_MODULE_URL_CODE_NAMES = [
+  'stocks-generic-chart',
+  'options-generic',
+  'stock-daily-stats',
+  'stock-daily-news',
+  'stock-daily-orderbook',
+] as const;
+
+type OptionalModuleUrlCodeName = (typeof OPTIONAL_MODULE_URL_CODE_NAMES)[number];
+
+const OPTIONAL_MODULE_URL_CODES = Object.freeze(
+  Object.fromEntries(
+    OPTIONAL_MODULE_URL_CODE_NAMES.flatMap((module) => {
+      const override = getModuleUrlCodeOverride(module);
+      return override ? ([[module, override]] as const) : [];
+    }),
+  ) as Record<string, string>,
+);
+
+export const getModuleUrlCode = (module: string): string | undefined => {
+  if (!module) {
+    return undefined;
+  }
+
+  if (module in MODULE_URL_CODES) {
+    return MODULE_URL_CODES[module as keyof typeof MODULE_URL_CODES];
+  }
+
+  if (module in OPTIONAL_MODULE_URL_CODES) {
+    return OPTIONAL_MODULE_URL_CODES[module];
+  }
+
+  return undefined;
+};
 
 export const buildLegendLayoutUrl = (code: string): string =>
   `${ROBINHOOD_LEGEND_LAYOUT_BASE}/${code}${LEGEND_DEFAULT_QUERY}`;
@@ -225,7 +254,7 @@ export const getModuleDefaultArgs = (definition: ModuleDefinition): ModuleUrlArg
   };
 };
 
-export const MODULES: readonly ModuleDefinition[] = [
+const BASE_MODULES: readonly ModuleDefinition[] = [
   {
     name: 'spy-5m-1m',
     description: 'Gráficas Legend de SPY en 1D/1H/15m/5m/1m/1s',
@@ -233,12 +262,6 @@ export const MODULES: readonly ModuleDefinition[] = [
     urlCode: MODULE_URL_CODES['spy-5m-1m'],
     requiresUrlCode: true,
     defaultSymbols: ['SPY'],
-  },
-  {
-    name: 'spot',
-    description: 'Vista Legend genérica (requiere urlCode)',
-    urlTemplate: LEGEND_URL_TEMPLATE,
-    requiresUrlCode: true,
   },
   {
     name: 'spy-options-chain',
@@ -314,39 +337,6 @@ export const MODULES: readonly ModuleDefinition[] = [
     urlCode: MODULE_URL_CODES['spx-options-chain'],
   },
   {
-    name: 'stocks-generic-chart',
-    description: 'Leyenda genérica de acciones (marcos configurables)',
-    url: buildLegendLayoutUrl(MODULE_URL_CODES['stocks-generic-chart']),
-    urlCode: MODULE_URL_CODES['stocks-generic-chart'],
-  },
-  {
-    name: 'options-generic',
-    description: 'Cadena de opciones genérica (símbolo parametrizable)',
-    url: buildLegendLayoutUrl(MODULE_URL_CODES['options-generic']),
-    urlCode: MODULE_URL_CODES['options-generic'],
-  },
-  {
-    name: 'stock-daily-stats',
-    description: 'Estadísticas diarias de acciones',
-    url: buildLegendLayoutUrl(MODULE_URL_CODES['stock-daily-stats']),
-    urlCode: MODULE_URL_CODES['stock-daily-stats'],
-    defaultSymbols: ['SPY'],
-  },
-  {
-    name: 'stock-daily-news',
-    description: 'Noticias diarias de acciones',
-    url: buildLegendLayoutUrl(MODULE_URL_CODES['stock-daily-news']),
-    urlCode: MODULE_URL_CODES['stock-daily-news'],
-    defaultSymbols: ['SPY'],
-  },
-  {
-    name: 'stock-daily-orderbook',
-    description: 'Libro de órdenes diario de acciones',
-    url: buildLegendLayoutUrl(MODULE_URL_CODES['stock-daily-orderbook']),
-    urlCode: MODULE_URL_CODES['stock-daily-orderbook'],
-    defaultSymbols: ['SPY'],
-  },
-  {
     name: 'futures-overview',
     description: 'Panel general de futuros',
     url: `${FUTURES_OVERVIEW_URL}/`,
@@ -360,3 +350,62 @@ export const MODULES: readonly ModuleDefinition[] = [
     requiresSymbols: true,
   },
 ];
+
+const OPTIONAL_LEGEND_MODULES: readonly (ModuleDefinition & {
+  readonly name: OptionalModuleUrlCodeName;
+})[] = [
+  {
+    name: 'stocks-generic-chart',
+    description: 'Leyenda genérica de acciones (marcos configurables)',
+    urlTemplate: LEGEND_URL_TEMPLATE,
+    requiresUrlCode: true,
+  },
+  {
+    name: 'options-generic',
+    description: 'Cadena de opciones genérica (símbolo parametrizable)',
+    urlTemplate: LEGEND_URL_TEMPLATE,
+    requiresUrlCode: true,
+  },
+  {
+    name: 'stock-daily-stats',
+    description: 'Estadísticas diarias de acciones',
+    urlTemplate: LEGEND_URL_TEMPLATE,
+    requiresUrlCode: true,
+    defaultSymbols: ['SPY'],
+  },
+  {
+    name: 'stock-daily-news',
+    description: 'Noticias diarias de acciones',
+    urlTemplate: LEGEND_URL_TEMPLATE,
+    requiresUrlCode: true,
+    defaultSymbols: ['SPY'],
+  },
+  {
+    name: 'stock-daily-orderbook',
+    description: 'Libro de órdenes diario de acciones',
+    urlTemplate: LEGEND_URL_TEMPLATE,
+    requiresUrlCode: true,
+    defaultSymbols: ['SPY'],
+  },
+];
+
+const ENABLED_OPTIONAL_MODULES: readonly ModuleDefinition[] = OPTIONAL_LEGEND_MODULES.flatMap(
+  (definition) => {
+    const urlCode = OPTIONAL_MODULE_URL_CODES[definition.name];
+    if (!urlCode) {
+      return [];
+    }
+
+    return [
+      {
+        ...definition,
+        urlCode,
+      },
+    ];
+  },
+);
+
+export const MODULES: readonly ModuleDefinition[] = Object.freeze([
+  ...BASE_MODULES,
+  ...ENABLED_OPTIONAL_MODULES,
+]);

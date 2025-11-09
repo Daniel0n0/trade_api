@@ -12,7 +12,7 @@ import {
   type ModuleArgsInput,
 } from './schema.js';
 import type { ModuleArgs } from '../orchestrator/messages.js';
-import { MODULE_URL_CODES } from '../config.js';
+import { getModuleUrlCode } from '../config.js';
 
 const BOOLEAN_TRUE = new Set(['1', 'true', 'yes', 'on']);
 const BOOLEAN_FALSE = new Set(['0', 'false', 'no', 'off']);
@@ -301,11 +301,7 @@ export function normalizeModuleArgs(input: Partial<ModuleArgsInput>): ModuleArgs
     optionsDate: coerceISO(input.optionsDate, { label: 'optionsDate' }),
     optionsHorizon: toOptionalNumber(input.optionsHorizon, 'optionsHorizon'),
     urlMode: normalizeEnumValue(input.urlMode, 'urlMode', URL_MODE_VALUES, (raw) => raw.trim().toLowerCase()),
-    urlCode:
-      toOptionalString(input.urlCode) ??
-      (moduleName && moduleName in MODULE_URL_CODES
-        ? MODULE_URL_CODES[moduleName as keyof typeof MODULE_URL_CODES]
-        : undefined),
+    urlCode: toOptionalString(input.urlCode) ?? (moduleName ? getModuleUrlCode(moduleName) : undefined),
     persistCookies: coerceBool(input.persistCookies, 'persistCookies'),
     persistIndexedDb: coerceBool(input.persistIndexedDb, 'persistIndexedDb'),
     storageStatePath: toOptionalString(input.storageStatePath),
