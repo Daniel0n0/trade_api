@@ -1,5 +1,7 @@
 export const MAX_WS_ENTRY_TEXT_LENGTH = 200_000;
 
+export const LEGEND_WS_PATTERN = /^wss:\/\/api\.robinhood\.com\/marketdata\/streaming\/legend\//i;
+
 export function toText(payload: unknown): string {
   if (typeof payload === 'string') {
     return payload;
