@@ -11,6 +11,7 @@ import {
   parseSymbols,
 } from '../src/cli/normalize.js';
 import type { ModuleArgsInput } from '../src/cli/schema.js';
+import { MODULE_URL_CODES } from '../src/config.js';
 
 test('parseSymbols normalizes separators and removes duplicados', () => {
   assert.deepEqual(parseSymbols('AAPL, msft TSLA'), ['AAPL', 'MSFT', 'TSLA']);
@@ -57,17 +58,24 @@ test('normalizeModuleArgs convierte banderas y fechas', () => {
     action: 'stream',
     start: '2024-01-01T00:00:00Z',
     persistCookies: false,
+    urlCode: 'legend-123',
   });
   assert.strictEqual(normalized.module, 'quotes');
   assert.strictEqual(normalized.action, 'stream');
   assert.strictEqual(normalized.start, '2024-01-01T00:00:00Z');
   assert.strictEqual(normalized.persistCookies, false);
+  assert.strictEqual(normalized.urlCode, 'legend-123');
 });
 
 test('normalizeModuleArgs acepta urlMode válidos', () => {
   const normalized = normalizeModuleArgs({ module: 'options', action: 'now', urlMode: 'symbol' });
   assert.strictEqual(normalized.urlMode, 'symbol');
   assert.throws(() => normalizeModuleArgs({ module: 'options', action: 'now', urlMode: 'invalid' as unknown as any }), /urlMode/);
+});
+
+test('normalizeModuleArgs aplica urlCode por defecto según el módulo', () => {
+  const normalized = normalizeModuleArgs({ module: 'spy-5m-1m', action: 'now' });
+  assert.strictEqual(normalized.urlCode, MODULE_URL_CODES['spy-5m-1m']);
 });
 
 test('mergeArgChain aplica precedencia de derecha a izquierda', () => {

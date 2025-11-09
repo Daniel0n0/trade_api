@@ -5,6 +5,7 @@ import { parse } from 'yaml';
 import { z } from 'zod';
 
 import type { ModuleArgs, DataSink, LoginMode, CredentialSource, UrlMode } from './messages.js';
+import { MODULE_URL_CODES } from '../config.js';
 
 const BooleanLikeSchema = z
   .preprocess((value) => {
@@ -85,6 +86,7 @@ const JobSchema = z
     optionsDate: z.string().optional(),
     optionsHorizon: NumberLikeSchema,
     urlMode: z.enum(UrlModeValues as [UrlMode, ...UrlMode[]]).optional(),
+    urlCode: z.string().min(1).optional(),
     persistCookies: BooleanLikeSchema,
     persistIndexedDb: BooleanLikeSchema,
     storageStatePath: z.string().optional(),
@@ -136,6 +138,7 @@ function toModuleArgsFromJob(job: JobConfig): ModuleArgs {
     optionsDate: job.optionsDate ?? undefined,
     optionsHorizon: job.optionsHorizon ?? undefined,
     urlMode: job.urlMode ?? undefined,
+    urlCode: job.urlCode ?? MODULE_URL_CODES[moduleId] ?? undefined,
     persistCookies: job.persistCookies,
     persistIndexedDb: job.persistIndexedDb,
     storageStatePath: job.storageStatePath ?? undefined,

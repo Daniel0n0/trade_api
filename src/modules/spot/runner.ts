@@ -11,7 +11,7 @@ import {
   runSocketSniffer,
   type SocketSnifferHandle,
 } from '../../modulos/socket-sniffer.js';
-import { ROBINHOOD_HOME_URL } from '../../config.js';
+import { ROBINHOOD_HOME_URL, buildLegendLayoutUrl, MODULE_URL_CODES } from '../../config.js';
 import {
   assertParentMessage,
   sendToParent,
@@ -28,8 +28,7 @@ const DEFAULT_URL = ROBINHOOD_HOME_URL;
 const DEFAULT_SYMBOLS: readonly string[] = [];
 
 const URL_BY_MODULE: Record<string, string> = {
-  'spy-5m-1m':
-    'https://robinhood.com/legend/layout/9a624e15-84c5-4a0e-8391-69f32b32d8d5?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT',
+  'spy-5m-1m': buildLegendLayoutUrl(MODULE_URL_CODES['spy-5m-1m']),
 };
 
 const SYMBOLS_BY_MODULE: Record<string, readonly string[]> = {
@@ -135,6 +134,10 @@ export async function runSpotRunner(initialArgs: ModuleArgs): Promise<void> {
   const resolveUrl = (args: ModuleArgs, payload?: RunnerStartPayload): string => {
     if (payload?.url) {
       return payload.url;
+    }
+
+    if (args.urlCode) {
+      return buildLegendLayoutUrl(args.urlCode);
     }
 
     const mapped = URL_BY_MODULE[args.module];

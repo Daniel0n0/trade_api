@@ -80,7 +80,17 @@ test('start command normalizes argumentos antes de iniciar', async () => {
   const program = new Command();
   registerStartCommand(program, context);
 
-  const argv = ['node', 'trade-api', 'start', 'quotes', 'stream', '--persist-cookies', 'false'];
+  const argv = [
+    'node',
+    'trade-api',
+    'start',
+    'quotes',
+    'stream',
+    '--persist-cookies',
+    'false',
+    '--url-code',
+    'legend-xyz',
+  ];
   await program.parseAsync(argv);
 
   assert.strictEqual(manager.startedArgs.length, 1);
@@ -88,6 +98,7 @@ test('start command normalizes argumentos antes de iniciar', async () => {
   assert.strictEqual(args.module, 'quotes');
   assert.strictEqual(args.action, 'stream');
   assert.strictEqual(args.persistCookies, false);
+  assert.strictEqual(args.urlCode, 'legend-xyz');
 });
 
 test('start command respeta el modo dry-run', async () => {
@@ -178,6 +189,8 @@ test('run-config command aplica filtros y overrides', async () => {
     'stream',
     '--start',
     '2024-01-01T00:00:00Z',
+    '--url-code',
+    'legend-run-config',
   ];
 
   await program.parseAsync(argv);
@@ -187,6 +200,7 @@ test('run-config command aplica filtros y overrides', async () => {
   assert.strictEqual(jobArgs.module, 'quotes');
   assert.strictEqual(jobArgs.action, 'stream');
   assert.strictEqual(jobArgs.start, '2024-01-01T00:00:00Z');
+  assert.strictEqual(jobArgs.urlCode, 'legend-run-config');
 });
 
 test('session command respeta el modo dry-run', async () => {
