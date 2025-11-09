@@ -4,7 +4,7 @@ Usa esta lista antes de dar por válida una ejecución manual o automatizada.
 
 ## Archivos generados
 
-- [ ] Confirmar que `data/<SÍMBOLO>/<AAAA-MM-DD>/` contiene los CSV esperados.
+- [ ] Confirmar que `data/<CLASE>/<AAAA-MM-DD>/<SÍMBOLO>/` contiene los CSV esperados.
 - [ ] Verificar que los nombres siguen el prefijo impreso por la CLI
       (`<módulo>-<acción>-<timestamp>-<símbolos>`).
 - [ ] Revisar que los archivos `.jsonl` asociados (Legend o sockets) existen

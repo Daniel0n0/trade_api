@@ -39,7 +39,7 @@ npx trade-api start spy-5m-1m now \
 - El comando imprime el `ctxId` asignado al runner y el prefijo de archivos
   sugerido (`spy-5m-1m-now-YYYYMMDD-HHMMSS-SPY`).
 - Los *logs* del sniffer se guardan bajo `logs/spy-5m-1m-socket-sniffer.log` y
-  las capturas en `data/SPY/<fecha>/`.
+  las capturas en `data/stock/<fecha>/SPY/`.
 
 ## Runner `spy-daily-hourly-15m`
 
@@ -75,7 +75,8 @@ npx trade-api start spy-options-chain now \
 - `--options-horizon` limita las expiraciones adicionales que se capturan
   automáticamente.
 - Los archivos terminan en `*-options-<expiracion>.csv` dentro de
-  `data/SPY/<fecha>/` y los eventos Legend asociados en `*-options-*.jsonl`.
+  `data/options/<fecha>/SPY/options/` y los eventos Legend asociados en
+  `*-options-*.jsonl`.
 - `--url-code` permite sobrescribir el UUID del layout Legend en caso de que el
   predeterminado no coincida.
 
@@ -96,7 +97,7 @@ npx trade-api start spx-options-chain now \
 
 - Usar `--url-mode symbol` fuerza la navegación a `/options/SPX` incluso si el
   runner se configuró con un valor distinto.
-- Los CSV se guardan bajo `data/SPX/<fecha>/` y los *logs* en
+- Los CSV se guardan bajo `data/options/<fecha>/SPX/options/` y los *logs* en
   `logs/spx-options-chain-socket-sniffer.log`.
 - `--url-code` te permite navegar a un layout Legend alternativo sin modificar
   el archivo de configuración.
@@ -116,7 +117,7 @@ npx trade-api start options-generic now \
 ```
 
 - Define siempre `--symbols` para limitar el sniffer a los contratos deseados.
-- Los CSV se generan en `data/<SIMBOLO>/<fecha>/*-options-*.csv` y los eventos
+- Los CSV se generan en `data/options/<fecha>/<SIMBOLO>/options/*-options-*.csv` y los eventos
   Legend en `*-options.jsonl`.
 - Ajusta `--url-code` cuando necesites otro layout personalizado (por ejemplo,
   una lista de vigilancia propia).
@@ -134,7 +135,7 @@ npx trade-api start stocks-generic-chart now \
   --url-code 00000000-0000-0000-0000-000000000101
 ```
 
-- Los archivos se almacenan en `data/<SIMBOLO>/` con CSV rotados por
+- Los archivos se almacenan en `data/stock/<fecha>/<SIMBOLO>/bars/` con CSV rotados por
   timeframe (`1min`, `5min`, etc.) y los *logs* en `logs/stocks-generic-chart-*.log`.
 - Cambia `--url-code` para reutilizar tus propios layouts Legend guardados.
 - Omite `--start`/`--end` si deseas capturar en tiempo real sin recorte.

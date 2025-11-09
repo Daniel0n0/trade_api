@@ -301,7 +301,11 @@ export function normalizeModuleArgs(input: Partial<ModuleArgsInput>): ModuleArgs
     optionsDate: coerceISO(input.optionsDate, { label: 'optionsDate' }),
     optionsHorizon: toOptionalNumber(input.optionsHorizon, 'optionsHorizon'),
     urlMode: normalizeEnumValue(input.urlMode, 'urlMode', URL_MODE_VALUES, (raw) => raw.trim().toLowerCase()),
-    urlCode: toOptionalString(input.urlCode) ?? (moduleName ? MODULE_URL_CODES[moduleName] : undefined),
+    urlCode:
+      toOptionalString(input.urlCode) ??
+      (moduleName && moduleName in MODULE_URL_CODES
+        ? MODULE_URL_CODES[moduleName as keyof typeof MODULE_URL_CODES]
+        : undefined),
     persistCookies: coerceBool(input.persistCookies, 'persistCookies'),
     persistIndexedDb: coerceBool(input.persistIndexedDb, 'persistIndexedDb'),
     storageStatePath: toOptionalString(input.storageStatePath),
