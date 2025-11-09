@@ -320,10 +320,10 @@ Para usar únicamente la vista manual del navegador:
 
 
 1(spy con marco de tiempo 1 dia, 1 hora y 15minutos):
-https://robinhood.com/legend/layout/6bb41212-dbb4-4dc0-a0a7-7a75e4aaf9da?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT
+https://robinhood.com/legend/layout/a9615d6b-6934-4d35-9e15-c0b5acafcfd7?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT
 
 2(spy con marco de tiempo 5 minutos y 1 minuto):
-https://robinhood.com/legend/layout/6bb41212-dbb4-4dc0-a0a7-7a75e4aaf9da?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT
+https://robinhood.com/legend/layout/fe5d1cd6-27de-49f6-9d9a-b56e905f3a8f?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT
 
 3(spy options chain):
 https://robinhood.com/legend/layout/c59d5a8e-397f-421a-a6e4-8ffe753c3456?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT

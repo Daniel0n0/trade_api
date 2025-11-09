@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import process from 'node:process';
 
 export const ROBINHOOD_URL = 'https://robinhood.com/';
 export const ROBINHOOD_ENTRY_URL = 'https://robinhood.com/us/en/';
@@ -70,14 +71,31 @@ export interface ModuleDefinition {
 const LEGEND_DEFAULT_WEB_CLIENT = 'WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT';
 const LEGEND_DEFAULT_QUERY = `?default_web_client=${LEGEND_DEFAULT_WEB_CLIENT}` as const;
 
-export const MODULE_URL_CODES: Readonly<Record<string, string>> = {
-  'spy-daily-hourly-15m': '6bb41212-dbb4-4dc0-a0a7-7a75e4aaf9da',
-  'spy-5m-1m': '6bb41212-dbb4-4dc0-a0a7-7a75e4aaf9da',
+const MODULE_URL_CODE_ENV_PREFIX = 'TRADE_API_URL_CODE_';
+
+const normalizeModuleEnvKey = (module: string): string =>
+  module.replace(/[^a-z0-9]/giu, '_').toUpperCase();
+
+const applyModuleUrlCodeOverrides = <T extends Record<string, string>>(
+  defaults: T,
+): Readonly<Record<keyof T, string>> => {
+  const entries = Object.entries(defaults).map(([module, fallback]) => {
+    const envKey = `${MODULE_URL_CODE_ENV_PREFIX}${normalizeModuleEnvKey(module)}`;
+    const override = process.env[envKey]?.trim();
+    return [module, override && override.length > 0 ? override : fallback];
+  });
+  return Object.freeze(Object.fromEntries(entries) as Record<keyof T, string>);
+};
+
+const DEFAULT_MODULE_URL_CODES = {
+  'spy-daily-hourly-15m': 'a9615d6b-6934-4d35-9e15-c0b5acafcfd7',
+  'spy-5m-1m': 'fe5d1cd6-27de-49f6-9d9a-b56e905f3a8f',
   'spy-options-chain': 'c59d5a8e-397f-421a-a6e4-8ffe753c3456',
   'spx-options-chain': '0413b972-f84e-4ce7-8eae-c0a50b96cc90',
   // Los siguientes códigos sirven como marcadores hasta que se capture el UUID
-  // definitivo de cada layout Legend. Sobrescríbelos con `--url-code` cuando
-  // ejecutes un runner.
+  // definitivo de cada layout Legend. Puedes sobrescribirlos con `--url-code`
+  // al ejecutar un runner o con variables de entorno `TRADE_API_URL_CODE_*`
+  // para capturar nuevos layouts sin recompilar.
   'stocks-generic-chart': '00000000-0000-0000-0000-000000000101',
   'options-generic': '00000000-0000-0000-0000-000000000102',
   'stock-daily-stats': '00000000-0000-0000-0000-000000000103',
@@ -85,7 +103,10 @@ export const MODULE_URL_CODES: Readonly<Record<string, string>> = {
   'stock-daily-orderbook': '00000000-0000-0000-0000-000000000105',
   'futures-overview': '00000000-0000-0000-0000-000000000106',
   'futures-detail': '00000000-0000-0000-0000-000000000107',
-} as const;
+} as const satisfies Record<string, string>;
+
+export const MODULE_URL_CODES: Readonly<Record<keyof typeof DEFAULT_MODULE_URL_CODES, string>> =
+  applyModuleUrlCodeOverrides(DEFAULT_MODULE_URL_CODES);
 
 export const buildLegendLayoutUrl = (code: string): string =>
   `${ROBINHOOD_LEGEND_LAYOUT_BASE}/${code}${LEGEND_DEFAULT_QUERY}`;
