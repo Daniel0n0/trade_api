@@ -22,6 +22,7 @@ import {
   toMsUtc,
 } from '../io/row.js';
 import { dataPath } from '../io/paths.js';
+import { ensureDirectoryForFileSync } from '../io/dir.js';
 import { BaseEvent } from '../io/schemas.js';
 import { extractFeed, MAX_WS_ENTRY_TEXT_LENGTH, normaliseFramePayload } from '../utils/payload.js';
 
@@ -1031,6 +1032,62 @@ async function exposeLogger(
   });
 
   return closeAll;
+}
+
+const sanitizeLogPrefix = (raw: string | undefined): string => {
+  if (!raw) {
+    return DEFAULT_PREFIX;
+  }
+
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return DEFAULT_PREFIX;
+  }
+
+  const sanitized = trimmed.replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '');
+  return sanitized || DEFAULT_PREFIX;
+};
+
+const resolveLogBaseName = (prefix: string): string => `${prefix}-socket-sniffer`;
+
+const resolveHookArgs = (symbols: readonly string[]) => ({
+  wantedSymbols: symbols,
+  maxTextLength: MAX_WS_ENTRY_TEXT_LENGTH,
+  hookGuardFlag: HOOK_GUARD_FLAG,
+});
+
+export async function runSocketSniffer(
+  page: Page,
+  options: SocketSnifferOptions = {},
+): Promise<SocketSnifferHandle> {
+  const symbols = normaliseSymbols(options.symbols ?? []);
+  const logPrefix = sanitizeLogPrefix(options.logPrefix);
+  const baseName = resolveLogBaseName(logPrefix);
+  const logFile = path.join(process.cwd(), 'logs', `${baseName}.jsonl`);
+
+  ensureDirectoryForFileSync(logFile);
+
+  const closeLogger = await exposeLogger(page, logFile, baseName, {
+    start: options.start,
+    end: options.end,
+  });
+
+  const hookScript = buildHookScript();
+  const hookArgs = resolveHookArgs(symbols);
+
+  await page.addInitScript(hookScript, hookArgs);
+  await page.evaluate(hookScript, hookArgs);
+
+  const logPattern = path.join(process.cwd(), 'logs', `${baseName}*.jsonl`);
+
+  const close = () => {
+    closeLogger();
+  };
+
+  return {
+    close,
+    logPattern,
+  } satisfies SocketSnifferHandle;
 }
 
 function buildHookScript() {

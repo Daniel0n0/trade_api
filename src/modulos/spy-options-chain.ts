@@ -1,9 +1,9 @@
-import type { ModuleRunner } from '../orchestrator/types.js';
+import { createOptionsModuleRunner } from './options-shared.js';
+
+const DEFAULT_SYMBOLS = ['SPY'] as const;
 
 /**
- * Módulo placeholder para la options chain de SPY.
- * Implementar la lógica específica según sea necesario.
+ * Captura la cadena de opciones de SPY usando el sniffer de sockets y el
+ * interceptor de respuestas HTTP para persistir CSV por expiración.
  */
-export const runSpyOptionsChainModule: ModuleRunner = async () => {
-  return undefined;
-};
+export const runSpyOptionsChainModule = createOptionsModuleRunner(DEFAULT_SYMBOLS);
