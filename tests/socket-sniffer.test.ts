@@ -13,7 +13,7 @@ test('resolveEventTimestamp converts seconds-based timestamps to milliseconds', 
 
   assert.ok(typeof resolved === 'number');
   assert.strictEqual(resolved, seconds * 1000);
-  assert.ok(now - resolved < 2000);
+  assert.ok(now - resolved < 1500);
 });
 
 test('resolveEventTimestamp prefers event time fields in milliseconds when present', () => {
@@ -35,7 +35,7 @@ test('resolveEventTimestamp normalises microsecond timestamps from auxiliary fie
 
   assert.ok(typeof resolved === 'number');
   assert.strictEqual(resolved, millis);
-  assert.ok(Date.now() - resolved < 2000);
+  assert.ok(Date.now() - resolved < 1500);
 });
 
 test('resolveEventTimestamp returns undefined when no timestamp is present', () => {
