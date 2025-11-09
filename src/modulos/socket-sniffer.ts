@@ -58,10 +58,29 @@ const LAG_WARN_THRESHOLDS_MS: Record<string, number> = {
 };
 const HOOK_GUARD_FLAG = '__socketSnifferHooked__';
 
+/**
+ * Controls whether rotated log files should be compressed. Defaults to `false`
+ * but can be toggled by setting `process.env.GZIP_ROTATE` to a truthy value
+ * ("1", "true", "yes" or "on").
+ */
+const GZIP_ROTATE_ENV = process.env.GZIP_ROTATE;
+const SHOULD_GZIP_ON_ROTATE = (() => {
+  if (!GZIP_ROTATE_ENV) {
+    return false;
+  }
+
+  const normalized = GZIP_ROTATE_ENV.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return ['1', 'true', 'yes', 'on'].includes(normalized);
+})();
+
 const ROTATE_POLICY: RotatePolicy = {
   maxBytes: 50_000_000,
   maxMinutes: 60,
-  gzipOnRotate: true,
+  gzipOnRotate: SHOULD_GZIP_ON_ROTATE,
 };
 
 const AGGREGATION_SPECS = {
