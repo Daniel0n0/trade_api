@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { Page } from 'playwright';
+import type { Frame, Page } from 'playwright';
 import { DateTime } from 'luxon';
 
 import { RotatingWriter, type RotatePolicy } from './rotating-writer.js';
@@ -25,6 +25,7 @@ import { dataPath } from '../io/paths.js';
 import { ensureDirectoryForFileSync } from '../io/dir.js';
 import { BaseEvent } from '../io/schemas.js';
 import { extractFeed, MAX_WS_ENTRY_TEXT_LENGTH } from '../utils/payload.js';
+import { isHookableFrame } from '../utils/origins.js';
 
 type Serializable = Record<string, unknown>;
 
@@ -1061,15 +1062,27 @@ export async function runSocketSniffer(
     console.warn('[socket-sniffer] addInitScript failed:', error);
   }
 
-  try {
-    await page.evaluate((script) => {
-      // eslint-disable-next-line no-new-func
-      const runner = new Function(script);
-      runner();
-    }, hookScriptString);
-  } catch (error) {
-    console.warn('[socket-sniffer] hook evaluate failed; continuing in CDP-only mode:', error);
-  }
+  const runHookInFrame = async (frame: Frame): Promise<void> => {
+    if (!isHookableFrame(frame)) {
+      return;
+    }
+
+    try {
+      await frame.evaluate((script: string) => {
+        // eslint-disable-next-line no-new-func
+        const runner = new Function(script);
+        runner();
+      }, hookScriptString);
+    } catch (error) {
+      console.warn('[socket-sniffer] hook evaluate failed; continuing in CDP-only mode:', error);
+    }
+  };
+
+  page.on('framenavigated', (frame) => {
+    void runHookInFrame(frame);
+  });
+
+  await Promise.all(page.frames().map((frame) => runHookInFrame(frame)));
 
   const logPattern = path.join(process.cwd(), 'logs', `${baseName}*.jsonl`);
 
@@ -1095,6 +1108,11 @@ ${HOOK_POLYFILL}
     const { wantedSymbols, maxTextLength, hookGuardFlag } = params || {};
     const globalObject = window;
     const guardKey = hookGuardFlag || '${HOOK_GUARD_FLAG}';
+    const locationObject = globalObject && globalObject.location;
+    const hostname = locationObject && typeof locationObject.hostname === 'string' ? locationObject.hostname : '';
+    if (!/robinhood[.]com/i.test(hostname)) {
+      return;
+    }
     if (globalObject[guardKey]) {
       return;
     }
@@ -1103,7 +1121,9 @@ ${HOOK_POLYFILL}
 
     try {
       globalObject.__socketHookInstalled = true;
-      console.log('[socket-sniffer][HOOK] instalado en', location.href);
+      if (globalObject.DEBUG_HOOKS) {
+        console.log('[socket-sniffer][HOOK] instalado en', location.href);
+      }
       globalObject.socketSnifferLog && globalObject.socketSnifferLog({ kind: 'hook-installed', href: location.href });
     } catch (error) {
       void error;
