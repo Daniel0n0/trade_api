@@ -3,6 +3,7 @@ import type { BrowserContext, Page } from 'playwright';
 import { MODULES } from './config.js';
 import { MODULE_RUNNERS } from './modulos/index.js';
 import type { ModuleArgs } from './orchestrator/messages.js';
+import { hydrateModulePage } from './modules/session-transfer.js';
 
 const CONSENT_CONTAINER_SELECTORS = [
   '[data-testid*="consent"]',
@@ -78,6 +79,8 @@ async function ensureNoModalConsent(page: Page): Promise<void> {
 
 export async function openModuleTabs(context: BrowserContext): Promise<Page[]> {
   const openedPages: Page[] = [];
+  let firstHydrationSuccessful = false;
+  let firstHydrationAttempted = false;
 
   for (const module of MODULES) {
     if (!module.url) {
@@ -88,6 +91,48 @@ export async function openModuleTabs(context: BrowserContext): Promise<Page[]> {
     }
 
     const page = await context.newPage();
+
+    try {
+      await page.goto('about:blank');
+    } catch (error) {
+      /* eslint-disable no-console */
+      console.warn('No se pudo inicializar la pestaña en blanco antes de hidratar la sesión:', error);
+      /* eslint-enable no-console */
+    }
+
+    const hydration = await hydrateModulePage(context, page);
+
+    if (hydration.warnings.length > 0) {
+      /* eslint-disable no-console */
+      for (const warning of hydration.warnings) {
+        console.warn(`[session-transfer] ${warning}`);
+      }
+      /* eslint-enable no-console */
+    }
+
+    const isFirstHydratedModule = !firstHydrationAttempted;
+    firstHydrationAttempted = true;
+
+    if (isFirstHydratedModule) {
+      if (hydration.ok) {
+        firstHydrationSuccessful = true;
+      } else {
+        /* eslint-disable no-console */
+        console.warn(
+          `[session-transfer] La hidratación inicial de la sesión falló para "${module.name}". No se abrirán pestañas adicionales para evitar reintentos de autenticación.`,
+        );
+        /* eslint-enable no-console */
+      }
+    } else if (!firstHydrationSuccessful) {
+      /* eslint-disable no-console */
+      console.warn(
+        `[session-transfer] Se omite el módulo "${module.name}" porque la sesión no se hidrató en la primera pestaña.`,
+      );
+      /* eslint-enable no-console */
+      await page.close();
+      break;
+    }
+
     openedPages.push(page);
 
     /* eslint-disable no-console */
@@ -109,6 +154,12 @@ export async function openModuleTabs(context: BrowserContext): Promise<Page[]> {
         /* eslint-enable no-console */
       });
     }
+  }
+
+  if (MODULES.length > 0 && !firstHydrationAttempted) {
+    /* eslint-disable no-console */
+    console.warn('[session-transfer] No se intentó la hidratación de sesión; revisa la configuración de módulos.');
+    /* eslint-enable no-console */
   }
 
   return openedPages;
