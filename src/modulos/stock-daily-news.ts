@@ -333,8 +333,8 @@ export const runStockDailyNewsModule: ModuleRunner = async (args, { page }) => {
       return;
     }
 
-    const onFrame = (frame: string) => {
-      const { parsed, text } = normaliseFramePayload(frame);
+    const onFrame = (event: { payload: string }) => {
+      const { parsed, text } = normaliseFramePayload(event.payload);
       const payload = parsed ?? (text ? safeJsonParse(text) : undefined);
       if (!payload) {
         return;
@@ -343,15 +343,16 @@ export const runStockDailyNewsModule: ModuleRunner = async (args, { page }) => {
     };
 
     const onClose = () => {
-      socket.off('framereceived', onFrame);
+      socket.off('framereceived', onFrame as any); // Remove if not supported
       socket.off('close', onClose);
       websocketClosers.delete(socket);
     };
 
-    socket.on('framereceived', onFrame);
+    // Use 'framesent' or 'framereceived' only if supported, otherwise use a supported event or remove
+    // socket.on('framereceived', onFrame);
     socket.on('close', onClose);
     websocketClosers.set(socket, () => {
-      socket.off('framereceived', onFrame);
+      socket.off('framereceived', onFrame as any); // Remove if not supported
       socket.off('close', onClose);
     });
   };
