@@ -1,4 +1,9 @@
-import { MODULES as CONFIGURED_MODULES, type ModuleDefinition } from '../config.js';
+import {
+  MODULES as CONFIGURED_MODULES,
+  getModuleDefaultArgs,
+  resolveModuleUrl,
+  type ModuleDefinition,
+} from '../config.js';
 import { MODULE_RUNNERS } from '../modulos/index.js';
 import type { OrchestratorModule } from './types.js';
 
@@ -8,10 +13,13 @@ function toModuleDescriptor(definition: ModuleDefinition): OrchestratorModule | 
     return null;
   }
 
+  const defaults = getModuleDefaultArgs(definition);
+  const url = resolveModuleUrl(definition, defaults);
+
   return {
     name: definition.name,
     description: definition.description,
-    url: definition.url,
+    url,
     runner,
   };
 }

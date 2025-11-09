@@ -1,6 +1,6 @@
 import type { BrowserContext, Page } from 'playwright';
 
-import { MODULES } from './config.js';
+import { MODULES, getModuleDefaultArgs, resolveModuleUrl } from './config.js';
 import { MODULE_RUNNERS } from './modulos/index.js';
 import type { ModuleArgs } from './orchestrator/messages.js';
 import { hydrateModulePage } from './modules/session-transfer.js';
@@ -83,9 +83,13 @@ export async function openModuleTabs(context: BrowserContext): Promise<Page[]> {
   let firstHydrationAttempted = false;
 
   for (const module of MODULES) {
-    if (!module.url) {
+    const defaultArgs = getModuleDefaultArgs(module);
+    const resolvedUrl = resolveModuleUrl(module, defaultArgs);
+    if (!resolvedUrl) {
       /* eslint-disable no-console */
-      console.warn(`Se omitió el módulo "${module.name}" porque no tiene URL configurada.`);
+      console.warn(
+        `Se omitió el módulo "${module.name}" porque no se pudo resolver una URL válida.`,
+      );
       /* eslint-enable no-console */
       continue;
     }
@@ -136,10 +140,12 @@ export async function openModuleTabs(context: BrowserContext): Promise<Page[]> {
     openedPages.push(page);
 
     /* eslint-disable no-console */
-    console.log(`Abriendo módulo "${module.name}" (${module.description})...`);
+    console.log(
+      `Abriendo módulo "${module.name}" (${module.description}) en ${resolvedUrl}...`,
+    );
     /* eslint-enable no-console */
 
-    await page.goto(module.url, { waitUntil: 'domcontentloaded' });
+    await page.goto(resolvedUrl, { waitUntil: 'domcontentloaded' });
     await page
       .waitForLoadState('networkidle', { timeout: 15_000 })
       .catch(() => page.waitForTimeout(2_000));
@@ -150,7 +156,8 @@ export async function openModuleTabs(context: BrowserContext): Promise<Page[]> {
       const args: ModuleArgs = {
         module: module.name,
         action: 'preview',
-        ...(module.urlCode ? { urlCode: module.urlCode } : {}),
+        ...(defaultArgs.urlCode ? { urlCode: defaultArgs.urlCode } : {}),
+        ...(defaultArgs.symbols ? { symbols: defaultArgs.symbols } : {}),
       };
       runner(args, { context, page }).catch((error: unknown) => {
         /* eslint-disable no-console */

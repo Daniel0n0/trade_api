@@ -50,11 +50,21 @@ export const SESSION_MARKERS = {
   loginButtonRole: { name: /log in/i } as const,
 } as const;
 
+export type ModuleUrlArgs = {
+  readonly urlCode?: string;
+  readonly symbols?: readonly string[];
+};
+
 export interface ModuleDefinition {
   readonly name: string;
   readonly description: string;
-  readonly url: string;
+  readonly url?: string;
+  readonly urlTemplate?: string;
   readonly urlCode?: string;
+  readonly requiresUrlCode?: boolean;
+  readonly requiresSymbols?: boolean;
+  readonly defaultSymbols?: readonly string[];
+  readonly metadata?: Record<string, unknown>;
 }
 
 const LEGEND_DEFAULT_WEB_CLIENT = 'WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT';
@@ -70,11 +80,204 @@ export const MODULE_URL_CODES: Readonly<Record<string, string>> = {
 export const buildLegendLayoutUrl = (code: string): string =>
   `${ROBINHOOD_LEGEND_LAYOUT_BASE}/${code}${LEGEND_DEFAULT_QUERY}`;
 
+const LEGEND_URL_TEMPLATE = `${ROBINHOOD_LEGEND_LAYOUT_BASE}/{urlCode}${LEGEND_DEFAULT_QUERY}` as const;
+const OPTIONS_URL_TEMPLATE = 'https://robinhood.com/options/{symbol}' as const;
+const STOCK_STATS_URL_TEMPLATE = 'https://robinhood.com/us/en/stocks/{symbol}/stats/' as const;
+const STOCK_NEWS_URL_TEMPLATE = 'https://robinhood.com/us/en/stocks/{symbol}/news/' as const;
+const STOCK_ORDER_BOOK_URL_TEMPLATE = 'https://robinhood.com/us/en/stocks/{symbol}/order-book/' as const;
+const FUTURES_BASE_URL = 'https://robinhood.com/us/en/markets/futures' as const;
+const FUTURES_DETAIL_URL_TEMPLATE = `${FUTURES_BASE_URL}/{symbol}/` as const;
+
+const normalizeSymbols = (symbols?: readonly string[]): readonly string[] | undefined => {
+  if (!symbols) {
+    return undefined;
+  }
+
+  const normalized = symbols
+    .map((symbol) => symbol.trim().toUpperCase())
+    .filter((symbol) => symbol.length > 0);
+
+  return normalized.length > 0 ? normalized : undefined;
+};
+
+const pickSymbols = (definition: ModuleDefinition, args?: ModuleUrlArgs): readonly string[] | undefined => {
+  const candidates = normalizeSymbols(args?.symbols ?? definition.defaultSymbols);
+  if (!candidates || candidates.length === 0) {
+    return undefined;
+  }
+  return candidates;
+};
+
+const pickUrlCode = (definition: ModuleDefinition, args?: ModuleUrlArgs): string | undefined => {
+  const candidate = (args?.urlCode ?? definition.urlCode)?.trim();
+  return candidate && candidate.length > 0 ? candidate : undefined;
+};
+
+const TEMPLATE_PATTERN = /\{([a-z0-9_]+)\}/giu;
+
+const fillUrlTemplate = (
+  template: string,
+  definition: ModuleDefinition,
+  args?: ModuleUrlArgs,
+): string | undefined => {
+  if (!template) {
+    return undefined;
+  }
+
+  const symbols = pickSymbols(definition, args);
+  const urlCode = pickUrlCode(definition, args);
+
+  if (definition.requiresUrlCode && !urlCode) {
+    return undefined;
+  }
+
+  if (definition.requiresSymbols && (!symbols || symbols.length === 0)) {
+    return undefined;
+  }
+
+  const primarySymbol = symbols?.[0];
+
+  let missingRequired = false;
+
+  const resolved = template.replace(TEMPLATE_PATTERN, (match, rawKey) => {
+    const key = rawKey.toLowerCase();
+    switch (key) {
+      case 'urlcode':
+      case 'code':
+        if (!urlCode) {
+          missingRequired = true;
+          return match;
+        }
+        return urlCode;
+      case 'symbol':
+        if (!primarySymbol) {
+          missingRequired = true;
+          return match;
+        }
+        return primarySymbol;
+      case 'symbols':
+        if (!symbols || symbols.length === 0) {
+          missingRequired = true;
+          return match;
+        }
+        return symbols.join(',');
+      default:
+        return match;
+    }
+  });
+
+  if (missingRequired) {
+    return undefined;
+  }
+
+  return resolved;
+};
+
+export const resolveModuleUrl = (
+  definition: ModuleDefinition,
+  args?: ModuleUrlArgs,
+): string | undefined => {
+  if (definition.urlTemplate) {
+    const templated = fillUrlTemplate(definition.urlTemplate, definition, args);
+    if (templated) {
+      return templated;
+    }
+  }
+
+  return definition.url;
+};
+
+export const getModuleDefaultArgs = (definition: ModuleDefinition): ModuleUrlArgs => {
+  const symbols = pickSymbols(definition);
+  const urlCode = pickUrlCode(definition);
+  return {
+    ...(symbols ? { symbols } : {}),
+    ...(urlCode ? { urlCode } : {}),
+  };
+};
+
 export const MODULES: readonly ModuleDefinition[] = [
   {
+    name: 'spy-daily-hourly-15m',
+    description: 'Gráficas Legend de SPY en 1D, 1H y 15m',
+    urlTemplate: LEGEND_URL_TEMPLATE,
+    urlCode: MODULE_URL_CODES['spy-daily-hourly-15m'],
+    requiresUrlCode: true,
+    defaultSymbols: ['SPY'],
+  },
+  {
     name: 'spy-5m-1m',
-    description: 'SPY con marcos de 5 minutos y 1 minuto',
-    url: buildLegendLayoutUrl(MODULE_URL_CODES['spy-5m-1m']),
+    description: 'Gráficas Legend de SPY en 5m y 1m',
+    urlTemplate: LEGEND_URL_TEMPLATE,
     urlCode: MODULE_URL_CODES['spy-5m-1m'],
+    requiresUrlCode: true,
+    defaultSymbols: ['SPY'],
+  },
+  {
+    name: 'spot',
+    description: 'Vista Legend genérica (requiere urlCode)',
+    urlTemplate: LEGEND_URL_TEMPLATE,
+    requiresUrlCode: true,
+  },
+  {
+    name: 'spy-options-chain',
+    description: 'Cadena de opciones para SPY',
+    urlTemplate: OPTIONS_URL_TEMPLATE,
+    url: 'https://robinhood.com/options',
+    defaultSymbols: ['SPY'],
+  },
+  {
+    name: 'spx-options-chain',
+    description: 'Cadena de opciones para SPX',
+    urlTemplate: OPTIONS_URL_TEMPLATE,
+    url: 'https://robinhood.com/options',
+    defaultSymbols: ['SPX'],
+  },
+  {
+    name: 'options',
+    description: 'Navegador genérico de opciones por símbolo',
+    urlTemplate: OPTIONS_URL_TEMPLATE,
+    url: 'https://robinhood.com/options',
+    defaultSymbols: ['SPY'],
+  },
+  {
+    name: 'daily-stats',
+    description: 'Estadísticas diarias para un símbolo específico',
+    urlTemplate: STOCK_STATS_URL_TEMPLATE,
+    defaultSymbols: ['SPY'],
+    requiresSymbols: true,
+  },
+  {
+    name: 'daily-news',
+    description: 'Noticias diarias para un símbolo específico',
+    urlTemplate: STOCK_NEWS_URL_TEMPLATE,
+    defaultSymbols: ['SPY'],
+    requiresSymbols: true,
+  },
+  {
+    name: 'daily-order-book',
+    description: 'Order book diario para un símbolo específico',
+    urlTemplate: STOCK_ORDER_BOOK_URL_TEMPLATE,
+    defaultSymbols: ['SPY'],
+    requiresSymbols: true,
+  },
+  {
+    name: 'futures',
+    description: 'Panel principal de mercados de futuros',
+    url: `${FUTURES_BASE_URL}/`,
+  },
+  {
+    name: 'futures-mes',
+    description: 'Futuros Micro E-mini S&P 500 (MES)',
+    urlTemplate: FUTURES_DETAIL_URL_TEMPLATE,
+    defaultSymbols: ['MES'],
+    requiresSymbols: true,
+  },
+  {
+    name: 'futures-mnq',
+    description: 'Futuros Micro E-mini Nasdaq-100 (MNQ)',
+    urlTemplate: FUTURES_DETAIL_URL_TEMPLATE,
+    defaultSymbols: ['MNQ'],
+    requiresSymbols: true,
   },
 ];
