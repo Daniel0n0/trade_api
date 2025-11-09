@@ -1,9 +1,9 @@
-import type { ModuleRunner } from '../orchestrator/types.js';
+import { createOptionsModuleRunner } from './options-shared.js';
+
+const DEFAULT_SYMBOLS = ['SPX'] as const;
 
 /**
- * Módulo placeholder para la options chain de SPX.
- * Implementar la lógica específica según sea necesario.
+ * Captura la cadena de opciones de SPX y persiste las respuestas relevantes
+ * (CSV por expiración y eventos Legend relacionados).
  */
-export const runSpxOptionsChainModule: ModuleRunner = async () => {
-  return undefined;
-};
+export const runSpxOptionsChainModule = createOptionsModuleRunner(DEFAULT_SYMBOLS);

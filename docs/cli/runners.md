@@ -18,6 +18,11 @@ binarios de Playwright configurados. Cada runner acepta la acción `now` por
 defecto; se incluyen `--start` y `--end` solo cuando ayudan a delimitar la
 captura.
 
+> 💡 Usa `--symbols` para fijar el subyacente cuando el módulo lo permite y
+> `--url-code` para apuntar al layout Legend correcto cuando el UUID por
+> defecto no coincida con tu cuenta. Ambos parámetros también están disponibles
+> en `trade-api orchestrator` mediante el archivo de configuración.
+
 ## Runner `spy-5m-1m`
 
 Captura el *socket sniffer* para SPY en marcos de 5 y 1 minuto.
@@ -60,6 +65,7 @@ npx trade-api start spy-options-chain now \
   --options-horizon 7 \
   --symbols SPY \
   --url-mode auto \
+  --url-code c59d5a8e-397f-421a-a6e4-8ffe753c3456 \
   --persist-cookies true \
   --persist-indexeddb true
 ```
@@ -70,6 +76,8 @@ npx trade-api start spy-options-chain now \
   automáticamente.
 - Los archivos terminan en `*-options-<expiracion>.csv` dentro de
   `data/SPY/<fecha>/` y los eventos Legend asociados en `*-options-*.jsonl`.
+- `--url-code` permite sobrescribir el UUID del layout Legend en caso de que el
+  predeterminado no coincida.
 
 ## Runner `spx-options-chain`
 
@@ -81,6 +89,7 @@ npx trade-api start spx-options-chain now \
   --options-horizon 3 \
   --symbols SPX \
   --url-mode symbol \
+  --url-code 0413b972-f84e-4ce7-8eae-c0a50b96cc90 \
   --persist-cookies true \
   --persist-indexeddb true
 ```
@@ -89,6 +98,60 @@ npx trade-api start spx-options-chain now \
   runner se configuró con un valor distinto.
 - Los CSV se guardan bajo `data/SPX/<fecha>/` y los *logs* en
   `logs/spx-options-chain-socket-sniffer.log`.
+- `--url-code` te permite navegar a un layout Legend alternativo sin modificar
+  el archivo de configuración.
+
+## Runner `options-generic`
+
+Captura cadenas de opciones para cualquier subyacente aceptando parámetros en
+tiempo de ejecución.
+
+```bash
+npx trade-api start options-generic now \
+  --symbols TSLA \
+  --options-date 2024-08-16 \
+  --options-horizon 2 \
+  --url-mode symbol \
+  --url-code 00000000-0000-0000-0000-000000000102
+```
+
+- Define siempre `--symbols` para limitar el sniffer a los contratos deseados.
+- Los CSV se generan en `data/<SIMBOLO>/<fecha>/*-options-*.csv` y los eventos
+  Legend en `*-options.jsonl`.
+- Ajusta `--url-code` cuando necesites otro layout personalizado (por ejemplo,
+  una lista de vigilancia propia).
+
+## Runner `stocks-generic-chart`
+
+Ideal para capturar velas, *quotes* y *trades* de cualquier acción soportada
+por Legend.
+
+```bash
+npx trade-api start stocks-generic-chart now \
+  --symbols NVDA \
+  --start 2024-05-20T13:30:00Z \
+  --end 2024-05-20T20:00:00Z \
+  --url-code 00000000-0000-0000-0000-000000000101
+```
+
+- Los archivos se almacenan en `data/<SIMBOLO>/` con CSV rotados por
+  timeframe (`1min`, `5min`, etc.) y los *logs* en `logs/stocks-generic-chart-*.log`.
+- Cambia `--url-code` para reutilizar tus propios layouts Legend guardados.
+- Omite `--start`/`--end` si deseas capturar en tiempo real sin recorte.
+
+## Runners diarios de acciones
+
+Los módulos `stock-daily-stats`, `stock-daily-news` y `stock-daily-orderbook`
+se publican como plantillas documentadas. Por ahora no generan artefactos, pero
+puedes invocarlos para validar la navegación automática con `--url-code` y
+añadir la lógica de captura correspondiente en futuras iteraciones.
+
+## Runners de futuros
+
+Los módulos `futures-overview` y `futures-detail` actúan como esqueletos
+documentados para soportar dashboards de futuros. Emplea `--symbols` y
+`--url-code` para perfilar el contrato y layout mientras se implementa la
+persistencia de datos.
 
 ## Consultar el estado y detener runners
 

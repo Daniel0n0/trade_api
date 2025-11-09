@@ -65,6 +65,16 @@ export const MODULE_URL_CODES: Readonly<Record<string, string>> = {
   'spy-5m-1m': '9a624e15-84c5-4a0e-8391-69f32b32d8d5',
   'spy-options-chain': 'c59d5a8e-397f-421a-a6e4-8ffe753c3456',
   'spx-options-chain': '0413b972-f84e-4ce7-8eae-c0a50b96cc90',
+  // Los siguientes códigos sirven como marcadores hasta que se capture el UUID
+  // definitivo de cada layout Legend. Sobrescríbelos con `--url-code` cuando
+  // ejecutes un runner.
+  'stocks-generic-chart': '00000000-0000-0000-0000-000000000101',
+  'options-generic': '00000000-0000-0000-0000-000000000102',
+  'stock-daily-stats': '00000000-0000-0000-0000-000000000103',
+  'stock-daily-news': '00000000-0000-0000-0000-000000000104',
+  'stock-daily-orderbook': '00000000-0000-0000-0000-000000000105',
+  'futures-overview': '00000000-0000-0000-0000-000000000106',
+  'futures-detail': '00000000-0000-0000-0000-000000000107',
 } as const;
 
 export const buildLegendLayoutUrl = (code: string): string =>
@@ -76,5 +86,65 @@ export const MODULES: readonly ModuleDefinition[] = [
     description: 'SPY con marcos de 5 minutos y 1 minuto',
     url: buildLegendLayoutUrl(MODULE_URL_CODES['spy-5m-1m']),
     urlCode: MODULE_URL_CODES['spy-5m-1m'],
+  },
+  {
+    name: 'spy-daily-hourly-15m',
+    description: 'Vista Legend de SPY (1D/1H/15m)',
+    url: buildLegendLayoutUrl(MODULE_URL_CODES['spy-daily-hourly-15m']),
+    urlCode: MODULE_URL_CODES['spy-daily-hourly-15m'],
+  },
+  {
+    name: 'spy-options-chain',
+    description: 'Cadena de opciones para SPY',
+    url: buildLegendLayoutUrl(MODULE_URL_CODES['spy-options-chain']),
+    urlCode: MODULE_URL_CODES['spy-options-chain'],
+  },
+  {
+    name: 'spx-options-chain',
+    description: 'Cadena de opciones para SPX',
+    url: buildLegendLayoutUrl(MODULE_URL_CODES['spx-options-chain']),
+    urlCode: MODULE_URL_CODES['spx-options-chain'],
+  },
+  {
+    name: 'stocks-generic-chart',
+    description: 'Leyenda genérica de acciones (marcos configurables)',
+    url: buildLegendLayoutUrl(MODULE_URL_CODES['stocks-generic-chart']),
+    urlCode: MODULE_URL_CODES['stocks-generic-chart'],
+  },
+  {
+    name: 'options-generic',
+    description: 'Cadena de opciones genérica (símbolo parametrizable)',
+    url: buildLegendLayoutUrl(MODULE_URL_CODES['options-generic']),
+    urlCode: MODULE_URL_CODES['options-generic'],
+  },
+  {
+    name: 'stock-daily-stats',
+    description: 'Estadísticas diarias de acciones',
+    url: buildLegendLayoutUrl(MODULE_URL_CODES['stock-daily-stats']),
+    urlCode: MODULE_URL_CODES['stock-daily-stats'],
+  },
+  {
+    name: 'stock-daily-news',
+    description: 'Noticias diarias de acciones',
+    url: buildLegendLayoutUrl(MODULE_URL_CODES['stock-daily-news']),
+    urlCode: MODULE_URL_CODES['stock-daily-news'],
+  },
+  {
+    name: 'stock-daily-orderbook',
+    description: 'Libro de órdenes diario de acciones',
+    url: buildLegendLayoutUrl(MODULE_URL_CODES['stock-daily-orderbook']),
+    urlCode: MODULE_URL_CODES['stock-daily-orderbook'],
+  },
+  {
+    name: 'futures-overview',
+    description: 'Panel general de futuros',
+    url: buildLegendLayoutUrl(MODULE_URL_CODES['futures-overview']),
+    urlCode: MODULE_URL_CODES['futures-overview'],
+  },
+  {
+    name: 'futures-detail',
+    description: 'Detalle de un contrato de futuros',
+    url: buildLegendLayoutUrl(MODULE_URL_CODES['futures-detail']),
+    urlCode: MODULE_URL_CODES['futures-detail'],
   },
 ];
