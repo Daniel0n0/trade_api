@@ -266,15 +266,17 @@ const BASE_MODULES: readonly ModuleDefinition[] = [
   {
     name: 'spy-options-chain',
     description: 'Cadena de opciones para SPY',
-    urlTemplate: OPTIONS_URL_TEMPLATE,
-    url: 'https://robinhood.com/options/chains/SPY',
+    urlTemplate: LEGEND_URL_TEMPLATE,
+    urlCode: MODULE_URL_CODES['spy-options-chain'],
+    requiresUrlCode: true,
     defaultSymbols: ['SPY'],
   },
   {
     name: 'spx-options-chain',
     description: 'Cadena de opciones para SPX',
-    urlTemplate: OPTIONS_URL_TEMPLATE,
-    url: 'https://robinhood.com/options/chains/SPX',
+    urlTemplate: LEGEND_URL_TEMPLATE,
+    urlCode: MODULE_URL_CODES['spx-options-chain'],
+    requiresUrlCode: true,
     defaultSymbols: ['SPX'],
   },
   {
@@ -323,18 +325,6 @@ const BASE_MODULES: readonly ModuleDefinition[] = [
     urlTemplate: FUTURES_DETAIL_URL_TEMPLATE,
     defaultSymbols: ['MNQZ25'],
     requiresSymbols: true,
-  },
-  {
-    name: 'spy-options-chain',
-    description: 'Cadena de opciones para SPY',
-    url: buildLegendLayoutUrl(MODULE_URL_CODES['spy-options-chain']),
-    urlCode: MODULE_URL_CODES['spy-options-chain'],
-  },
-  {
-    name: 'spx-options-chain',
-    description: 'Cadena de opciones para SPX',
-    url: buildLegendLayoutUrl(MODULE_URL_CODES['spx-options-chain']),
-    urlCode: MODULE_URL_CODES['spx-options-chain'],
   },
   {
     name: 'futures-overview',
