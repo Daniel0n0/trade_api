@@ -32,6 +32,7 @@ const HEARTBEAT_INTERVAL_MS = 5_000;
 const STATS_SNAPSHOT_INTERVAL_MS = HEARTBEAT_INTERVAL_MS;
 const HEALTH_INTERVAL_MS = 30_000;
 const LAG_WARN_COOLDOWN_MS = 60_000;
+const EVENT_LAG_WARN_THRESHOLD_MS = 1_500;
 
 const MARKET_TZ = 'America/New_York';
 const MARKET_OPEN_MINUTES = 9 * 60 + 30; // 09:30
@@ -808,13 +809,14 @@ async function exposeLogger(
       const eventTs = resolveEventTimestamp(event);
       if (typeof eventTs === 'number') {
         const lagMs = Date.now() - eventTs;
-        if (lagMs > 2000) {
+        if (lagMs > EVENT_LAG_WARN_THRESHOLD_MS) {
           writeGeneral({
             kind: 'lag-warn',
             channel,
             symbol: resolveEventSymbol(event),
             lagMs,
             eventTs,
+            thresholdMs: EVENT_LAG_WARN_THRESHOLD_MS,
           });
         }
       }
