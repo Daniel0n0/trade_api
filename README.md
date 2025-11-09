@@ -178,7 +178,7 @@ npm run clean:profile
 ## Convenciones de almacenamiento y cierre controlado
 
 - **`data/`** – Los módulos que capturan datos usan utilidades como
-  [`dataPath`](src/io/paths.ts) para guardar archivos en `data/<SIMBOLO>/<YYYY-MM-DD>/`. El
+  [`dataPath`](src/io/paths.ts) para guardar archivos en `data/<CLASE>/<YYYY-MM-DD>/<SÍMBOLO>/`. El
   orquestador imprime la ruta final cuando un *runner* devuelve un string para que puedas localizar
   rápidamente los artefactos (JSONL, CSV, gzip). Crea la carpeta si vas a versionar datos de prueba.
 - **`logs/`** – Cada proceso activa [`createProcessLogger`](src/bootstrap/logger.ts), que genera un

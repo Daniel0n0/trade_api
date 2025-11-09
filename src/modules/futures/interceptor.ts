@@ -411,7 +411,7 @@ export function installFuturesRecorder(options: FuturesRecorderOptions): Futures
     const rows = normalizeFuturesBars(payload, { url, fallbackSymbol });
     for (const row of rows) {
       const symbol = (row.symbol as string | undefined) ?? fallbackSymbol ?? 'GENERAL';
-      const filePath = dataPath(symbol, 'futures-bars.csv');
+      const filePath = dataPath({ assetClass: 'futures', symbol }, 'bars', 'futures-bars.csv');
       getWriter(filePath, FUTURES_BARS_HEADER).write(toCsvLine(FUTURES_BARS_HEADER, row));
     }
   };
@@ -420,7 +420,7 @@ export function installFuturesRecorder(options: FuturesRecorderOptions): Futures
     const rows = normalizeFuturesSnapshots(payload, { url, fallbackSymbol });
     for (const row of rows) {
       const symbol = (row.symbol as string | undefined) ?? fallbackSymbol ?? 'GENERAL';
-      const filePath = dataPath(symbol, 'futures-snapshots.csv');
+      const filePath = dataPath({ assetClass: 'futures', symbol }, 'snapshots', 'futures-snapshots.csv');
       getWriter(filePath, FUTURES_SNAPSHOT_HEADER).write(toCsvLine(FUTURES_SNAPSHOT_HEADER, row));
     }
   };

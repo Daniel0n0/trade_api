@@ -624,7 +624,7 @@ async function exposeLogger(
     let writer = barWriters.get(key);
     if (!writer) {
       const segment = AGGREGATION_FILE_SEGMENTS[timeframe as AggregationTimeframeKey] ?? timeframe;
-      const baseFile = dataPath(symbol, `${segment}.csv`);
+      const baseFile = dataPath({ assetClass: 'stock', symbol }, 'bars', `${segment}.csv`);
       writer = new RotatingWriter(baseFile, ROTATE_POLICY, CSV_HEADER_TEXT.bars);
       barWriters.set(key, writer);
     }

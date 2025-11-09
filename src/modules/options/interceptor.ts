@@ -156,7 +156,7 @@ const readLastTimestamp = (filePath: string, headerLine: string): number | undef
       const chunkSize = Math.min(64_000, stats.size);
       const buffer = Buffer.alloc(chunkSize);
       const start = Math.max(stats.size - chunkSize, 0);
-      const { bytesRead } = fs.readSync(fd, buffer, 0, chunkSize, start);
+      const bytesRead = fs.readSync(fd, buffer, 0, chunkSize, start);
       const content = buffer.slice(0, bytesRead).toString('utf8');
       const lines = content.trim().split(/\r?\n/);
       for (let i = lines.length - 1; i >= 0; i -= 1) {
@@ -519,7 +519,11 @@ export function installOptionsResponseRecorder(options: OptionsRecorderOptions):
     const key = `${symbolDir}__${normalizedExpiration}`;
     let entry = writerMap.get(key);
     if (!entry) {
-      const targetPath = dataPath(symbolDir, 'options', buildOptionsFilename(logPrefix, expiration));
+      const targetPath = dataPath(
+        { assetClass: 'options', symbol: symbolDir },
+        'options',
+        buildOptionsFilename(logPrefix, expiration),
+      );
       const stream = getCsvWriter(targetPath, OPTION_HEADER_TEXT);
       const write = (line: string) => {
         stream.write(`${line}\n`);
@@ -603,8 +607,8 @@ export function installOptionsResponseRecorder(options: OptionsRecorderOptions):
     }
 
     for (const row of validRows) {
-      const targetExpiration = row.expiration ?? primaryExpiration ?? 'undated';
-      const targetSymbol = (row.chainSymbol ?? primarySymbol ?? 'OPTIONS').toUpperCase();
+      const targetExpiration = String(row.expiration ?? primaryExpiration ?? 'undated');
+      const targetSymbol = String(row.chainSymbol ?? primarySymbol ?? 'OPTIONS').toUpperCase();
       const writer = resolveWriter(targetSymbol, targetExpiration);
       const timestamp = typeof row.t === 'number' ? row.t : undefined;
       if (timestamp !== undefined && writer.lastTimestamp !== undefined && timestamp < writer.lastTimestamp) {
