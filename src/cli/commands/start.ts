@@ -28,6 +28,7 @@ const ENV_MAPPING: Partial<Record<keyof ModuleArgsInput, string | readonly strin
   optionsDate: ['TRADE_API_OPTIONS_DATE', 'ORCHESTRATOR_OPTIONS_DATE'],
   optionsHorizon: ['TRADE_API_OPTIONS_HORIZON', 'ORCHESTRATOR_OPTIONS_HORIZON'],
   urlMode: ['TRADE_API_URL_MODE', 'ORCHESTRATOR_URL_MODE'],
+  urlCode: ['TRADE_API_URL_CODE', 'ORCHESTRATOR_URL_CODE'],
 };
 
 type StartOptions = {
@@ -45,6 +46,7 @@ type StartOptions = {
   optionsHorizon?: string | number;
   optionsDate?: string;
   urlMode?: string;
+  urlCode?: string;
 };
 
 type StartCliArgs = [module?: string, action?: string, options?: StartOptions, command?: Command];
@@ -112,6 +114,10 @@ function buildCliArgs(
     result.urlMode = options.urlMode as ModuleArgsInput['urlMode'];
   }
 
+  if (options.urlCode !== undefined) {
+    result.urlCode = options.urlCode;
+  }
+
   return result;
 }
 
@@ -176,6 +182,7 @@ export function registerStartCommand(program: Command, context: CommandContext):
     .option('--options-horizon <días>', 'Máximo de días hasta la expiración objetivo.')
     .option('--options-date <iso>', 'Expiración principal para opciones (YYYY-MM-DD).')
     .option('--url-mode <modo>', 'Modo de resolución de URL (auto|module|symbol).')
+    .option('--url-code <code>', 'Código de layout o plantilla de URL para el módulo.')
     .option('-c, --config <path>', 'Archivo YAML con argumentos por defecto para este comando.')
     .action(async (...args: StartCliArgs) => {
       const [moduleArg, actionArg, options = {}, command] = args;

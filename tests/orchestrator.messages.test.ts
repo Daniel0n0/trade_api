@@ -20,6 +20,7 @@ test('isModuleArgs acepta objetos válidos con nuevos campos', () => {
     optionsDate: '2024-01-01',
     optionsHorizon: 5,
     urlMode: 'symbol',
+    urlCode: 'layout-123',
   };
 
   assert.ok(isModuleArgs(args));
@@ -42,6 +43,16 @@ test('isModuleArgs rechaza urlMode desconocido', () => {
     module: 'spy-options-chain',
     action: 'now',
     urlMode: 'custom',
+  };
+
+  assert.ok(!isModuleArgs(invalid));
+});
+
+test('isModuleArgs rechaza urlCode vacío', () => {
+  const invalid = {
+    module: 'spy-options-chain',
+    action: 'now',
+    urlCode: '',
   };
 
   assert.ok(!isModuleArgs(invalid));

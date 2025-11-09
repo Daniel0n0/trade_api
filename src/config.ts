@@ -54,12 +54,27 @@ export interface ModuleDefinition {
   readonly name: string;
   readonly description: string;
   readonly url: string;
+  readonly urlCode?: string;
 }
+
+const LEGEND_DEFAULT_WEB_CLIENT = 'WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT';
+const LEGEND_DEFAULT_QUERY = `?default_web_client=${LEGEND_DEFAULT_WEB_CLIENT}` as const;
+
+export const MODULE_URL_CODES: Readonly<Record<string, string>> = {
+  'spy-daily-hourly-15m': '6bb41212-dbb4-4dc0-a0a7-7a75e4aaf9da',
+  'spy-5m-1m': '9a624e15-84c5-4a0e-8391-69f32b32d8d5',
+  'spy-options-chain': 'c59d5a8e-397f-421a-a6e4-8ffe753c3456',
+  'spx-options-chain': '0413b972-f84e-4ce7-8eae-c0a50b96cc90',
+} as const;
+
+export const buildLegendLayoutUrl = (code: string): string =>
+  `${ROBINHOOD_LEGEND_LAYOUT_BASE}/${code}${LEGEND_DEFAULT_QUERY}`;
 
 export const MODULES: readonly ModuleDefinition[] = [
   {
     name: 'spy-5m-1m',
     description: 'SPY con marcos de 5 minutos y 1 minuto',
-    url: 'https://robinhood.com/legend/layout/9a624e15-84c5-4a0e-8391-69f32b32d8d5?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT',
+    url: buildLegendLayoutUrl(MODULE_URL_CODES['spy-5m-1m']),
+    urlCode: MODULE_URL_CODES['spy-5m-1m'],
   },
 ];

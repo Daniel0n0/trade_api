@@ -12,6 +12,7 @@ import {
   type ModuleArgsInput,
 } from './schema.js';
 import type { ModuleArgs } from '../orchestrator/messages.js';
+import { MODULE_URL_CODES } from '../config.js';
 
 const BOOLEAN_TRUE = new Set(['1', 'true', 'yes', 'on']);
 const BOOLEAN_FALSE = new Set(['0', 'false', 'no', 'off']);
@@ -277,8 +278,9 @@ function normalizeEnumValue<T extends string>(
 }
 
 export function normalizeModuleArgs(input: Partial<ModuleArgsInput>): ModuleArgs {
+  const moduleName = toOptionalString(input.module);
   const normalized = {
-    module: toOptionalString(input.module),
+    module: moduleName,
     action: toOptionalString(input.action) ?? 'now',
     symbols: parseSymbols(input.symbols),
     headless: coerceBool(input.headless, 'headless'),
@@ -299,6 +301,7 @@ export function normalizeModuleArgs(input: Partial<ModuleArgsInput>): ModuleArgs
     optionsDate: coerceISO(input.optionsDate, { label: 'optionsDate' }),
     optionsHorizon: toOptionalNumber(input.optionsHorizon, 'optionsHorizon'),
     urlMode: normalizeEnumValue(input.urlMode, 'urlMode', URL_MODE_VALUES, (raw) => raw.trim().toLowerCase()),
+    urlCode: toOptionalString(input.urlCode) ?? (moduleName ? MODULE_URL_CODES[moduleName] : undefined),
     persistCookies: coerceBool(input.persistCookies, 'persistCookies'),
     persistIndexedDb: coerceBool(input.persistIndexedDb, 'persistIndexedDb'),
     storageStatePath: toOptionalString(input.storageStatePath),

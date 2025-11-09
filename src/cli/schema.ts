@@ -53,6 +53,7 @@ export const ModuleArgsSchema: z.ZodType<ModuleArgs> = z.object({
   optionsDate: z.string().trim().min(1).optional(),
   optionsHorizon: z.number().finite().optional(),
   urlMode: z.enum(URL_MODE_VALUES as [UrlMode, ...UrlMode[]]).optional(),
+  urlCode: z.string().trim().min(1).optional(),
   persistCookies: z.boolean().optional(),
   persistIndexedDb: z.boolean().optional(),
   storageStatePath: z.string().trim().min(1).optional(),

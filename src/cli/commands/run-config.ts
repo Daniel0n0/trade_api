@@ -24,6 +24,7 @@ const ENV_MAPPING: Partial<Record<keyof ModuleArgsInput, string | readonly strin
   optionsDate: ['TRADE_API_OPTIONS_DATE', 'ORCHESTRATOR_OPTIONS_DATE'],
   optionsHorizon: ['TRADE_API_OPTIONS_HORIZON', 'ORCHESTRATOR_OPTIONS_HORIZON'],
   urlMode: ['TRADE_API_URL_MODE', 'ORCHESTRATOR_URL_MODE'],
+  urlCode: ['TRADE_API_URL_CODE', 'ORCHESTRATOR_URL_CODE'],
 };
 
 type RunConfigOptions = {
@@ -41,6 +42,7 @@ type RunConfigOptions = {
   optionsDate?: string;
   optionsHorizon?: string | number;
   urlMode?: string;
+  urlCode?: string;
 };
 
 type RunConfigArgs = [configPath?: string, options?: RunConfigOptions, command?: Command];
@@ -90,6 +92,10 @@ function buildOverrides(options: RunConfigOptions): Partial<ModuleArgsInput> {
 
   if (options.urlMode !== undefined) {
     overrides.urlMode = options.urlMode as ModuleArgsInput['urlMode'];
+  }
+
+  if (options.urlCode !== undefined) {
+    overrides.urlCode = options.urlCode;
   }
 
   return overrides;
@@ -210,6 +216,7 @@ export function registerRunConfigCommand(program: Command, context: CommandConte
     .option('--options-date <iso>', 'Expiración principal para los módulos de opciones.')
     .option('--options-horizon <días>', 'Límite de días hasta la expiración objetivo en módulos de opciones.')
     .option('--url-mode <modo>', 'Modo de URL para módulos de opciones (auto|module|symbol).')
+    .option('--url-code <code>', 'Código de layout o plantilla de URL para los módulos filtrados.')
     .action(async (...args: RunConfigArgs) => {
       const [pathArg, options = {}, command] = args;
       const globals = command ? context.resolveGlobals(command) : { json: false, dryRun: false };

@@ -26,6 +26,11 @@ export type ModuleArgs = {
   optionsDate?: string;
   optionsHorizon?: number;
   urlMode?: UrlMode;
+  /**
+   * Identificador corto para reconstruir URLs específicas del módulo
+   * (por ejemplo, layouts de Robinhood Legend).
+   */
+  urlCode?: string;
   persistCookies?: boolean;
   persistIndexedDb?: boolean;
   storageStatePath?: string;
@@ -110,6 +115,7 @@ export function isModuleArgs(payload: unknown): payload is ModuleArgs {
     optionsDate,
     optionsHorizon,
     urlMode,
+    urlCode,
     persistCookies,
     persistIndexedDb,
     storageStatePath,
@@ -174,6 +180,10 @@ export function isModuleArgs(payload: unknown): payload is ModuleArgs {
   }
 
   if (urlMode !== undefined && urlMode !== 'auto' && urlMode !== 'module' && urlMode !== 'symbol') {
+    return false;
+  }
+
+  if (urlCode !== undefined && (typeof urlCode !== 'string' || urlCode.trim().length === 0)) {
     return false;
   }
 
