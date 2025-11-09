@@ -1,12 +1,14 @@
 import type { Page } from 'playwright';
 
+import { buildLegendLayoutUrl, MODULE_URL_CODES } from './config.js';
+
 const HOME_URL = 'https://robinhood.com/us/en/';
 const LOGIN_URL = 'https://robinhood.com/login/';
 
 const LEGEND_CANDIDATES = new Set<string>([
-  'https://robinhood.com/legend/layout/6bb41212-dbb4-4dc0-a0a7-7a75e4aaf9da?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT',
+  buildLegendLayoutUrl(MODULE_URL_CODES['spy-5m-1m']),
+  buildLegendLayoutUrl(MODULE_URL_CODES['spy-daily-hourly-15m']),
   'https://robinhood.com/legend/layout',
-  'https://robinhood.com/legend/layout/6bb41212-dbb4-4dc0-a0a7-7a75e4aaf9da',
 ]);
 
 const isRobinhoodUrl = (url: string): boolean => url.startsWith('https://robinhood.com/');
