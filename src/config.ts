@@ -112,9 +112,7 @@ export const buildLegendLayoutUrl = (code: string): string =>
 
 const LEGEND_URL_TEMPLATE = `${ROBINHOOD_LEGEND_LAYOUT_BASE}/{urlCode}${LEGEND_DEFAULT_QUERY}` as const;
 const OPTIONS_URL_TEMPLATE = 'https://robinhood.com/options/chains/{symbol}' as const;
-const STOCK_STATS_URL_TEMPLATE = 'https://robinhood.com/us/en/stocks/{symbol}/stats/' as const;
-const STOCK_NEWS_URL_TEMPLATE = 'https://robinhood.com/us/en/stocks/{symbol}/news/' as const;
-const STOCK_ORDER_BOOK_URL_TEMPLATE = 'https://robinhood.com/us/en/stocks/{symbol}/order-book/' as const;
+const STOCK_PAGE_URL_TEMPLATE = 'https://robinhood.com/stocks/{symbol}' as const;
 const FUTURES_BASE_URL = 'https://robinhood.com/us/en/markets/futures' as const;
 const FUTURES_DETAIL_URL_TEMPLATE = `${FUTURES_BASE_URL}/{symbol}/` as const;
 
@@ -265,21 +263,21 @@ export const MODULES: readonly ModuleDefinition[] = [
   {
     name: 'daily-stats',
     description: 'Estadísticas diarias para un símbolo específico',
-    urlTemplate: STOCK_STATS_URL_TEMPLATE,
+    urlTemplate: STOCK_PAGE_URL_TEMPLATE,
     defaultSymbols: ['SPY'],
     requiresSymbols: true,
   },
   {
     name: 'daily-news',
     description: 'Noticias diarias para un símbolo específico',
-    urlTemplate: STOCK_NEWS_URL_TEMPLATE,
+    urlTemplate: STOCK_PAGE_URL_TEMPLATE,
     defaultSymbols: ['SPY'],
     requiresSymbols: true,
   },
   {
     name: 'daily-order-book',
     description: 'Order book diario para un símbolo específico',
-    urlTemplate: STOCK_ORDER_BOOK_URL_TEMPLATE,
+    urlTemplate: STOCK_PAGE_URL_TEMPLATE,
     defaultSymbols: ['SPY'],
     requiresSymbols: true,
   },
@@ -331,18 +329,21 @@ export const MODULES: readonly ModuleDefinition[] = [
     description: 'Estadísticas diarias de acciones',
     url: buildLegendLayoutUrl(MODULE_URL_CODES['stock-daily-stats']),
     urlCode: MODULE_URL_CODES['stock-daily-stats'],
+    defaultSymbols: ['SPY'],
   },
   {
     name: 'stock-daily-news',
     description: 'Noticias diarias de acciones',
     url: buildLegendLayoutUrl(MODULE_URL_CODES['stock-daily-news']),
     urlCode: MODULE_URL_CODES['stock-daily-news'],
+    defaultSymbols: ['SPY'],
   },
   {
     name: 'stock-daily-orderbook',
     description: 'Libro de órdenes diario de acciones',
     url: buildLegendLayoutUrl(MODULE_URL_CODES['stock-daily-orderbook']),
     urlCode: MODULE_URL_CODES['stock-daily-orderbook'],
+    defaultSymbols: ['SPY'],
   },
   {
     name: 'futures-overview',
