@@ -181,6 +181,10 @@ npm run clean:profile
   [`dataPath`](src/io/paths.ts) para guardar archivos en `data/<CLASE>/<YYYY-MM-DD>/<SÍMBOLO>/`. El
   orquestador imprime la ruta final cuando un *runner* devuelve un string para que puedas localizar
   rápidamente los artefactos (JSONL, CSV, gzip). Crea la carpeta si vas a versionar datos de prueba.
+- **`state/futures/known-contracts.json`** – La caché de contratos de futuros se actualiza
+  automáticamente cuando los módulos `futures-overview` y `futures-detail` detectan nuevos códigos de
+  contrato (por ejemplo `MESZ25`, `MNQZ25`). Consulta y reinicia el archivo siguiendo
+  [la guía dedicada](docs/futures/contracts.md).
 - **`logs/`** – Cada proceso activa [`createProcessLogger`](src/bootstrap/logger.ts), que genera un
   archivo por ejecución con timestamps ISO y se rota automáticamente en base al nombre del comando.
   Conserva esta carpeta fuera del control de versiones para evitar filtrar información sensible.

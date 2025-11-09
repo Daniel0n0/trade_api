@@ -1,4 +1,4 @@
-const FUTURES_BASE_URL = 'https://robinhood.com/us/en/markets/futures';
+const FUTURES_BASE_URL = 'https://robinhood.com/futures';
 
 export type FuturesRouteDefinition = {
   readonly module: string;
@@ -36,7 +36,7 @@ export function createFuturesRoute(input: FuturesRouteInput): FuturesRouteDefini
   const slug = normalizeSlug((input.slug ?? input.symbol).toUpperCase());
   const aliases = (input.aliases ?? []).map((item) => normalizeSymbol(item));
   const symbols = [symbol, ...aliases];
-  const url = `${FUTURES_BASE_URL}/${slug}/`;
+  const url = `${FUTURES_BASE_URL}/${slug}`;
 
   return {
     module: input.module,
@@ -48,13 +48,13 @@ export function createFuturesRoute(input: FuturesRouteInput): FuturesRouteDefini
 }
 
 const FUTURES_ROUTE_DEFINITIONS: readonly FuturesRouteDefinition[] = [
-  createFuturesRoute({ module: 'futures-mes', symbol: 'MES' }),
-  createFuturesRoute({ module: 'futures-mnq', symbol: 'MNQ' }),
-  createFuturesRoute({ module: 'futures-mym', symbol: 'MYM' }),
-  createFuturesRoute({ module: 'futures-m2k', symbol: 'M2K' }),
-  createFuturesRoute({ module: 'futures-mgc', symbol: 'MGC' }),
-  createFuturesRoute({ module: 'futures-sil', symbol: 'SIL' }),
-  createFuturesRoute({ module: 'futures-mcl', symbol: 'MCL' }),
+  createFuturesRoute({ module: 'futures-mes', symbol: 'MESZ25' }),
+  createFuturesRoute({ module: 'futures-mnq', symbol: 'MNQZ25' }),
+  createFuturesRoute({ module: 'futures-mym', symbol: 'MYMZ25' }),
+  createFuturesRoute({ module: 'futures-m2k', symbol: 'M2KZ25' }),
+  createFuturesRoute({ module: 'futures-mgc', symbol: 'MGCZ25' }),
+  createFuturesRoute({ module: 'futures-sil', symbol: 'SILZ25' }),
+  createFuturesRoute({ module: 'futures-mcl', symbol: 'MCLZ25' }),
 ];
 
 export const FUTURES_ROUTES = FUTURES_ROUTE_DEFINITIONS;

@@ -113,8 +113,9 @@ export const buildLegendLayoutUrl = (code: string): string =>
 const LEGEND_URL_TEMPLATE = `${ROBINHOOD_LEGEND_LAYOUT_BASE}/{urlCode}${LEGEND_DEFAULT_QUERY}` as const;
 const OPTIONS_URL_TEMPLATE = 'https://robinhood.com/options/chains/{symbol}' as const;
 const STOCK_PAGE_URL_TEMPLATE = 'https://robinhood.com/stocks/{symbol}' as const;
-const FUTURES_BASE_URL = 'https://robinhood.com/us/en/markets/futures' as const;
-const FUTURES_DETAIL_URL_TEMPLATE = `${FUTURES_BASE_URL}/{symbol}/` as const;
+const FUTURES_OVERVIEW_URL =
+  'https://robinhood.com/lists/robinhood/12442aa7-2280-4d5a-86e4-1ee5353f3892' as const;
+const FUTURES_DETAIL_URL_TEMPLATE = 'https://robinhood.com/futures/{symbol}' as const;
 
 const normalizeSymbols = (symbols?: readonly string[]): readonly string[] | undefined => {
   if (!symbols) {
@@ -281,23 +282,23 @@ export const MODULES: readonly ModuleDefinition[] = [
     defaultSymbols: ['SPY'],
     requiresSymbols: true,
   },
-  {
+  { 
     name: 'futures',
     description: 'Panel principal de mercados de futuros',
-    url: `${FUTURES_BASE_URL}/`,
+    url: `${FUTURES_OVERVIEW_URL}/`,
   },
   {
     name: 'futures-mes',
     description: 'Futuros Micro E-mini S&P 500 (MES)',
     urlTemplate: FUTURES_DETAIL_URL_TEMPLATE,
-    defaultSymbols: ['MES'],
+    defaultSymbols: ['MESZ25'],
     requiresSymbols: true,
   },
   {
     name: 'futures-mnq',
     description: 'Futuros Micro E-mini Nasdaq-100 (MNQ)',
     urlTemplate: FUTURES_DETAIL_URL_TEMPLATE,
-    defaultSymbols: ['MNQ'],
+    defaultSymbols: ['MNQZ25'],
     requiresSymbols: true,
   },
   {
@@ -348,13 +349,14 @@ export const MODULES: readonly ModuleDefinition[] = [
   {
     name: 'futures-overview',
     description: 'Panel general de futuros',
-    url: buildLegendLayoutUrl(MODULE_URL_CODES['futures-overview']),
-    urlCode: MODULE_URL_CODES['futures-overview'],
+    url: `${FUTURES_OVERVIEW_URL}/`,
+    defaultSymbols: ['MESZ25', 'MNQZ25'],
   },
   {
     name: 'futures-detail',
     description: 'Detalle de un contrato de futuros',
-    url: buildLegendLayoutUrl(MODULE_URL_CODES['futures-detail']),
-    urlCode: MODULE_URL_CODES['futures-detail'],
+    urlTemplate: FUTURES_DETAIL_URL_TEMPLATE,
+    defaultSymbols: ['MESZ25'],
+    requiresSymbols: true,
   },
 ];
