@@ -125,6 +125,10 @@ export const FUTURES_TRADING_SESSIONS_HEADER = [
   'market',
   'createdAt',
   'updatedAt',
+  'dayDate',
+  'dayStartsAt',
+  'dayEndsAt',
+  'dayIsHoliday',
 ] as const;
 
 export type FuturesTradingSessionsHeader = typeof FUTURES_TRADING_SESSIONS_HEADER;
@@ -918,16 +922,58 @@ export function normalizeFuturesTradingSessions(
     const defaultMarket = pickString(record, ['market', 'exchange']);
     const defaultCreatedAt = pickIsoDate(record, ['created_at', 'createdAt']);
     const defaultUpdatedAt = pickIsoDate(record, ['updated_at', 'updatedAt']);
+    const dayDate = pickIsoDate(record, ['date', 'trading_date', 'tradingDate']);
+    const dayStartsAt = pickIsoDate(record, ['start_time', 'startTime']);
+    const dayEndsAt = pickIsoDate(record, ['end_time', 'endTime']);
+    const dayIsHoliday = pickString(record, ['is_holiday', 'isHoliday']);
 
-    const groups: Array<[string, unknown]> = [
-      ['sessions', (record as Record<string, unknown>).sessions],
-      ['currentSession', (record as Record<string, unknown>).currentSession],
-      ['previousSession', (record as Record<string, unknown>).previousSession],
-      ['nextSession', (record as Record<string, unknown>).nextSession],
+    const groups: Array<[string, readonly unknown[]]> = [
+      ['sessions', unwrapEntry((record as Record<string, unknown>).sessions)],
+      ['currentSession', unwrapEntry((record as Record<string, unknown>).currentSession)],
+      ['previousSession', unwrapEntry((record as Record<string, unknown>).previousSession)],
+      ['nextSession', unwrapEntry((record as Record<string, unknown>).nextSession)],
     ];
 
-    for (const [scope, value] of groups) {
-      for (const sessionEntry of unwrapEntry(value)) {
+    const hasSessionGroupData = groups.some(([, entries]) => entries.length > 0);
+    const looksLikeRootRecord =
+      hasSessionGroupData ||
+      'futures_contract_id' in record ||
+      'futuresContractId' in record ||
+      'instrument_id' in record ||
+      'instrumentId' in record ||
+      'product_id' in record ||
+      'productId' in record;
+
+    if (looksLikeRootRecord && (dayDate || dayStartsAt || dayEndsAt || dayIsHoliday)) {
+      const summaryRow: FuturesCsvRow<typeof FUTURES_TRADING_SESSIONS_HEADER> = {
+        symbol: rowSymbol ?? fallbackSymbol,
+        instrumentId: normalizedInstrument,
+        productId,
+        sessionScope: 'summary',
+        tradingDate: dayDate,
+        startsAt: dayStartsAt,
+        endsAt: dayEndsAt,
+        timezone: defaultTimezone,
+        market: defaultMarket,
+        createdAt: defaultCreatedAt,
+        updatedAt: defaultUpdatedAt,
+        dayDate,
+        dayStartsAt,
+        dayEndsAt,
+        dayIsHoliday,
+      };
+
+      if (!summaryRow.symbol) {
+        summaryRow.symbol = fallbackSymbol;
+      }
+
+      if (summaryRow.symbol || summaryRow.instrumentId || summaryRow.productId) {
+        out.push(summaryRow);
+      }
+    }
+
+    for (const [scope, entries] of groups) {
+      for (const sessionEntry of entries) {
         if (!sessionEntry || typeof sessionEntry !== 'object') {
           continue;
         }
