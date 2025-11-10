@@ -40,6 +40,14 @@ test('createNewsFeature deduplicates items and writes csv/jsonl outputs', async 
       'Fragments should not prevent Dora feeds from being detected',
     );
     assert.ok(
+      newsFeature.shouldProcessUrl('https://dora.robinhood.com/feed/instrument:urn'),
+      'Feeds con identificadores después de dos puntos deben aceptarse',
+    );
+    assert.ok(
+      newsFeature.shouldProcessUrl('https://dora.robinhood.com/feed/instrument%3Aurn'),
+      'Feeds Dora con identificadores codificados con %3A deben aceptarse',
+    );
+    assert.ok(
       newsFeature.shouldProcessUrl('HTTPS://DORA.ROBINHOOD.COM/FEED/INSTRUMENT/ABC123'),
       'Dora feeds should be detected even with uppercase URL components',
     );
