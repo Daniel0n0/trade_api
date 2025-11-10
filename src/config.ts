@@ -104,6 +104,9 @@ export const MODULE_URL_CODES: Readonly<Record<keyof typeof DEFAULT_MODULE_URL_C
 const OPTIONAL_MODULE_URL_CODE_NAMES = [
   'stocks-generic-chart',
   'options-generic',
+  'stock-daily-stats',
+  'stock-daily-news',
+  'stock-daily-orderbook',
   'daily-stats',
   'daily-news',
   'daily-order-book',
@@ -254,6 +257,37 @@ export const getModuleDefaultArgs = (definition: ModuleDefinition): ModuleUrlArg
   };
 };
 
+const STOCK_DAILY_DEFAULT_SYMBOLS = ['SPY'] as const;
+
+const STOCK_DAILY_MODULE_SPECS = [
+  {
+    names: ['stock-daily-stats', 'daily-stats'] as const,
+    pageDescription: 'Estadísticas diarias para un símbolo específico',
+    legendDescription: 'Estadísticas diarias de acciones',
+  },
+  {
+    names: ['stock-daily-news', 'daily-news'] as const,
+    pageDescription: 'Noticias diarias para un símbolo específico',
+    legendDescription: 'Noticias diarias de acciones',
+  },
+  {
+    names: ['stock-daily-orderbook', 'daily-order-book'] as const,
+    pageDescription: 'Order book diario para un símbolo específico',
+    legendDescription: 'Libro de órdenes diario de acciones',
+  },
+] as const;
+
+const STOCK_DAILY_PAGE_MODULES: readonly ModuleDefinition[] = STOCK_DAILY_MODULE_SPECS.flatMap(
+  ({ names, pageDescription }) =>
+    names.map((name) => ({
+      name,
+      description: pageDescription,
+      urlTemplate: STOCK_PAGE_URL_TEMPLATE,
+      defaultSymbols: STOCK_DAILY_DEFAULT_SYMBOLS,
+      requiresSymbols: true,
+    } satisfies ModuleDefinition)),
+);
+
 const BASE_MODULES: readonly ModuleDefinition[] = [
   {
     name: 'spy-5m-1m',
@@ -286,28 +320,8 @@ const BASE_MODULES: readonly ModuleDefinition[] = [
     url: 'https://robinhood.com/options/chains/SPY',
     defaultSymbols: ['SPY'],
   },
+  ...STOCK_DAILY_PAGE_MODULES,
   {
-    name: 'daily-stats',
-    description: 'Estadísticas diarias para un símbolo específico',
-    urlTemplate: STOCK_PAGE_URL_TEMPLATE,
-    defaultSymbols: ['SPY'],
-    requiresSymbols: true,
-  },
-  {
-    name: 'daily-news',
-    description: 'Noticias diarias para un símbolo específico',
-    urlTemplate: STOCK_PAGE_URL_TEMPLATE,
-    defaultSymbols: ['SPY'],
-    requiresSymbols: true,
-  },
-  {
-    name: 'daily-order-book',
-    description: 'Order book diario para un símbolo específico',
-    urlTemplate: STOCK_PAGE_URL_TEMPLATE,
-    defaultSymbols: ['SPY'],
-    requiresSymbols: true,
-  },
-  { 
     name: 'futures',
     description: 'Panel principal de mercados de futuros',
     url: `${FUTURES_OVERVIEW_URL}/`,
@@ -341,6 +355,18 @@ const BASE_MODULES: readonly ModuleDefinition[] = [
   },
 ];
 
+const STOCK_DAILY_LEGEND_MODULES: readonly (ModuleDefinition & {
+  readonly name: OptionalModuleUrlCodeName;
+})[] = STOCK_DAILY_MODULE_SPECS.flatMap(({ names, legendDescription }) =>
+  names.map((name) => ({
+    name: name as OptionalModuleUrlCodeName,
+    description: legendDescription,
+    urlTemplate: LEGEND_URL_TEMPLATE,
+    requiresUrlCode: true,
+    defaultSymbols: STOCK_DAILY_DEFAULT_SYMBOLS,
+  } satisfies ModuleDefinition & { readonly name: OptionalModuleUrlCodeName })),
+);
+
 const OPTIONAL_LEGEND_MODULES: readonly (ModuleDefinition & {
   readonly name: OptionalModuleUrlCodeName;
 })[] = [
@@ -356,27 +382,7 @@ const OPTIONAL_LEGEND_MODULES: readonly (ModuleDefinition & {
     urlTemplate: LEGEND_URL_TEMPLATE,
     requiresUrlCode: true,
   },
-  {
-    name: 'daily-stats',
-    description: 'Estadísticas diarias de acciones',
-    urlTemplate: LEGEND_URL_TEMPLATE,
-    requiresUrlCode: true,
-    defaultSymbols: ['SPY'],
-  },
-  {
-    name: 'daily-news',
-    description: 'Noticias diarias de acciones',
-    urlTemplate: LEGEND_URL_TEMPLATE,
-    requiresUrlCode: true,
-    defaultSymbols: ['SPY'],
-  },
-  {
-    name: 'daily-order-book',
-    description: 'Libro de órdenes diario de acciones',
-    urlTemplate: LEGEND_URL_TEMPLATE,
-    requiresUrlCode: true,
-    defaultSymbols: ['SPY'],
-  },
+  ...STOCK_DAILY_LEGEND_MODULES,
 ];
 
 const ENABLED_OPTIONAL_MODULES: readonly ModuleDefinition[] = OPTIONAL_LEGEND_MODULES.flatMap(
