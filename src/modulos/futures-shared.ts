@@ -3,7 +3,15 @@ import path from 'node:path';
 import type { Page, Response } from 'playwright';
 
 import { ensureDirectoryForFileSync } from '../io/dir.js';
-import { FUTURES_HISTORICAL_PATTERN, FUTURES_SNAPSHOT_PATTERN } from '../modules/futures/interceptor.js';
+import {
+  FUTURES_CONTRACTS_BY_SYMBOL_PATTERN,
+  FUTURES_CONTRACTS_PATTERN,
+  FUTURES_FUNDAMENTALS_PATTERN,
+  FUTURES_HISTORICAL_PATTERN,
+  FUTURES_MARKET_HOURS_PATTERN,
+  FUTURES_SNAPSHOT_PATTERN,
+  FUTURES_TRADING_SESSIONS_PATTERN,
+} from '../modules/futures/interceptor.js';
 import { safeJsonParse } from '../utils/payload.js';
 
 const FUTURES_CONTRACT_CODE_PATTERN = /^[A-Z]{1,5}[FGHJKMNQUVXZ][0-9]{1,2}$/;
@@ -290,6 +298,11 @@ export const waitForFuturesData = async (page: Page, timeoutMs = 15_000): Promis
         return (
           FUTURES_HISTORICAL_PATTERN.test(url) ||
           FUTURES_SNAPSHOT_PATTERN.test(url) ||
+          FUTURES_FUNDAMENTALS_PATTERN.test(url) ||
+          FUTURES_MARKET_HOURS_PATTERN.test(url) ||
+          FUTURES_CONTRACTS_PATTERN.test(url) ||
+          FUTURES_CONTRACTS_BY_SYMBOL_PATTERN.test(url) ||
+          FUTURES_TRADING_SESSIONS_PATTERN.test(url) ||
           FUTURES_DISCOVERY_URL_PATTERN.test(url)
         );
       },

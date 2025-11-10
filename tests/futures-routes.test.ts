@@ -15,7 +15,7 @@ describe('futures routes helpers', () => {
     assert.equal(route.slug, 'CUSTOM-PATH');
     assert.equal(route.symbol, 'MX1');
     assert.deepEqual(route.symbols, ['MX1']);
-    assert.equal(route.url, 'https://robinhood.com/futures/CUSTOM-PATH');
+    assert.equal(route.url, 'https://robinhood.com/us/en/markets/futures/CUSTOM-PATH/');
   });
 
   it('exposes module level maps', () => {
