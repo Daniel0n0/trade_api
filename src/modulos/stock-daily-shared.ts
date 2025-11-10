@@ -11,6 +11,8 @@ import { normaliseFramePayload, safeJsonParse } from '../utils/payload.js';
 
 const JSON_MIME_PATTERN = /application\/json/i;
 const STATS_URL_HINT = /fundamental|stats|marketdata|phoenix|instruments|quote/i;
+const DORA_INSTRUMENT_FEED_HINT = 'dora\\.robinhood\\.com\\/(?:feed|feeds)\\/instrument(?:\\b|\\/)';
+
 const NEWS_URL_HINT = new RegExp(
   [
     'news',
@@ -22,11 +24,12 @@ const NEWS_URL_HINT = new RegExp(
     'dora',
     'feed',
     'instrument',
-    'dora\\.robinhood\\.com\\/feed\\/instrument',
+    DORA_INSTRUMENT_FEED_HINT,
   ].join('|'),
   'i',
 );
 const DORA_HOST_PATTERN = /(^|\.)dora\.robinhood\.com$/i;
+const DORA_INSTRUMENT_FEED_INLINE_PATTERN = new RegExp(DORA_INSTRUMENT_FEED_HINT, 'i');
 const DORA_INSTRUMENT_PATH_PATTERN = /\/feeds?\/instrument(?=\/|$|\?)/i;
 const ORDERBOOK_URL_HINT = /order[-_ ]?book|level2|depth|phoenix|marketdata|quotes/i;
 const STOCK_WS_PATTERN = /(legend|phoenix|stream|socket|ws)/i;
@@ -477,6 +480,10 @@ const matchesDoraInstrumentFeed = (rawUrl: string): boolean => {
   const candidate = rawUrl.trim();
   if (!candidate) {
     return false;
+  }
+
+  if (DORA_INSTRUMENT_FEED_INLINE_PATTERN.test(candidate)) {
+    return true;
   }
 
   if (containsDoraInstrumentHint(candidate)) {
