@@ -1,4 +1,4 @@
-const FUTURES_BASE_URL = 'https://robinhood.com/futures';
+const FUTURES_BASE_URL = 'https://robinhood.com/us/en/markets/futures';
 
 export type FuturesRouteDefinition = {
   readonly module: string;
@@ -36,7 +36,7 @@ export function createFuturesRoute(input: FuturesRouteInput): FuturesRouteDefini
   const slug = normalizeSlug((input.slug ?? input.symbol).toUpperCase());
   const aliases = (input.aliases ?? []).map((item) => normalizeSymbol(item));
   const symbols = [symbol, ...aliases];
-  const url = `${FUTURES_BASE_URL}/${slug}`;
+  const url = `${FUTURES_BASE_URL}/${slug}/`;
 
   return {
     module: input.module,
