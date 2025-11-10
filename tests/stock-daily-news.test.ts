@@ -38,6 +38,12 @@ test('createNewsFeature deduplicates items and writes csv/jsonl outputs', async 
       newsFeature.shouldProcessUrl('https://dora.robinhood.com/api/v1/news?next=/feed/instrument/abc123'),
       'Feeds proxied through query parameters should still be recognized',
     );
+    assert.ok(
+      newsFeature.shouldProcessUrl(
+        'https://dora.robinhood.com/api/v1/news?next=https%3A%2F%2Fdora.robinhood.com%2Ffeed%2Finstrument%2Fabc123',
+      ),
+      'Encoded Dora feed references should be recognized even without symbol hints',
+    );
 
     const meta = { transport: 'http', source: 'https://dora.robinhood.com/feed/instrument/abc123' } as const;
     const baseItem = {
