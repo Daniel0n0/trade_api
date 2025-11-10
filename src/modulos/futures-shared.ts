@@ -8,7 +8,7 @@ import { safeJsonParse } from '../utils/payload.js';
 
 const FUTURES_CONTRACT_CODE_PATTERN = /^[A-Z]{1,5}[FGHJKMNQUVXZ][0-9]{1,2}$/;
 const FUTURES_DISCOVERY_URL_PATTERN =
-  /(futures|contract|marketdata|phoenix|instruments|discovery\/lists(?:\/|\?|$))/i;
+  /(futures|contract|marketdata|phoenix|instruments|discovery\/lists(?!\/(?:historicals|snapshots))(?:\/[^?#]*)*)/i;
 const CACHE_PATH = path.join(process.cwd(), 'state', 'futures', 'known-contracts.json');
 const JSON_INDENT = 2;
 const MAX_SCAN_NODES = 10_000;
