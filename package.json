@@ -14,7 +14,7 @@
     "clean:profile": "tsx scripts/clean-profile.ts",
     "lint": "eslint \"src/**/*.ts\" \"scripts/**/*.ts\"",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test tests/row.test.ts tests/cli.normalize.test.ts tests/cli.commands.test.ts tests/socket-sniffer.test.ts tests/csv-writer.test.ts tests/options-interceptor.test.ts tests/futures-routes.test.ts tests/futures-interceptor.test.ts tests/stock-daily-news.test.ts",
+    "test": "tsx --test tests/row.test.ts tests/cli.normalize.test.ts tests/cli.commands.test.ts tests/socket-sniffer.test.ts tests/csv-writer.test.ts tests/options-interceptor.test.ts tests/futures-routes.test.ts tests/futures-interceptor.test.ts tests/stock-daily-news.test.ts tests/stock-daily-runner-news.test.ts",
     "format": "prettier --write ."
   },
   "dependencies": {

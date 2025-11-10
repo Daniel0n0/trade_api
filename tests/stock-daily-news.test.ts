@@ -23,8 +23,16 @@ test('createNewsFeature deduplicates items and writes csv/jsonl outputs', async 
       'Dora feeds without a symbol suffix should be accepted',
     );
     assert.ok(
+      newsFeature.shouldProcessUrl('https://dora.robinhood.com/feed/instrument'),
+      'Dora feeds without trailing slash must also be accepted',
+    );
+    assert.ok(
       newsFeature.shouldProcessUrl('https://dora.robinhood.com/feed/instrument/?cursor=next-page'),
       'Dora feeds con parámetros de paginación deben aceptarse',
+    );
+    assert.ok(
+      newsFeature.shouldProcessUrl('https://dora.robinhood.com/feed/instrument?cursor=next-page'),
+      'Query parameters must be detected even when the path lacks a trailing slash',
     );
     assert.ok(
       newsFeature.shouldProcessUrl('HTTPS://DORA.ROBINHOOD.COM/FEED/INSTRUMENT/ABC123'),
