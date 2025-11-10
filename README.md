@@ -167,9 +167,9 @@ The default session launches the following modules automatically:
 - `spy-options-chain`
 - `spx-options-chain`
 - `options`
-- `daily-stats`
-- `daily-news`
-- `daily-order-book`
+- `stock-daily-stats`
+- `stock-daily-news`
+- `stock-daily-orderbook`
 - `futures`
 - `futures-mes`
 - `futures-mnq`
