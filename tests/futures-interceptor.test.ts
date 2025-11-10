@@ -359,6 +359,11 @@ describe('futures interceptor normalizers', () => {
     assert.equal(row.opensAt, '2025-11-11T14:30:00.000Z');
     assert.equal(row.extendedClosesAt, '2025-11-12T01:00:00.000Z');
     assert.equal(row.lateOptionClosesAt, '2025-11-11T21:15:00.000Z');
+    assert.equal(
+      row.previousOpenHoursUrl,
+      'https://api.robinhood.com/markets/XASE/hours/2025-11-10/',
+    );
+    assert.equal(row.nextOpenHoursUrl, 'https://api.robinhood.com/markets/XASE/hours/2025-11-12/');
     assert.equal(row.indexOption0dteClosesAt, '2025-11-11T21:00:00.000Z');
     assert.equal(row.curbClosesAt, '2025-11-11T22:00:00.000Z');
     assert.equal(row.fxNextOpenAt, '2025-11-11T22:00:00.000Z');
