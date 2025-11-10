@@ -63,7 +63,7 @@ test('stock daily news runner escribe artículos de Dora sin duplicados', async 
 
   try {
     const runner = createStockDailyRunner({
-      moduleName: 'stock-daily-news',
+      moduleName: 'daily-news',
       features: { news: true },
       buildResult: (state) => {
         if (!state.news) {
@@ -79,7 +79,7 @@ test('stock daily news runner escribe artículos de Dora sin duplicados', async 
       context: {} as BrowserContext,
     };
 
-    const args = { module: 'stock-daily-news', action: 'test', symbols: ['SPY'] } as const;
+    const args = { module: 'daily-news', action: 'test', symbols: ['SPY'] } as const;
     const result = (await runner(args, runtime)) as { csvPath: string; jsonlPath: string };
 
     const payloadPath = new URL('./fixtures/dora-feed.json', import.meta.url);

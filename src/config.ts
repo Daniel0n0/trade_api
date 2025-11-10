@@ -104,9 +104,9 @@ export const MODULE_URL_CODES: Readonly<Record<keyof typeof DEFAULT_MODULE_URL_C
 const OPTIONAL_MODULE_URL_CODE_NAMES = [
   'stocks-generic-chart',
   'options-generic',
-  'stock-daily-stats',
-  'stock-daily-news',
-  'stock-daily-orderbook',
+  'daily-stats',
+  'daily-news',
+  'daily-order-book',
 ] as const;
 
 type OptionalModuleUrlCodeName = (typeof OPTIONAL_MODULE_URL_CODE_NAMES)[number];
@@ -287,21 +287,21 @@ const BASE_MODULES: readonly ModuleDefinition[] = [
     defaultSymbols: ['SPY'],
   },
   {
-    name: 'stock-daily-stats',
+    name: 'daily-stats',
     description: 'Estadísticas diarias para un símbolo específico',
     urlTemplate: STOCK_PAGE_URL_TEMPLATE,
     defaultSymbols: ['SPY'],
     requiresSymbols: true,
   },
   {
-    name: 'stock-daily-news',
+    name: 'daily-news',
     description: 'Noticias diarias para un símbolo específico',
     urlTemplate: STOCK_PAGE_URL_TEMPLATE,
     defaultSymbols: ['SPY'],
     requiresSymbols: true,
   },
   {
-    name: 'stock-daily-orderbook',
+    name: 'daily-order-book',
     description: 'Order book diario para un símbolo específico',
     urlTemplate: STOCK_PAGE_URL_TEMPLATE,
     defaultSymbols: ['SPY'],
@@ -357,21 +357,21 @@ const OPTIONAL_LEGEND_MODULES: readonly (ModuleDefinition & {
     requiresUrlCode: true,
   },
   {
-    name: 'stock-daily-stats',
+    name: 'daily-stats',
     description: 'Estadísticas diarias de acciones',
     urlTemplate: LEGEND_URL_TEMPLATE,
     requiresUrlCode: true,
     defaultSymbols: ['SPY'],
   },
   {
-    name: 'stock-daily-news',
+    name: 'daily-news',
     description: 'Noticias diarias de acciones',
     urlTemplate: LEGEND_URL_TEMPLATE,
     requiresUrlCode: true,
     defaultSymbols: ['SPY'],
   },
   {
-    name: 'stock-daily-orderbook',
+    name: 'daily-order-book',
     description: 'Libro de órdenes diario de acciones',
     urlTemplate: LEGEND_URL_TEMPLATE,
     requiresUrlCode: true,
