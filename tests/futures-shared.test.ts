@@ -112,6 +112,27 @@ describe('futures shared helpers', () => {
     handle.close();
   });
 
+  it('detecta discovery/lists con rutas anidadas', async () => {
+    const page = new FakePage();
+    const recorded: string[][] = [];
+    const handle = installFuturesContractTracker(page as unknown as Page, {
+      onSymbols: (symbols) => {
+        recorded.push([...symbols]);
+      },
+    });
+
+    await page.emit(
+      createJsonResponse('https://api.robinhood.com/discovery/lists/contracts/futures/top?limit=20', {
+        results: [{ contract_code: 'ESZ4' }],
+        extra: { nested: [{ future_symbol: 'NQZ4' }] },
+      }),
+    );
+
+    assert.deepEqual(recorded.map((symbols) => symbols.sort()), [['ESZ4', 'NQZ4']]);
+
+    handle.close();
+  });
+
   it('omite endpoints cubiertos por el interceptor principal', async () => {
     const page = new FakePage();
     let calls = 0;
@@ -132,6 +153,33 @@ describe('futures shared helpers', () => {
         results: [{ symbol: 'MESU4' }],
       }),
     );
+
+    assert.equal(calls, 0);
+
+    handle.close();
+  });
+
+  it('omite discovery/lists para historiales y snapshots', async () => {
+    const page = new FakePage();
+    let calls = 0;
+    const handle = installFuturesContractTracker(page as unknown as Page, {
+      onSymbols: () => {
+        calls += 1;
+      },
+    });
+
+    const candidates = [
+      'https://api.robinhood.com/discovery/lists/historicals/mesu4',
+      'https://api.robinhood.com/discovery/lists/snapshots/mesu4',
+    ];
+
+    for (const url of candidates) {
+      await page.emit(
+        createJsonResponse(url, {
+          results: [{ contract_code: 'MESU4' }],
+        }),
+      );
+    }
 
     assert.equal(calls, 0);
 
