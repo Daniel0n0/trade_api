@@ -55,38 +55,44 @@ describe('futures interceptor normalizers', () => {
 
   it('normalizes snapshot payloads with nested data wrappers', () => {
     const payload = {
-      data: {
-        data: [
-          {
-            symbol: 'MNQ',
-            mark_price: '17000.25',
-            bid_price: '16999.75',
-            bid_size: 4,
-            ask_price: '17000.5',
-            ask_size: 3,
-            last_trade_price: '17000.25',
-            last_trade_size: 2,
-            previous_close_price: '16800',
-            open_interest: '1500',
-            mark_price_timestamp: '2024-01-02T15:45:00Z',
-            instrument_id: 'abcd',
+      status: 'SUCCESS',
+      data: [
+        {
+          status: 'SUCCESS',
+          data: {
+            ask_price: '6801.5',
+            ask_size: 16,
+            ask_venue_timestamp: '2025-11-10T02:25:30.608-05:00',
+            bid_price: '6801.25',
+            bid_size: 16,
+            bid_venue_timestamp: '2025-11-10T02:25:30.607-05:00',
+            last_trade_price: '6801.5',
+            last_trade_size: 1,
+            last_trade_venue_timestamp: '2025-11-10T02:25:29.588-05:00',
+            symbol: '/MESZ25:XCME',
+            instrument_id: 'c4021dc3-bc5c-4252-a5b9-209572a1cb78',
+            state: 'active',
+            updated_at: '2025-11-10T02:25:30.608-05:00',
+            out_of_band: false,
           },
-        ],
-      },
+        },
+      ],
     };
 
     const rows = normalizeFuturesSnapshots(payload, {
-      url: 'https://api.robinhood.com/marketdata/futures/quotes/abcd/',
-      fallbackSymbol: 'mnq',
+      url: 'https://api.robinhood.com/marketdata/futures/quotes/v1/?ids=c4021dc3-bc5c-4252-a5b9-209572a1cb78',
+      fallbackSymbol: 'mesz25',
     });
 
     assert.equal(rows.length, 1);
     const row = rows[0];
-    assert.equal(row.symbol, 'MNQ');
-    assert.equal(row.instrumentId, 'ABCD');
-    assert.equal(row.asOf, '2024-01-02T15:45:00.000Z');
-    const csvLine = FUTURES_SNAPSHOT_HEADER.map((key) => row[key] ?? '').join(',');
-    assert.ok(csvLine.includes('17000.25'));
+    assert.equal(row.symbol, '/MESZ25:XCME');
+    assert.equal(row.instrumentId, 'C4021DC3-BC5C-4252-A5B9-209572A1CB78');
+    assert.equal(row.asOf, '2025-11-10T07:25:30.608Z');
+    assert.equal(row.askPrice, 6801.5);
+    assert.equal(row.bidPrice, 6801.25);
+    assert.equal(row.lastTradePrice, 6801.5);
+    assert.equal(row.state, 'active');
   });
 
   it('falls back to provided symbol when missing in payload', () => {
@@ -109,170 +115,231 @@ describe('futures interceptor normalizers', () => {
   });
   it('normalizes futures fundamentals data', () => {
     const payload = {
-      data: {
-        status: {
-          data: [
-            {
-              symbol: 'ES',
-              instrument_id: 'c0ffee',
-              product_id: 'prod-es',
-              root_symbol: 'ES',
-              contract_type: 'future',
-              tradeable: true,
-              state: 'active',
-              multiplier: '50',
-              tick_size: '0.25',
-              initial_margin: '13200',
-              maintenance_margin: '12000',
-              overnight_maintenance_margin: '15000',
-              listing_date: '2023-12-01',
-              expiration_date: '2024-03-15',
-              settlement_date: '2024-03-16',
-              last_trade_date: '2024-03-15T13:00:00Z',
-              created_at: '2023-12-01T00:00:00Z',
-              updated_at: '2024-01-01T00:00:00Z',
-            },
-          ],
+      status: 'SUCCESS',
+      data: [
+        {
+          status: 'SUCCESS',
+          data: {
+            instrument_id: 'c4021dc3-bc5c-4252-a5b9-209572a1cb78',
+            open: '6786.25',
+            high: '6807.25',
+            low: '6772',
+            volume: '146751',
+            previous_close_price: '6753.75',
+          },
         },
-      },
+      ],
     };
 
     const rows = normalizeFuturesFundamentals(payload, {
-      url: 'https://api.robinhood.com/marketdata/futures/fundamentals/ES/',
-      fallbackSymbol: 'es',
+      url: 'https://api.robinhood.com/marketdata/futures/fundamentals/v1/?ids=c4021dc3-bc5c-4252-a5b9-209572a1cb78',
+      fallbackSymbol: 'mesz25',
     });
 
     assert.equal(rows.length, 1);
     const row = rows[0];
-    assert.equal(row.symbol, 'ES');
-    assert.equal(row.instrumentId, 'C0FFEE');
-    assert.equal(row.productId, 'prod-es');
-    assert.equal(row.expirationDate, '2024-03-15T00:00:00.000Z');
-    assert.equal(row.lastTradeDate, '2024-03-15T13:00:00.000Z');
-    const csvLine = FUTURES_FUNDAMENTALS_HEADER.map((key) => row[key] ?? '').join(',');
-    assert.ok(csvLine.includes('13200'));
+    assert.equal(row.symbol, 'MESZ25');
+    assert.equal(row.instrumentId, 'C4021DC3-BC5C-4252-A5B9-209572A1CB78');
+    assert.equal(row.open, 6786.25);
+    assert.equal(row.high, 6807.25);
+    assert.equal(row.low, 6772);
+    assert.equal(row.volume, 146751);
+    assert.equal(row.previousClose, 6753.75);
   });
 
-  it('normalizes futures contracts data', () => {
+  it('normalizes futures contracts data from symbol lookup', () => {
     const payload = {
-      data: {
-        status: {
-          data: [
-            {
-              contract_code: 'ESH24',
-              instrument_id: 'abc123',
-              product_id: 'prod-es',
-              root_symbol: 'ES',
-              contract_type: 'future',
-              description: 'E-mini S&P 500 Mar 24',
-              tradeable: true,
-              state: 'active',
-              multiplier: '50',
-              tick_size: '0.25',
-              listing_date: '2023-12-01',
-              expiration_date: '2024-03-15',
-              settlement_date: '2024-03-16',
-              last_trade_time: '2024-03-15T13:00:00Z',
-              created_at: '2023-12-01T00:00:00Z',
-              updated_at: '2024-01-01T00:00:00Z',
-            },
-          ],
-        },
+      result: {
+        id: 'c4021dc3-bc5c-4252-a5b9-209572a1cb78',
+        productId: 'f5e6b1cd-3d23-4add-8c51-385dd953a850',
+        symbol: '/MESZ25:XCME',
+        displaySymbol: '/MESZ25',
+        description: 'Micro E-mini S&P 500 Futures, Dec-25',
+        multiplier: '5',
+        expirationMmy: '202512',
+        expiration: '2025-12-19',
+        customerLastCloseDate: '2025-12-19',
+        tradability: 'FUTURES_TRADABILITY_TRADABLE',
+        state: 'FUTURES_STATE_ACTIVE',
+        settlementStartTime: '08:30',
+        firstTradeDate: '2024-05-01',
+        settlementDate: '2025-12-19',
       },
     };
 
     const rows = normalizeFuturesContracts(payload, {
-      url: 'https://phoenix.robinhood.com/arsenal/v1/futures/contracts/symbol/ESH24/',
-      fallbackSymbol: 'esh24',
+      url: 'https://api.robinhood.com/arsenal/v1/futures/contracts/symbol/MESZ25',
+      fallbackSymbol: 'mesz25',
     });
 
     assert.equal(rows.length, 1);
     const row = rows[0];
-    assert.equal(row.symbol, 'ESH24');
-    assert.equal(row.instrumentId, 'ABC123');
-    assert.equal(row.productId, 'prod-es');
-    assert.equal(row.description, 'E-mini S&P 500 Mar 24');
-    assert.equal(row.expirationDate, '2024-03-15T00:00:00.000Z');
-    assert.equal(row.lastTradeDate, '2024-03-15T13:00:00.000Z');
-    const csvLine = FUTURES_CONTRACTS_HEADER.map((key) => row[key] ?? '').join(',');
-    assert.ok(csvLine.includes('0.25'));
+    assert.equal(row.id, 'c4021dc3-bc5c-4252-a5b9-209572a1cb78'.toUpperCase());
+    assert.equal(row.symbol, '/MESZ25:XCME');
+    assert.equal(row.displaySymbol, '/MESZ25');
+    assert.equal(row.productId, 'f5e6b1cd-3d23-4add-8c51-385dd953a850');
+    assert.equal(row.description, 'Micro E-mini S&P 500 Futures, Dec-25');
+    assert.equal(row.expiration, '2025-12-19T00:00:00.000Z');
   });
 
-  it('normalizes futures trading sessions data', () => {
+  it('normalizes futures contracts result lists', () => {
     const payload = {
-      data: {
-        status: {
-          data: [
-            {
-              symbol: 'NQ',
-              instrument_id: 'inst-nq',
-              product_id: 'prod-nq',
-              session_type: 'regular',
-              starts_at: '2024-01-02T14:30:00Z',
-              ends_at: '2024-01-02T21:00:00Z',
-              timezone: 'UTC',
-              market: 'CME',
-              created_at: '2023-12-01T00:00:00Z',
-              updated_at: '2024-01-01T00:00:00Z',
-            },
-          ],
+      results: [
+        {
+          id: 'bd2b6728-a24d-448a-a2bc-655c18d8f5e8',
+          productId: 'f5e6b1cd-3d23-4add-8c51-385dd953a850',
+          symbol: '/MESH26:XCME',
+          displaySymbol: '/MESH26',
+          description: 'Micro E-mini S&P 500 Futures, Mar-26',
+          multiplier: '5',
+          expirationMmy: '202603',
+          expiration: '2026-03-20',
+          customerLastCloseDate: '2026-03-20',
+          tradability: 'FUTURES_TRADABILITY_TRADABLE',
+          state: 'FUTURES_STATE_ACTIVE',
+          settlementStartTime: '08:30',
+          firstTradeDate: '2024-05-01',
+          settlementDate: '2026-03-20',
         },
+        {
+          id: 'c4021dc3-bc5c-4252-a5b9-209572a1cb78',
+          productId: 'f5e6b1cd-3d23-4add-8c51-385dd953a850',
+          symbol: '/MESZ25:XCME',
+          displaySymbol: '/MESZ25',
+          description: 'Micro E-mini S&P 500 Futures, Dec-25',
+          multiplier: '5',
+          expirationMmy: '202512',
+          expiration: '2025-12-19',
+          customerLastCloseDate: '2025-12-19',
+          tradability: 'FUTURES_TRADABILITY_TRADABLE',
+          state: 'FUTURES_STATE_ACTIVE',
+          settlementStartTime: '08:30',
+          firstTradeDate: '2024-05-01',
+          settlementDate: '2025-12-19',
+        },
+      ],
+    };
+
+    const rows = normalizeFuturesContracts(payload, {
+      url: 'https://api.robinhood.com/arsenal/v1/futures/contracts/',
+      fallbackSymbol: 'mes',
+    });
+
+    assert.equal(rows.length, 2);
+    const mesh26 = rows.find((row) => row.displaySymbol === '/MESH26');
+    assert.ok(mesh26);
+    assert.equal(mesh26?.expiration, '2026-03-20T00:00:00.000Z');
+    assert.equal(mesh26?.id, 'BD2B6728-A24D-448A-A2BC-655C18D8F5E8');
+  });
+
+  it('normalizes futures trading sessions data with multiple scopes', () => {
+    const payload = {
+      date: '2025-11-10',
+      futuresContractId: 'c4021dc3-bc5c-4252-a5b9-209572a1cb78',
+      isHoliday: false,
+      startTime: '2025-11-09T21:55:00Z',
+      endTime: '2025-11-10T22:40:00Z',
+      sessions: [
+        {
+          tradingDate: '2025-11-10',
+          isTrading: false,
+          startTime: '2025-11-09T21:55:00Z',
+          endTime: '2025-11-09T23:00:00Z',
+          sessionType: 'SESSION_TYPE_NO_TRADING',
+        },
+        {
+          tradingDate: '2025-11-10',
+          isTrading: true,
+          startTime: '2025-11-09T23:00:00Z',
+          endTime: '2025-11-10T22:00:00Z',
+          sessionType: 'SESSION_TYPE_REGULAR',
+        },
+        {
+          tradingDate: '2025-11-10',
+          isTrading: false,
+          startTime: '2025-11-10T22:00:00Z',
+          endTime: '2025-11-10T22:40:00Z',
+          sessionType: 'SESSION_TYPE_NO_TRADING',
+        },
+      ],
+      currentSession: {
+        tradingDate: '2025-11-10',
+        isTrading: true,
+        startTime: '2025-11-09T23:00:00Z',
+        endTime: '2025-11-10T22:00:00Z',
+        sessionType: 'SESSION_TYPE_REGULAR',
+      },
+      previousSession: {
+        tradingDate: '2025-11-07',
+        isTrading: true,
+        startTime: '2025-11-06T23:00:00Z',
+        endTime: '2025-11-07T22:00:00Z',
+        sessionType: 'SESSION_TYPE_REGULAR',
+      },
+      nextSession: {
+        tradingDate: '2025-11-11',
+        isTrading: true,
+        startTime: '2025-11-10T23:00:00Z',
+        endTime: '2025-11-11T22:00:00Z',
+        sessionType: 'SESSION_TYPE_REGULAR',
       },
     };
 
     const rows = normalizeFuturesTradingSessions(payload, {
-      url: 'https://phoenix.robinhood.com/arsenal/v1/futures/trading_sessions/',
-      fallbackSymbol: 'nq',
+      url: 'https://api.robinhood.com/arsenal/v1/futures/trading_sessions/c4021dc3-bc5c-4252-a5b9-209572a1cb78/2025-11-10',
+      fallbackSymbol: 'mesz25',
     });
 
-    assert.equal(rows.length, 1);
-    const row = rows[0];
-    assert.equal(row.symbol, 'NQ');
-    assert.equal(row.sessionType, 'regular');
-    assert.equal(row.startsAt, '2024-01-02T14:30:00.000Z');
-    assert.equal(row.endsAt, '2024-01-02T21:00:00.000Z');
-    const csvLine = FUTURES_TRADING_SESSIONS_HEADER.map((key) => row[key] ?? '').join(',');
-    assert.ok(csvLine.includes('CME'));
+    assert.equal(rows.length, 6);
+    const regularSession = rows.find((row) => row.sessionScope === 'sessions' && row.isTrading === 'true');
+    assert.ok(regularSession);
+    assert.equal(regularSession?.startsAt, '2025-11-09T23:00:00.000Z');
+    assert.equal(regularSession?.instrumentId, 'C4021DC3-BC5C-4252-A5B9-209572A1CB78');
+    const previous = rows.find((row) => row.sessionScope === 'previousSession');
+    assert.ok(previous);
+    assert.equal(previous?.tradingDate, '2025-11-07T00:00:00.000Z');
   });
 
-  it('normalizes futures market hours data', () => {
+  it('normalizes futures market hours data with extended fields', () => {
     const payload = {
-      data: {
-        status: {
-          data: [
-            {
-              symbol: 'CL',
-              instrument_id: 'inst-cl',
-              product_id: 'prod-cl',
-              exchange: 'NYMEX',
-              date: '2024-01-02',
-              opens_at: '2024-01-02T11:00:00Z',
-              closes_at: '2024-01-02T22:00:00Z',
-              extended_opens_at: '2024-01-02T10:00:00Z',
-              extended_closes_at: '2024-01-02T23:00:00Z',
-              next_open_at: '2024-01-03T11:00:00Z',
-              previous_close_at: '2024-01-01T22:00:00Z',
-              is_open: true,
-              created_at: '2023-12-01T00:00:00Z',
-              updated_at: '2024-01-01T00:00:00Z',
-            },
-          ],
-        },
+      date: '2025-11-11',
+      is_open: true,
+      opens_at: '2025-11-11T14:30:00Z',
+      closes_at: '2025-11-11T21:00:00Z',
+      late_option_closes_at: '2025-11-11T21:15:00Z',
+      extended_opens_at: '2025-11-11T12:00:00Z',
+      extended_closes_at: '2025-11-12T01:00:00Z',
+      all_day_opens_at: '2025-11-11T01:00:00Z',
+      all_day_closes_at: '2025-11-12T01:00:00Z',
+      previous_open_hours: 'https://api.robinhood.com/markets/XASE/hours/2025-11-10/',
+      next_open_hours: 'https://api.robinhood.com/markets/XASE/hours/2025-11-12/',
+      index_option_0dte_closes_at: '2025-11-11T21:00:00Z',
+      index_option_non_0dte_closes_at: '2025-11-11T21:15:00Z',
+      index_options_extended_hours: {
+        curb_opens_at: '2025-11-11T21:15:00Z',
+        curb_closes_at: '2025-11-11T22:00:00Z',
       },
+      fx_opens_at: null,
+      fx_closes_at: null,
+      fx_is_open: false,
+      fx_next_open_hours: '2025-11-11T22:00:00Z',
     };
 
     const rows = normalizeFuturesMarketHours(payload, {
-      url: 'https://api.robinhood.com/markets/cme/hours/',
-      fallbackSymbol: 'cl',
+      url: 'https://api.robinhood.com/markets/XASE/hours/2025-11-11/',
+      fallbackSymbol: 'xase',
     });
 
     assert.equal(rows.length, 1);
     const row = rows[0];
-    assert.equal(row.symbol, 'CL');
-    assert.equal(row.exchange, 'NYMEX');
-    assert.equal(row.opensAt, '2024-01-02T11:00:00.000Z');
-    assert.equal(row.extendedClosesAt, '2024-01-02T23:00:00.000Z');
-    const csvLine = FUTURES_MARKET_HOURS_HEADER.map((key) => row[key] ?? '').join(',');
-    assert.ok(csvLine.includes('true'));
+    assert.equal(row.symbol, 'XASE');
+    assert.equal(row.opensAt, '2025-11-11T14:30:00.000Z');
+    assert.equal(row.extendedClosesAt, '2025-11-12T01:00:00.000Z');
+    assert.equal(row.lateOptionClosesAt, '2025-11-11T21:15:00.000Z');
+    assert.equal(row.indexOption0dteClosesAt, '2025-11-11T21:00:00.000Z');
+    assert.equal(row.curbClosesAt, '2025-11-11T22:00:00.000Z');
+    assert.equal(row.fxNextOpenAt, '2025-11-11T22:00:00.000Z');
+    assert.equal(row.fxIsOpen, 'false');
+    assert.equal(row.isOpen, 'true');
   });
 });
