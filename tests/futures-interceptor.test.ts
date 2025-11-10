@@ -90,9 +90,17 @@ describe('futures interceptor normalizers', () => {
     assert.equal(row.instrumentId, 'C4021DC3-BC5C-4252-A5B9-209572A1CB78');
     assert.equal(row.asOf, '2025-11-10T07:25:30.608Z');
     assert.equal(row.askPrice, 6801.5);
+    assert.equal(row.askVenueTimestamp, '2025-11-10T07:25:30.608Z');
     assert.equal(row.bidPrice, 6801.25);
+    assert.equal(row.bidVenueTimestamp, '2025-11-10T07:25:30.607Z');
     assert.equal(row.lastTradePrice, 6801.5);
+    assert.equal(row.lastTradeVenueTimestamp, '2025-11-10T07:25:29.588Z');
     assert.equal(row.state, 'active');
+    assert.equal(row.outOfBand, 'false');
+
+    const csvLine = FUTURES_SNAPSHOT_HEADER.map((key) => row[key] ?? '').join(',');
+    assert.ok(csvLine.includes('2025-11-10T07:25:30.607Z'));
+    assert.ok(csvLine.includes('false'));
   });
 
   it('falls back to provided symbol when missing in payload', () => {

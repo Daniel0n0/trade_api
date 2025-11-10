@@ -38,15 +38,19 @@ export const FUTURES_SNAPSHOT_HEADER = [
   'markPrice',
   'bidPrice',
   'bidSize',
+  'bidVenueTimestamp',
   'askPrice',
   'askSize',
+  'askVenueTimestamp',
   'lastTradePrice',
   'lastTradeSize',
+  'lastTradeVenueTimestamp',
   'previousClose',
   'openInterest',
   'state',
   'symbol',
   'instrumentId',
+  'outOfBand',
 ] as const;
 
 export type FuturesSnapshotHeader = typeof FUTURES_SNAPSHOT_HEADER;
@@ -601,11 +605,16 @@ export function normalizeFuturesSnapshots(
     const markPrice = toNumber(record.mark_price ?? record.markPrice ?? record.price ?? record.last_price ?? record.lastPrice);
     const bidPrice = toNumber(record.bid_price ?? record.bidPrice);
     const bidSize = toNumber(record.bid_size ?? record.bidSize);
+    const bidVenueTimestamp = toIsoString(record.bid_venue_timestamp ?? record.bidVenueTimestamp);
     const askPrice = toNumber(record.ask_price ?? record.askPrice);
     const askSize = toNumber(record.ask_size ?? record.askSize);
+    const askVenueTimestamp = toIsoString(record.ask_venue_timestamp ?? record.askVenueTimestamp);
     const lastTradePrice =
       toNumber(record.last_trade_price ?? record.lastTradePrice ?? record.last_price ?? record.price ?? record.mark_price);
     const lastTradeSize = toNumber(record.last_trade_size ?? record.lastTradeSize ?? record.last_size ?? record.size);
+    const lastTradeVenueTimestamp = toIsoString(
+      record.last_trade_venue_timestamp ?? record.lastTradeVenueTimestamp,
+    );
     const previousClose = toNumber(record.previous_close_price ?? record.previousClosePrice ?? record.prev_close ?? record.prevClose);
     const openInterest = toNumber(record.open_interest ?? record.openInterest);
     const state = toStringValue(record.state ?? record.trading_status ?? record.status);
@@ -614,21 +623,26 @@ export function normalizeFuturesSnapshots(
       toIsoString((payload as Record<string, unknown> | undefined)?.updated_at);
     const instrument =
       normaliseSymbol(record.instrument_id ?? record.instrumentId ?? record.id ?? instrumentId) ?? instrumentId ?? undefined;
+    const outOfBand = toStringValue(record.out_of_band ?? record.outOfBand);
 
     const row: FuturesCsvRow<typeof FUTURES_SNAPSHOT_HEADER> = {
       asOf,
       markPrice,
       bidPrice,
       bidSize,
+      bidVenueTimestamp,
       askPrice,
       askSize,
+      askVenueTimestamp,
       lastTradePrice,
       lastTradeSize,
+      lastTradeVenueTimestamp,
       previousClose,
       openInterest,
       state,
       symbol: rowSymbol,
       instrumentId: instrument,
+      outOfBand,
     };
 
     if (!hasNumericFields(row, [
