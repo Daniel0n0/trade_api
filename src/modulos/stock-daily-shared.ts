@@ -553,6 +553,40 @@ const matchesDoraInstrumentFeed = (rawUrl: string): boolean => {
   return false;
 };
 
+const containsDoraInstrumentFeedHint = (rawUrl: string): boolean => {
+  if (!rawUrl) {
+    return false;
+  }
+
+  if (matchesDoraInstrumentFeed(rawUrl)) {
+    return true;
+  }
+
+  const parsed = parseUrlSafely(rawUrl);
+  if (!parsed) {
+    return false;
+  }
+
+  if (DORA_HOST_PATTERN.test(parsed.hostname)) {
+    const loweredPath = parsed.pathname.toLowerCase();
+    if (DORA_INSTRUMENT_PATH_PATTERN.test(loweredPath)) {
+      return true;
+    }
+  }
+
+  if (parsed.hash && matchesDoraInstrumentFeed(parsed.hash)) {
+    return true;
+  }
+
+  for (const value of parsed.searchParams.values()) {
+    if (matchesDoraInstrumentFeed(value)) {
+      return true;
+    }
+  }
+
+  return false;
+};
+
 const looksLikeNewsRecord = (record: Record<string, unknown>): boolean => {
   const tokens = ['news', 'article', 'headline', 'story', 'summary'];
   return Object.keys(record).some((key) => tokens.some((token) => key.toLowerCase().includes(token)));
@@ -686,11 +720,14 @@ export const createNewsFeature = (symbol: string): NewsFeature => {
       return false;
     }
 
-    if (matchesDoraInstrumentFeed(trimmedUrl)) {
+    if (containsDoraInstrumentFeedHint(trimmedUrl)) {
       return true;
     }
 
     const normalizedUrl = trimmedUrl.toLowerCase();
+    if (normalizedUrl !== trimmedUrl && containsDoraInstrumentFeedHint(normalizedUrl)) {
+      return true;
+    }
     if (normalizedUrl.includes(symbol.toLowerCase())) {
       return true;
     }

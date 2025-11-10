@@ -70,6 +70,12 @@ test('createNewsFeature deduplicates items and writes csv/jsonl outputs', async 
       'Encoded Dora feed references should be recognized even without symbol hints',
     );
     assert.ok(
+      newsFeature.shouldProcessUrl(
+        'https://api.robinhood.com/audit?payload=%7B%22redirect%22%3A%22HTTP://DORA.ROBINHOOD.COM/FEED/INSTRUMENT%22%7D',
+      ),
+      'Nested JSON payloads con referencias a Dora deben aceptarse sin depender del ticker',
+    );
+    assert.ok(
       altNewsFeature.shouldProcessUrl('https://dora.robinhood.com/feed/instrument/'),
       'Dora feeds must be captured even when the requested symbol differs from the module symbol',
     );
