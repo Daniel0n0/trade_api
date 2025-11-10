@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { BrowserContext, Page, Response } from 'playwright';
+import { dataPath } from '../src/io/paths.js';
 
 const originalCwd = process.cwd();
 const tempDir = await mkdtemp(path.join(os.tmpdir(), 'futures-shared-tests-'));
@@ -18,6 +19,9 @@ const {
   loadFuturesContractCache,
   resetFuturesContractCacheForTesting,
 } = futuresSharedModule;
+
+const futuresInterceptorModule = await import('../src/modules/futures/interceptor.js');
+const { installFuturesRecorder } = futuresInterceptorModule;
 
 type ResponseListener = (response: Response) => void | Promise<void>;
 
@@ -150,6 +154,7 @@ const waitForCacheFile = async (filePath: string, retries = 20, delayMs = 10): P
 describe('futures shared helpers', () => {
   beforeEach(async () => {
     await resetFuturesContractCacheForTesting();
+    await rm(path.join(process.cwd(), 'data'), { recursive: true, force: true });
   });
 
   after(async () => {
@@ -157,7 +162,7 @@ describe('futures shared helpers', () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  it('extrae símbolos de discovery/lists y evita duplicados', async () => {
+  it('persiste discovery/lists/items y evita duplicados', async () => {
     const page = new FakePage();
     const recorded: string[][] = [];
     const handle = installFuturesContractTracker(page as unknown as Page, {
@@ -166,23 +171,41 @@ describe('futures shared helpers', () => {
       },
     });
 
-    const response = createJsonResponse('https://api.robinhood.com/discovery/lists/top-contracts/', {
+    const payload = {
       results: [
         { contract_code: 'mesu4' },
         { contractCode: 'mnqz4' },
       ],
-      data: {
-        contracts: [
-          { future_symbol: 'ZBZ4' },
-          'unused',
-        ],
+      items: [
+        { future_symbol: 'ZBZ4' },
+        { nested: { contract: 'unused' } },
+      ],
+      metadata: {
+        extra: [{ contract_code: 'mesu4' }],
       },
-    });
+    };
+    const response = createJsonResponse(
+      'https://api.robinhood.com/discovery/lists/items/?cursor=abc123',
+      payload,
+    );
 
     await page.emit(response);
 
     assert.equal(recorded.length, 1);
     assert.deepEqual(recorded[0]?.sort(), ['MESU4', 'MNQZ4', 'ZBZ4']);
+
+    const snapshotPath = dataPath(
+      { assetClass: 'futures', symbol: 'GENERAL' },
+      'overview',
+      'discovery-items.jsonl',
+    );
+    const raw = await waitForCacheFile(snapshotPath);
+    const lines = raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    assert.equal(lines.length, 1);
+    assert.deepEqual(JSON.parse(lines[0] ?? '{}'), payload);
 
     await page.emit(response);
     assert.equal(recorded.length, 1, 'el tracker no debe reenviar duplicados');
@@ -249,6 +272,35 @@ describe('futures shared helpers', () => {
     assert.deepEqual(recorded.map((symbols) => symbols.sort()), [['ESZ4', 'NQZ4']]);
 
     handle.close();
+  });
+
+  it('persiste respuestas de inbox/threads', async () => {
+    const page = new FakePage();
+    const handle = installFuturesRecorder({ page: page as unknown as Page });
+
+    const payload = {
+      results: [
+        { id: 'thread-1', subject: 'Hello', unread: true },
+        { id: 'thread-2', subject: 'World', unread: false },
+      ],
+    };
+
+    await page.emit(createJsonResponse('https://api.robinhood.com/inbox/threads/', payload));
+
+    const snapshotPath = dataPath(
+      { assetClass: 'futures', symbol: 'GENERAL' },
+      'overview',
+      'inbox-threads.jsonl',
+    );
+    const raw = await waitForCacheFile(snapshotPath);
+    const lines = raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    assert.equal(lines.length, 1);
+    assert.deepEqual(JSON.parse(lines[0] ?? '{}'), payload);
+
+    await handle.close();
   });
 
   it('omite endpoints cubiertos por el interceptor principal', async () => {
