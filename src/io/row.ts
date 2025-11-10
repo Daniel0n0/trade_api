@@ -96,6 +96,22 @@ const assignNumber = (target: Record<string, unknown>, key: string, value: numbe
   }
 };
 
+const assignString = (target: Record<string, unknown>, key: string, value: string | undefined): void => {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed) {
+      target[key] = trimmed;
+    }
+  }
+};
+
+const assignNumbers = (target: Record<string, unknown>, source: BaseEvent, keys: readonly string[]): void => {
+  const record = source as Record<string, number | undefined>;
+  for (const key of keys) {
+    assignNumber(target, key, record[key]);
+  }
+};
+
 const symbolFromEvent = (event: BaseEvent): string | undefined => event.eventSymbol ?? event.symbol ?? undefined;
 
 export type NormalizedDxFeedRow = Record<string, unknown> & {
@@ -166,6 +182,47 @@ export function normalizeDxFeedRow(channel: number, event: BaseEvent): Normalize
       if (askTime !== null) {
         normalized.askTime = askTime;
       }
+      break;
+    }
+    case 'Greeks': {
+      assignNumbers(normalized, event, [
+        'bidPrice',
+        'askPrice',
+        'markPrice',
+        'theoreticalPrice',
+        'underlyingPrice',
+        'impliedVolatility',
+        'delta',
+        'gamma',
+        'theta',
+        'vega',
+        'rho',
+        'phi',
+        'vanna',
+        'vomma',
+        'speed',
+        'charm',
+        'color',
+        'ultima',
+      ]);
+      break;
+    }
+    case 'SeriesSummary': {
+      assignNumbers(normalized, event, [
+        'openInterest',
+        'volume',
+        'callVolume',
+        'putVolume',
+        'callOpenInterest',
+        'putOpenInterest',
+        'underlyingPrice',
+        'impliedVolatility',
+        'frontVolatility',
+        'backVolatility',
+        'atmVolatility',
+        'theoreticalPrice',
+      ]);
+      assignString(normalized, 'underlyingSymbol', event.underlyingSymbol);
       break;
     }
     default: {

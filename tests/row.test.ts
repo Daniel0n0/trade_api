@@ -137,6 +137,82 @@ test('buildStatsCsvRow includes counters for advanced legend channels', () => {
   });
 });
 
+test('normalizeDxFeedRow treats channel 9 as a quote feed for CSV output', () => {
+  const event = BaseEvent.parse({
+    eventType: 'Quote',
+    eventSymbol: 'AAPL',
+    bidPrice: 150.12,
+    bidSize: 10,
+    bidTime: 1_700_000_000_000,
+    askPrice: 150.15,
+    askSize: 12,
+  });
+  const normalized = normalizeDxFeedRow(9, event);
+  assert.strictEqual(normalized.channel, 9);
+  const quoteRow = buildQuoteCsvRow(event);
+  assert.ok(quoteRow);
+  assert.strictEqual(quoteRow?.t, 1_700_000_000_000);
+  const csvLine = toCsvLine(CSV_HEADERS.quote, quoteRow ?? {});
+  assert.match(csvLine, /^1700000000000,150\.12,10,150\.15,12,AAPL$/);
+});
+
+test('normalizeDxFeedRow extracts key option greek metrics from channel 11', () => {
+  const event = BaseEvent.parse({
+    eventType: 'Greeks',
+    eventSymbol: 'AAPL240119C00150000',
+    time: 1_700_000_000_500,
+    delta: 0.45,
+    gamma: 0.12,
+    theta: -0.01,
+    vega: 0.05,
+    rho: 0.02,
+    phi: -0.01,
+    vanna: 0.03,
+    vomma: 0.04,
+    speed: 0.005,
+    charm: -0.002,
+    color: 0.001,
+    ultima: 0.0001,
+    impliedVolatility: 0.24,
+    underlyingPrice: 150.2,
+    markPrice: 5.35,
+    theoreticalPrice: 5.33,
+  });
+  const normalized = normalizeDxFeedRow(11, event);
+  assert.strictEqual(normalized.channel, 11);
+  assert.strictEqual(normalized.delta, 0.45);
+  assert.strictEqual(normalized.vega, 0.05);
+  assert.strictEqual(normalized.underlyingPrice, 150.2);
+  assert.strictEqual(normalized.markPrice, 5.35);
+  assert.ok(!('raw' in normalized));
+});
+
+test('normalizeDxFeedRow keeps series summary statistics from channel 13', () => {
+  const event = BaseEvent.parse({
+    eventType: 'SeriesSummary',
+    eventSymbol: 'AAPL240119',
+    time: 1_700_000_000_750,
+    underlyingSymbol: 'AAPL',
+    openInterest: 8023,
+    volume: 3579,
+    callVolume: 1234,
+    putVolume: 2345,
+    callOpenInterest: 3456,
+    putOpenInterest: 4567,
+    frontVolatility: 0.22,
+    backVolatility: 0.24,
+    atmVolatility: 0.23,
+    underlyingPrice: 150.25,
+    theoreticalPrice: 5.4,
+  });
+  const normalized = normalizeDxFeedRow(13, event);
+  assert.strictEqual(normalized.channel, 13);
+  assert.strictEqual(normalized.callVolume, 1234);
+  assert.strictEqual(normalized.putOpenInterest, 4567);
+  assert.strictEqual(normalized.underlyingSymbol, 'AAPL');
+  assert.ok(!('raw' in normalized));
+});
+
 test('aggregation helpers convert timestamps consistently', () => {
   const tradeEvent = BaseEvent.parse({ eventType: 'Trade', time: 1_700_000_000, price: 10 });
   const trade = buildTradeAggregationRow(tradeEvent);
