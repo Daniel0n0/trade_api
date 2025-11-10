@@ -18,6 +18,10 @@ test('createNewsFeature deduplicates items and writes csv/jsonl outputs', async 
       newsFeature.shouldProcessUrl('https://dora.robinhood.com/feed/instrument/abc123'),
       'Dora instrument feeds should be accepted',
     );
+    assert.ok(
+      newsFeature.shouldProcessUrl('HTTPS://DORA.ROBINHOOD.COM/FEED/INSTRUMENT/ABC123'),
+      'Dora feeds should be detected even with uppercase URL components',
+    );
 
     const meta = { transport: 'http', source: 'https://dora.robinhood.com/feed/instrument/abc123' } as const;
     const baseItem = {

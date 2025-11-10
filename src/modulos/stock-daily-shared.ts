@@ -540,8 +540,30 @@ export const createNewsFeature = (symbol: string): NewsFeature => {
     if (!url) {
       return false;
     }
-    const upperUrl = url.toUpperCase();
-    return upperUrl.includes(symbol) || NEWS_URL_HINT.test(url);
+
+    const normalizedUrl = url.toLowerCase();
+    if (normalizedUrl.includes(symbol.toLowerCase())) {
+      return true;
+    }
+
+    if (NEWS_URL_HINT.test(normalizedUrl)) {
+      return true;
+    }
+
+    try {
+      const { hostname, pathname } = new URL(url);
+      const lowerHost = hostname.toLowerCase();
+      if (lowerHost.includes('dora.robinhood.com')) {
+        return true;
+      }
+      if (pathname.toLowerCase().includes('/feed/instrument')) {
+        return true;
+      }
+    } catch {
+      // Ignorar URLs no válidas y continuar con el resto de verificaciones.
+    }
+
+    return false;
   };
 
   const processPayload = (payload: unknown, meta: TransportMeta) => {
