@@ -188,6 +188,10 @@ describe('futures interceptor normalizers', () => {
     assert.equal(row.productId, 'f5e6b1cd-3d23-4add-8c51-385dd953a850');
     assert.equal(row.description, 'Micro E-mini S&P 500 Futures, Dec-25');
     assert.equal(row.expiration, '2025-12-19T00:00:00.000Z');
+    assert.equal(row.expirationMmy, '202512');
+    assert.equal(row.customerLastCloseDate, '2025-12-19T00:00:00.000Z');
+    assert.equal(row.settlementStartTime, '08:30');
+    assert.equal(row.firstTradeDate, '2024-05-01T00:00:00.000Z');
   });
 
   it('normalizes futures contracts result lists', () => {
@@ -238,6 +242,17 @@ describe('futures interceptor normalizers', () => {
     assert.ok(mesh26);
     assert.equal(mesh26?.expiration, '2026-03-20T00:00:00.000Z');
     assert.equal(mesh26?.id, 'BD2B6728-A24D-448A-A2BC-655C18D8F5E8');
+    assert.equal(mesh26?.expirationMmy, '202603');
+    assert.equal(mesh26?.customerLastCloseDate, '2026-03-20T00:00:00.000Z');
+    assert.equal(mesh26?.settlementStartTime, '08:30');
+    assert.equal(mesh26?.firstTradeDate, '2024-05-01T00:00:00.000Z');
+
+    const mesz25 = rows.find((row) => row.displaySymbol === '/MESZ25');
+    assert.ok(mesz25);
+    assert.equal(mesz25?.expirationMmy, '202512');
+    assert.equal(mesz25?.customerLastCloseDate, '2025-12-19T00:00:00.000Z');
+    assert.equal(mesz25?.settlementStartTime, '08:30');
+    assert.equal(mesz25?.firstTradeDate, '2024-05-01T00:00:00.000Z');
   });
 
   it('normalizes futures trading sessions data with multiple scopes', () => {

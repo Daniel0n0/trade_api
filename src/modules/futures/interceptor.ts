@@ -99,6 +99,10 @@ export const FUTURES_CONTRACTS_HEADER = [
   'listingDate',
   'expiration',
   'expirationDate',
+  'expirationMmy',
+  'customerLastCloseDate',
+  'settlementStartTime',
+  'firstTradeDate',
   'settlementDate',
   'lastTradeDate',
   'createdAt',
@@ -815,6 +819,10 @@ export function normalizeFuturesContracts(
     const listingDate = pickIsoDate(record, ['listing_date', 'listingDate', 'listed_at', 'listedAt']);
     const expiration = pickIsoDate(record, ['expiration']);
     const expirationDate = pickIsoDate(record, ['expiration_date', 'expirationDate', 'expiry', 'expires_at', 'expiresAt']);
+    const expirationMmy = pickString(record, ['expiration_mmy', 'expirationMmy']);
+    const customerLastCloseDate = pickIsoDate(record, ['customer_last_close_date', 'customerLastCloseDate']);
+    const settlementStartTime = pickString(record, ['settlement_start_time', 'settlementStartTime']);
+    const firstTradeDate = pickIsoDate(record, ['first_trade_date', 'firstTradeDate']);
     const settlementDate = pickIsoDate(record, ['settlement_date', 'settlementDate']);
     const lastTradeDate = pickIsoDate(record, [
       'last_trade_date',
@@ -843,6 +851,10 @@ export function normalizeFuturesContracts(
       listingDate,
       expiration,
       expirationDate,
+      expirationMmy,
+      customerLastCloseDate,
+      settlementStartTime,
+      firstTradeDate,
       settlementDate,
       lastTradeDate,
       createdAt,
