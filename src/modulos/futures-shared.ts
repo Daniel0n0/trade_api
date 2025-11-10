@@ -1,4 +1,4 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { Page, Response } from 'playwright';
 
@@ -10,8 +10,17 @@ const FUTURES_CONTRACT_CODE_PATTERN = /^[A-Z]{1,5}[FGHJKMNQUVXZ][0-9]{1,2}$/;
 const DISCOVERY_LISTS_SAFE_SEGMENT =
   'discovery\\/lists(?!\\/(?:historicals|snapshots))(?:\\/(?!historicals(?:\\/|$)|snapshots(?:\\/|$))[^?#]*)*';
 
+const FUTURES_DISCOVERY_SEGMENTS = [
+  'futures',
+  'contract',
+  'marketdata',
+  'phoenix',
+  'instruments',
+  DISCOVERY_LISTS_SAFE_SEGMENT,
+] as const;
+
 const FUTURES_DISCOVERY_URL_PATTERN = new RegExp(
-  `(?:futures|contract|marketdata|phoenix|instruments|${DISCOVERY_LISTS_SAFE_SEGMENT})`,
+  `(?:${FUTURES_DISCOVERY_SEGMENTS.join('|')})`,
   'i',
 );
 const CACHE_PATH = path.join(process.cwd(), 'state', 'futures', 'known-contracts.json');
@@ -117,6 +126,11 @@ export const rememberFuturesContractCodes = async (
 
   const nextCache = await writeCacheToDisk(known);
   return { added: additions, cache: nextCache, path: CACHE_PATH };
+};
+
+export const resetFuturesContractCacheForTesting = async (): Promise<void> => {
+  inMemoryCache = null;
+  await rm(CACHE_PATH, { force: true }).catch(() => undefined);
 };
 
 export const createContractUpdater = (label: string) => {
