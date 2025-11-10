@@ -1,8 +1,9 @@
-import { readFile, writeFile, rm } from 'node:fs/promises';
+import { appendFile, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { Page, Response } from 'playwright';
 
 import { ensureDirectoryForFileSync } from '../io/dir.js';
+import { dataPath } from '../io/paths.js';
 import {
   FUTURES_CONTRACTS_BY_SYMBOL_PATTERN,
   FUTURES_CONTRACTS_PATTERN,
@@ -31,6 +32,7 @@ const FUTURES_DISCOVERY_URL_PATTERN = new RegExp(
   `(?:${FUTURES_DISCOVERY_SEGMENTS.join('|')})`,
   'i',
 );
+const FUTURES_DISCOVERY_ITEMS_PATTERN = /discovery\/lists\/items/i;
 const CACHE_PATH = path.join(process.cwd(), 'state', 'futures', 'known-contracts.json');
 const JSON_INDENT = 2;
 const MAX_SCAN_NODES = 10_000;
@@ -243,10 +245,13 @@ export const installFuturesContractTracker = (
       return;
     }
 
+    const url = response.url();
     let parsed: unknown;
+    let text: string;
     try {
       const body = await response.body();
-      parsed = safeJsonParse<unknown>(body.toString('utf8'));
+      text = body.toString('utf8');
+      parsed = safeJsonParse<unknown>(text);
     } catch (error) {
       console.warn('[futures-contracts] No se pudo analizar una respuesta JSON:', error);
       return;
@@ -254,6 +259,17 @@ export const installFuturesContractTracker = (
 
     if (!parsed) {
       return;
+    }
+
+    if (FUTURES_DISCOVERY_ITEMS_PATTERN.test(url)) {
+      const snapshotPath = dataPath(
+        { assetClass: 'futures', symbol: 'GENERAL' },
+        'overview',
+        'discovery-items.jsonl',
+      );
+      await appendFile(snapshotPath, text.endsWith('\n') ? text : `${text}\n`, 'utf8').catch((error) => {
+        console.warn('[futures-contracts] No se pudo guardar discovery-items.jsonl:', error);
+      });
     }
 
     const discovered = extractContractCodes(parsed).filter((symbol) => !seen.has(symbol));

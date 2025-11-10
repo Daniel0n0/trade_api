@@ -1,4 +1,5 @@
 import type { WriteStream } from 'node:fs';
+import { appendFile } from 'node:fs/promises';
 import type { Page, Response } from 'playwright';
 
 import { getCsvWriter } from '../../io/csvWriter.js';
@@ -13,6 +14,7 @@ export const FUTURES_MARKET_HOURS_PATTERN = /markets\/[\w-]+\/hours/i;
 export const FUTURES_CONTRACTS_BY_SYMBOL_PATTERN = /arsenal\/v1\/futures\/contracts\/symbol/i;
 export const FUTURES_CONTRACTS_PATTERN = /arsenal\/v1\/futures\/contracts(?!\/symbol)/i;
 export const FUTURES_TRADING_SESSIONS_PATTERN = /arsenal\/v1\/futures\/trading_sessions/i;
+export const FUTURES_INBOX_THREADS_PATTERN = /inbox\/threads/i;
 
 export const FUTURES_BARS_HEADER = [
   'beginsAt',
@@ -812,6 +814,20 @@ const isJsonContentType = (headers: Record<string, string | undefined>): boolean
   return /json/i.test(contentType);
 };
 
+const persistInboxThreadsSnapshot = async (payload: string): Promise<void> => {
+  const filePath = dataPath(
+    { assetClass: 'futures', symbol: 'GENERAL' },
+    'overview',
+    'inbox-threads.jsonl',
+  );
+
+  try {
+    await appendFile(filePath, payload.endsWith('\n') ? payload : `${payload}\n`, 'utf8');
+  } catch (error) {
+    console.warn('[futures-recorder] No se pudo guardar el snapshot de inbox/threads:', error);
+  }
+};
+
 export function installFuturesRecorder(options: FuturesRecorderOptions): FuturesRecorderHandle {
   const { page } = options;
   const fallbackSymbol = options.symbols?.[0];
@@ -956,7 +972,8 @@ export function installFuturesRecorder(options: FuturesRecorderOptions): Futures
       !FUTURES_MARKET_HOURS_PATTERN.test(url) &&
       !FUTURES_CONTRACTS_PATTERN.test(url) &&
       !FUTURES_CONTRACTS_BY_SYMBOL_PATTERN.test(url) &&
-      !FUTURES_TRADING_SESSIONS_PATTERN.test(url)
+      !FUTURES_TRADING_SESSIONS_PATTERN.test(url) &&
+      !FUTURES_INBOX_THREADS_PATTERN.test(url)
     ) {
       return;
     }
@@ -980,6 +997,14 @@ export function installFuturesRecorder(options: FuturesRecorderOptions): Futures
 
     const parsed = safeJsonParse<unknown>(text);
     if (!parsed) {
+      if (FUTURES_INBOX_THREADS_PATTERN.test(url)) {
+        await persistInboxThreadsSnapshot(text);
+      }
+      return;
+    }
+
+    if (FUTURES_INBOX_THREADS_PATTERN.test(url)) {
+      await persistInboxThreadsSnapshot(text);
       return;
     }
 
