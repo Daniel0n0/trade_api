@@ -11,7 +11,7 @@ import { normaliseFramePayload, safeJsonParse } from '../utils/payload.js';
 
 const JSON_MIME_PATTERN = /application\/json/i;
 const STATS_URL_HINT = /fundamental|stats|marketdata|phoenix|instruments|quote/i;
-const NEWS_URL_HINT = /news|article|phoenix|press|stories|legend/i;
+const NEWS_URL_HINT = /news|article|phoenix|press|stories|legend|dora\.robinhood|feed\/instrument/i;
 const ORDERBOOK_URL_HINT = /order[-_ ]?book|level2|depth|phoenix|marketdata|quotes/i;
 const STOCK_WS_PATTERN = /(legend|phoenix|stream|socket|ws)/i;
 
@@ -495,7 +495,7 @@ const extractNewsItems = (payload: unknown): NormalizedNewsItem[] => {
   return out;
 };
 
-const createNewsFeature = (symbol: string): NewsFeature => {
+export const createNewsFeature = (symbol: string): NewsFeature => {
   const csvPath = dataPath({ assetClass: 'stock', symbol }, 'news.csv');
   const jsonlPath = dataPath({ assetClass: 'stock', symbol }, 'news.jsonl');
 
