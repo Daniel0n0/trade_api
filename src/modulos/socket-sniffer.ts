@@ -502,7 +502,7 @@ async function exposeLogger(
     const { allowNoise = false } = options;
 
     const channelKey = `ch${channel}` as keyof StatsCounts;
-    if (Object.hasOwn(counts, channelKey)) {
+    if (Object.prototype.hasOwnProperty.call(counts, channelKey)) {
       counts[channelKey] += n;
       counts.total += n;
       lastWriteTs[channelKey as string] = Date.now();
