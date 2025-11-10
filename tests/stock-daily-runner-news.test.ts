@@ -84,10 +84,7 @@ test('stock daily news runner escribe artículos de Dora sin duplicados', async 
 
     const payloadPath = new URL('./fixtures/dora-feed.json', import.meta.url);
     const payload = readFileSync(payloadPath, 'utf-8');
-    const response = new FakeResponse(
-      'https://dora.robinhood.com/feed/instrument/#latest',
-      payload,
-    );
+    const response = new FakeResponse('https://dora.robinhood.com/feed/instrument', payload);
 
     await page.emit('response', response as unknown as Response);
     await delay(10);
