@@ -134,6 +134,7 @@ describe('futures interceptor normalizers', () => {
             low: '6772',
             volume: '146751',
             previous_close_price: '6753.75',
+            tradability: 'FUTURES_TRADABILITY_TRADABLE',
           },
         },
       ],
@@ -153,6 +154,7 @@ describe('futures interceptor normalizers', () => {
     assert.equal(row.low, 6772);
     assert.equal(row.volume, 146751);
     assert.equal(row.previousClose, 6753.75);
+    assert.equal(row.tradeable, 'FUTURES_TRADABILITY_TRADABLE');
   });
 
   it('normalizes futures contracts data from symbol lookup', () => {
@@ -192,6 +194,7 @@ describe('futures interceptor normalizers', () => {
     assert.equal(row.customerLastCloseDate, '2025-12-19T00:00:00.000Z');
     assert.equal(row.settlementStartTime, '08:30');
     assert.equal(row.firstTradeDate, '2024-05-01T00:00:00.000Z');
+    assert.equal(row.tradeable, 'FUTURES_TRADABILITY_TRADABLE');
   });
 
   it('normalizes futures contracts result lists', () => {
@@ -246,6 +249,7 @@ describe('futures interceptor normalizers', () => {
     assert.equal(mesh26?.customerLastCloseDate, '2026-03-20T00:00:00.000Z');
     assert.equal(mesh26?.settlementStartTime, '08:30');
     assert.equal(mesh26?.firstTradeDate, '2024-05-01T00:00:00.000Z');
+    assert.equal(mesh26?.tradeable, 'FUTURES_TRADABILITY_TRADABLE');
 
     const mesz25 = rows.find((row) => row.displaySymbol === '/MESZ25');
     assert.ok(mesz25);
@@ -253,6 +257,7 @@ describe('futures interceptor normalizers', () => {
     assert.equal(mesz25?.customerLastCloseDate, '2025-12-19T00:00:00.000Z');
     assert.equal(mesz25?.settlementStartTime, '08:30');
     assert.equal(mesz25?.firstTradeDate, '2024-05-01T00:00:00.000Z');
+    assert.equal(mesz25?.tradeable, 'FUTURES_TRADABILITY_TRADABLE');
   });
 
   it('normalizes futures trading sessions data with multiple scopes', () => {
