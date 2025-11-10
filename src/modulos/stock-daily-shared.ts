@@ -429,14 +429,43 @@ const parseUrlSafely = (rawUrl: string): URL | null => {
   }
 };
 
+const decodeUriComponentSafely = (value: string): string | null => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+};
+
+const containsDoraInstrumentHint = (value: string, depth = 0): boolean => {
+  if (!value) {
+    return false;
+  }
+
+  const normalized = value.toLowerCase();
+  if (DORA_INSTRUMENT_PATH_PATTERN.test(normalized)) {
+    return true;
+  }
+
+  if (depth >= 3 || !normalized.includes('%')) {
+    return false;
+  }
+
+  const decoded = decodeUriComponentSafely(value);
+  if (!decoded || decoded === value) {
+    return false;
+  }
+
+  return containsDoraInstrumentHint(decoded, depth + 1);
+};
+
 const matchesDoraInstrumentFeed = (rawUrl: string): boolean => {
   const candidate = rawUrl.trim();
   if (!candidate) {
     return false;
   }
 
-  const normalized = candidate.toLowerCase();
-  if (DORA_INSTRUMENT_PATH_PATTERN.test(normalized)) {
+  if (containsDoraInstrumentHint(candidate)) {
     return true;
   }
 
@@ -449,14 +478,22 @@ const matchesDoraInstrumentFeed = (rawUrl: string): boolean => {
     return true;
   }
 
-  const pathname = parsed.pathname.toLowerCase();
-  if (DORA_INSTRUMENT_PATH_PATTERN.test(pathname)) {
+  if (containsDoraInstrumentHint(parsed.pathname)) {
     return true;
   }
 
-  const search = parsed.search.toLowerCase();
-  if (search && DORA_INSTRUMENT_PATH_PATTERN.test(search)) {
+  if (containsDoraInstrumentHint(parsed.search)) {
     return true;
+  }
+
+  if (containsDoraInstrumentHint(parsed.hash)) {
+    return true;
+  }
+
+  for (const value of parsed.searchParams.values()) {
+    if (containsDoraInstrumentHint(value)) {
+      return true;
+    }
   }
 
   return false;
