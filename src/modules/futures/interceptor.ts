@@ -701,7 +701,7 @@ export function normalizeFuturesFundamentals(
       pickString(record, ['product_id', 'productId', 'product_code', 'productCode', 'product']) ?? undefined;
     const rootRaw = pickString(record, ['root_symbol', 'rootSymbol', 'future_symbol', 'futureSymbol']);
     const contractType = pickString(record, ['contract_type', 'contractType', 'type']);
-    const tradeable = pickString(record, ['tradeable', 'is_tradeable', 'isTradeable']);
+    const tradeable = pickString(record, ['tradeable', 'tradability', 'is_tradeable', 'isTradeable']);
     const state = pickString(record, ['state', 'trading_status', 'tradingStatus']);
     const open = pickNumber(record, ['open']);
     const high = pickNumber(record, ['high']);
@@ -814,7 +814,7 @@ export function normalizeFuturesContracts(
     const rootRaw = pickString(record, ['root_symbol', 'rootSymbol', 'future_symbol', 'futureSymbol']);
     const contractType = pickString(record, ['contract_type', 'contractType', 'type']);
     const description = pickString(record, ['description', 'name', 'title']);
-    const tradeable = pickString(record, ['tradeable', 'is_tradeable', 'isTradeable']);
+    const tradeable = pickString(record, ['tradeable', 'tradability', 'is_tradeable', 'isTradeable']);
     const state = pickString(record, ['state', 'trading_status', 'tradingStatus']);
     const multiplier = pickNumber(record, ['multiplier']);
     const tickSize = pickNumber(record, ['tick_size', 'tickSize']);
