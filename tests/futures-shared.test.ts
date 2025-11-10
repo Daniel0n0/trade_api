@@ -92,6 +92,26 @@ describe('futures shared helpers', () => {
     handle.close();
   });
 
+  it('detecta discovery/lists en la raíz del endpoint', async () => {
+    const page = new FakePage();
+    const recorded: string[][] = [];
+    const handle = installFuturesContractTracker(page as unknown as Page, {
+      onSymbols: (symbols) => {
+        recorded.push([...symbols]);
+      },
+    });
+
+    await page.emit(
+      createJsonResponse('https://api.robinhood.com/discovery/lists/?cursor=abc123', {
+        results: [{ contract_code: 'GCZ4' }],
+      }),
+    );
+
+    assert.deepEqual(recorded, [['GCZ4']]);
+
+    handle.close();
+  });
+
   it('detecta discovery/lists con parámetros de consulta', async () => {
     const page = new FakePage();
     const recorded: string[][] = [];
