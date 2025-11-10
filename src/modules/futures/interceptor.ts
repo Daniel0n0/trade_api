@@ -44,6 +44,7 @@ export const FUTURES_SNAPSHOT_HEADER = [
   'lastTradeSize',
   'previousClose',
   'openInterest',
+  'state',
   'symbol',
   'instrumentId',
 ] as const;
@@ -58,6 +59,11 @@ export const FUTURES_FUNDAMENTALS_HEADER = [
   'contractType',
   'tradeable',
   'state',
+  'open',
+  'high',
+  'low',
+  'volume',
+  'previousClose',
   'multiplier',
   'tickSize',
   'initialMargin',
@@ -74,7 +80,9 @@ export const FUTURES_FUNDAMENTALS_HEADER = [
 export type FuturesFundamentalsHeader = typeof FUTURES_FUNDAMENTALS_HEADER;
 
 export const FUTURES_CONTRACTS_HEADER = [
+  'id',
   'symbol',
+  'displaySymbol',
   'instrumentId',
   'productId',
   'rootSymbol',
@@ -85,6 +93,7 @@ export const FUTURES_CONTRACTS_HEADER = [
   'multiplier',
   'tickSize',
   'listingDate',
+  'expiration',
   'expirationDate',
   'settlementDate',
   'lastTradeDate',
@@ -98,7 +107,10 @@ export const FUTURES_TRADING_SESSIONS_HEADER = [
   'symbol',
   'instrumentId',
   'productId',
+  'sessionScope',
+  'tradingDate',
   'sessionType',
+  'isTrading',
   'startsAt',
   'endsAt',
   'timezone',
@@ -121,7 +133,19 @@ export const FUTURES_MARKET_HOURS_HEADER = [
   'extendedClosesAt',
   'nextOpenAt',
   'previousCloseAt',
+  'lateOptionClosesAt',
+  'allDayOpensAt',
+  'allDayClosesAt',
+  'indexOption0dteClosesAt',
+  'indexOptionNon0dteClosesAt',
+  'curbOpensAt',
+  'curbClosesAt',
+  'fxOpensAt',
+  'fxClosesAt',
+  'fxNextOpenAt',
+  'fxIsOpen',
   'isOpen',
+  'isHoliday',
   'createdAt',
   'updatedAt',
 ] as const;
@@ -254,26 +278,145 @@ const unwrapNestedData = (value: unknown): unknown => {
   return current;
 };
 
+const WRAPPED_ARRAY_KEYS = [
+  'results',
+  'data',
+  'data_points',
+  'bars',
+  'quotes',
+  'fundamentals',
+  'entries',
+  'values',
+  'sessions',
+] as const;
+
+const WRAPPED_SINGLE_KEYS = [
+  'result',
+  'quote',
+  'fundamental',
+  'entry',
+  'payload',
+  'body',
+  'currentSession',
+  'previousSession',
+  'nextSession',
+] as const;
+
+const WRAPPED_METADATA_KEYS = new Set([
+  'status',
+  'next',
+  'previous',
+  'cursor',
+  'count',
+]);
+
+const unwrapEntry = (value: unknown): readonly unknown[] => {
+  const results: unknown[] = [];
+  const stack: unknown[] = [];
+  const visited = new Set<unknown>();
+
+  const push = (candidate: unknown) => {
+    if (candidate === undefined || candidate === null) {
+      return;
+    }
+    stack.push(candidate);
+  };
+
+  push(unwrapNestedData(value));
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current || visited.has(current)) {
+      continue;
+    }
+    visited.add(current);
+
+    const unwrapped = unwrapNestedData(current);
+    if (Array.isArray(unwrapped)) {
+      for (const item of unwrapped) {
+        push(item);
+      }
+      continue;
+    }
+
+    if (unwrapped && typeof unwrapped === 'object') {
+      const record = unwrapped as Record<string, unknown>;
+      let delegated = false;
+
+      for (const key of WRAPPED_ARRAY_KEYS) {
+        if (key in record) {
+          delegated = true;
+          const valueAtKey = record[key];
+          if (Array.isArray(valueAtKey)) {
+            for (const item of valueAtKey) {
+              push(item);
+            }
+          } else {
+            push(valueAtKey);
+          }
+        }
+      }
+
+      for (const key of WRAPPED_SINGLE_KEYS) {
+        if (key in record) {
+          delegated = true;
+          push(record[key]);
+        }
+      }
+
+      if (record.status && typeof record.status === 'object') {
+        delegated = true;
+        const statusRecord = record.status as Record<string, unknown>;
+        if ('data' in statusRecord) {
+          push(statusRecord.data);
+        }
+        if ('result' in statusRecord) {
+          push(statusRecord.result);
+        }
+        if ('results' in statusRecord) {
+          push(statusRecord.results);
+        }
+      }
+
+      if (delegated) {
+        const hasBusinessKeys = Object.keys(record).some((key) => {
+          return (
+            !WRAPPED_METADATA_KEYS.has(key) &&
+            !WRAPPED_ARRAY_KEYS.includes(key as (typeof WRAPPED_ARRAY_KEYS)[number]) &&
+            !WRAPPED_SINGLE_KEYS.includes(key as (typeof WRAPPED_SINGLE_KEYS)[number])
+          );
+        });
+        if (hasBusinessKeys) {
+          results.push(unwrapped);
+        }
+        continue;
+      }
+
+      results.push(unwrapped);
+      continue;
+    }
+
+    results.push(unwrapped);
+  }
+
+  return results;
+};
+
 const extractArray = (value: unknown): readonly unknown[] => {
+  const candidates = unwrapEntry(value);
+  if (candidates.length > 0) {
+    return candidates;
+  }
+
   const unwrapped = unwrapNestedData(value);
   if (Array.isArray(unwrapped)) {
-    return unwrapped;
+    return unwrapped.flatMap((item) => unwrapEntry(item));
   }
-  if (unwrapped && typeof unwrapped === 'object') {
-    const record = unwrapped as Record<string, unknown>;
-    if (Array.isArray(record.results)) {
-      return record.results;
-    }
-    if (Array.isArray(record.data)) {
-      return record.data;
-    }
-    if (Array.isArray(record.data_points)) {
-      return record.data_points;
-    }
-    if (Array.isArray(record.bars)) {
-      return record.bars;
-    }
+
+  if (unwrapped !== undefined && unwrapped !== null) {
+    return unwrapEntry(unwrapped);
   }
+
   return [];
 };
 
@@ -282,10 +425,12 @@ const ensureArray = (value: unknown): readonly unknown[] => {
   if (fromExtract.length > 0) {
     return fromExtract;
   }
+
   const unwrapped = unwrapNestedData(value);
   if (unwrapped && typeof unwrapped === 'object') {
-    return [unwrapped];
+    return unwrapEntry(unwrapped);
   }
+
   return [];
 };
 
@@ -441,10 +586,7 @@ export function normalizeFuturesSnapshots(
   const fallbackSymbol = normaliseSymbol(context.fallbackSymbol);
   const query = extractQueryParams(context.url);
   const payloadSymbol = extractSymbol(payload, fallbackSymbol);
-  const instrumentId =
-    parseInstrumentFromUrl(context.url) ??
-    normaliseSymbol((payload as Record<string, unknown> | undefined)?.instrument_id) ??
-    extractSymbol(payload, undefined);
+  const instrumentId = normaliseSymbol(query.get('ids') ?? undefined) ?? extractSymbol(payload, undefined);
 
   const out: FuturesCsvRow<typeof FUTURES_SNAPSHOT_HEADER>[] = [];
   for (const entry of extractArray(payload)) {
@@ -466,6 +608,7 @@ export function normalizeFuturesSnapshots(
     const lastTradeSize = toNumber(record.last_trade_size ?? record.lastTradeSize ?? record.last_size ?? record.size);
     const previousClose = toNumber(record.previous_close_price ?? record.previousClosePrice ?? record.prev_close ?? record.prevClose);
     const openInterest = toNumber(record.open_interest ?? record.openInterest);
+    const state = toStringValue(record.state ?? record.trading_status ?? record.status);
     const asOf =
       toIsoString(record.mark_price_timestamp ?? record.markPriceTimestamp ?? record.updated_at ?? record.updatedAt ?? record.timestamp) ??
       toIsoString((payload as Record<string, unknown> | undefined)?.updated_at);
@@ -483,6 +626,7 @@ export function normalizeFuturesSnapshots(
       lastTradeSize,
       previousClose,
       openInterest,
+      state,
       symbol: rowSymbol,
       instrumentId: instrument,
     };
@@ -510,6 +654,8 @@ export function normalizeFuturesFundamentals(
 ): FuturesCsvRow<typeof FUTURES_FUNDAMENTALS_HEADER>[] {
   const fallbackSymbol = normaliseSymbol(context.fallbackSymbol);
   const payloadSymbol = extractSymbol(payload, fallbackSymbol);
+  const query = extractQueryParams(context.url);
+  const queryInstrumentId = normaliseSymbol(query.get('ids') ?? undefined);
   const instrumentFromUrl = parseInstrumentFromUrl(context.url);
 
   const out: FuturesCsvRow<typeof FUTURES_FUNDAMENTALS_HEADER>[] = [];
@@ -519,15 +665,29 @@ export function normalizeFuturesFundamentals(
     }
 
     const record = entry as Record<string, unknown>;
-    const rowSymbol = extractSymbol(record, payloadSymbol ?? fallbackSymbol) ?? fallbackSymbol;
+    let rowSymbol = extractSymbol(record, payloadSymbol ?? fallbackSymbol) ?? fallbackSymbol;
     const instrumentCandidate =
-      pickString(record, ['instrument_id', 'instrumentId', 'instrument']) ?? instrumentFromUrl ?? rowSymbol;
+      pickString(record, ['instrument_id', 'instrumentId', 'instrument']) ??
+      queryInstrumentId ??
+      instrumentFromUrl ??
+      rowSymbol ??
+      fallbackSymbol;
+    const normalizedInstrument =
+      instrumentCandidate ? normaliseSymbol(instrumentCandidate) ?? instrumentCandidate : undefined;
+    if (rowSymbol && normalizedInstrument && rowSymbol === normalizedInstrument && fallbackSymbol) {
+      rowSymbol = fallbackSymbol;
+    }
     const productId =
       pickString(record, ['product_id', 'productId', 'product_code', 'productCode', 'product']) ?? undefined;
     const rootRaw = pickString(record, ['root_symbol', 'rootSymbol', 'future_symbol', 'futureSymbol']);
     const contractType = pickString(record, ['contract_type', 'contractType', 'type']);
     const tradeable = pickString(record, ['tradeable', 'is_tradeable', 'isTradeable']);
     const state = pickString(record, ['state', 'trading_status', 'tradingStatus']);
+    const open = pickNumber(record, ['open']);
+    const high = pickNumber(record, ['high']);
+    const low = pickNumber(record, ['low']);
+    const volume = pickNumber(record, ['volume']);
+    const previousClose = pickNumber(record, ['previous_close_price', 'previousClosePrice', 'prev_close', 'prevClose']);
     const multiplier = pickNumber(record, ['multiplier']);
     const tickSize = pickNumber(record, ['tick_size', 'tickSize']);
     const initialMargin = pickNumber(record, [
@@ -562,12 +722,17 @@ export function normalizeFuturesFundamentals(
 
     const row: FuturesCsvRow<typeof FUTURES_FUNDAMENTALS_HEADER> = {
       symbol: rowSymbol ?? fallbackSymbol,
-      instrumentId: instrumentCandidate ? normaliseSymbol(instrumentCandidate) ?? instrumentCandidate : undefined,
+      instrumentId: normalizedInstrument,
       productId,
       rootSymbol: rootRaw ? normaliseSymbol(rootRaw) ?? rootRaw : undefined,
       contractType,
       tradeable,
       state,
+      open,
+      high,
+      low,
+      volume,
+      previousClose,
       multiplier,
       tickSize,
       initialMargin,
@@ -601,6 +766,8 @@ export function normalizeFuturesContracts(
 ): FuturesCsvRow<typeof FUTURES_CONTRACTS_HEADER>[] {
   const fallbackSymbol = normaliseSymbol(context.fallbackSymbol);
   const payloadSymbol = extractSymbol(payload, fallbackSymbol);
+  const query = extractQueryParams(context.url);
+  const queryInstrumentId = normaliseSymbol(query.get('ids') ?? undefined);
   const instrumentFromUrl = parseInstrumentFromUrl(context.url);
 
   const out: FuturesCsvRow<typeof FUTURES_CONTRACTS_HEADER>[] = [];
@@ -610,9 +777,18 @@ export function normalizeFuturesContracts(
     }
 
     const record = entry as Record<string, unknown>;
-    const rowSymbol = extractSymbol(record, payloadSymbol ?? fallbackSymbol) ?? fallbackSymbol;
+    let rowSymbol = extractSymbol(record, payloadSymbol ?? fallbackSymbol) ?? fallbackSymbol;
     const instrumentCandidate =
-      pickString(record, ['instrument_id', 'instrumentId', 'instrument']) ?? instrumentFromUrl ?? rowSymbol;
+      pickString(record, ['instrument_id', 'instrumentId', 'instrument']) ??
+      queryInstrumentId ??
+      instrumentFromUrl ??
+      rowSymbol ??
+      fallbackSymbol;
+    const normalizedInstrument =
+      instrumentCandidate ? normaliseSymbol(instrumentCandidate) ?? instrumentCandidate : undefined;
+    if (rowSymbol && normalizedInstrument && rowSymbol === normalizedInstrument && fallbackSymbol) {
+      rowSymbol = fallbackSymbol;
+    }
     const productId =
       pickString(record, ['product_id', 'productId', 'product_code', 'productCode', 'product']) ?? undefined;
     const rootRaw = pickString(record, ['root_symbol', 'rootSymbol', 'future_symbol', 'futureSymbol']);
@@ -623,6 +799,7 @@ export function normalizeFuturesContracts(
     const multiplier = pickNumber(record, ['multiplier']);
     const tickSize = pickNumber(record, ['tick_size', 'tickSize']);
     const listingDate = pickIsoDate(record, ['listing_date', 'listingDate', 'listed_at', 'listedAt']);
+    const expiration = pickIsoDate(record, ['expiration']);
     const expirationDate = pickIsoDate(record, ['expiration_date', 'expirationDate', 'expiry', 'expires_at', 'expiresAt']);
     const settlementDate = pickIsoDate(record, ['settlement_date', 'settlementDate']);
     const lastTradeDate = pickIsoDate(record, [
@@ -633,10 +810,14 @@ export function normalizeFuturesContracts(
     ]);
     const createdAt = pickIsoDate(record, ['created_at', 'createdAt']);
     const updatedAt = pickIsoDate(record, ['updated_at', 'updatedAt']);
+    const contractId = pickString(record, ['id']);
+    const normalizedContractId = contractId ? normaliseSymbol(contractId) ?? contractId : undefined;
 
     const row: FuturesCsvRow<typeof FUTURES_CONTRACTS_HEADER> = {
+      id: normalizedContractId,
       symbol: rowSymbol ?? fallbackSymbol,
-      instrumentId: instrumentCandidate ? normaliseSymbol(instrumentCandidate) ?? instrumentCandidate : undefined,
+      displaySymbol: pickString(record, ['display_symbol', 'displaySymbol']),
+      instrumentId: normalizedInstrument,
       productId,
       rootSymbol: rootRaw ? normaliseSymbol(rootRaw) ?? rootRaw : undefined,
       contractType,
@@ -646,6 +827,7 @@ export function normalizeFuturesContracts(
       multiplier,
       tickSize,
       listingDate,
+      expiration,
       expirationDate,
       settlementDate,
       lastTradeDate,
@@ -673,6 +855,8 @@ export function normalizeFuturesTradingSessions(
 ): FuturesCsvRow<typeof FUTURES_TRADING_SESSIONS_HEADER>[] {
   const fallbackSymbol = normaliseSymbol(context.fallbackSymbol);
   const payloadSymbol = extractSymbol(payload, fallbackSymbol);
+  const query = extractQueryParams(context.url);
+  const queryInstrumentId = normaliseSymbol(query.get('ids') ?? undefined);
   const instrumentFromUrl = parseInstrumentFromUrl(context.url);
 
   const out: FuturesCsvRow<typeof FUTURES_TRADING_SESSIONS_HEADER>[] = [];
@@ -682,41 +866,96 @@ export function normalizeFuturesTradingSessions(
     }
 
     const record = entry as Record<string, unknown>;
-    const rowSymbol = extractSymbol(record, payloadSymbol ?? fallbackSymbol) ?? fallbackSymbol;
+    let rowSymbol = extractSymbol(record, payloadSymbol ?? fallbackSymbol) ?? fallbackSymbol;
     const instrumentCandidate =
-      pickString(record, ['instrument_id', 'instrumentId', 'instrument']) ?? instrumentFromUrl ?? rowSymbol;
+      pickString(record, [
+        'instrument_id',
+        'instrumentId',
+        'instrument',
+        'futures_contract_id',
+        'futuresContractId',
+      ]) ??
+      queryInstrumentId ??
+      instrumentFromUrl ??
+      rowSymbol ??
+      fallbackSymbol;
+    const normalizedInstrument =
+      instrumentCandidate ? normaliseSymbol(instrumentCandidate) ?? instrumentCandidate : undefined;
+    if (rowSymbol && normalizedInstrument && rowSymbol === normalizedInstrument && fallbackSymbol) {
+      rowSymbol = fallbackSymbol;
+    }
     const productId =
       pickString(record, ['product_id', 'productId', 'product_code', 'productCode', 'product']) ?? undefined;
-    const sessionType = pickString(record, ['session_type', 'sessionType', 'session']);
-    const startsAt = pickIsoDate(record, ['starts_at', 'start_time', 'start_at', 'startsAt', 'startTime']);
-    const endsAt = pickIsoDate(record, ['ends_at', 'end_time', 'end_at', 'endsAt', 'endTime']);
-    const timezone = pickString(record, ['timezone', 'time_zone']);
-    const market = pickString(record, ['market', 'exchange']);
-    const createdAt = pickIsoDate(record, ['created_at', 'createdAt']);
-    const updatedAt = pickIsoDate(record, ['updated_at', 'updatedAt']);
+    const defaultTimezone = pickString(record, ['timezone', 'time_zone']);
+    const defaultMarket = pickString(record, ['market', 'exchange']);
+    const defaultCreatedAt = pickIsoDate(record, ['created_at', 'createdAt']);
+    const defaultUpdatedAt = pickIsoDate(record, ['updated_at', 'updatedAt']);
 
-    const row: FuturesCsvRow<typeof FUTURES_TRADING_SESSIONS_HEADER> = {
-      symbol: rowSymbol ?? fallbackSymbol,
-      instrumentId: instrumentCandidate ? normaliseSymbol(instrumentCandidate) ?? instrumentCandidate : undefined,
-      productId,
-      sessionType,
-      startsAt,
-      endsAt,
-      timezone,
-      market,
-      createdAt,
-      updatedAt,
-    };
+    const groups: Array<[string, unknown]> = [
+      ['sessions', (record as Record<string, unknown>).sessions],
+      ['currentSession', (record as Record<string, unknown>).currentSession],
+      ['previousSession', (record as Record<string, unknown>).previousSession],
+      ['nextSession', (record as Record<string, unknown>).nextSession],
+    ];
 
-    if (!row.symbol) {
-      row.symbol = fallbackSymbol;
+    for (const [scope, value] of groups) {
+      for (const sessionEntry of unwrapEntry(value)) {
+        if (!sessionEntry || typeof sessionEntry !== 'object') {
+          continue;
+        }
+
+        const sessionRecord = sessionEntry as Record<string, unknown>;
+        const tradingDate = pickIsoDate(sessionRecord, ['trading_date', 'tradingDate', 'date']);
+        const sessionType = pickString(sessionRecord, ['session_type', 'sessionType', 'session']);
+        const isTrading = pickString(sessionRecord, ['is_trading', 'isTrading', 'trading']);
+        const startsAt = pickIsoDate(sessionRecord, [
+          'starts_at',
+          'start_time',
+          'start_at',
+          'startsAt',
+          'startTime',
+        ]) ??
+          pickIsoDate(record, ['start_time', 'startTime']);
+        const endsAt = pickIsoDate(sessionRecord, [
+          'ends_at',
+          'end_time',
+          'end_at',
+          'endsAt',
+          'endTime',
+        ]) ??
+          pickIsoDate(record, ['end_time', 'endTime']);
+        const timezone = pickString(sessionRecord, ['timezone', 'time_zone']) ?? defaultTimezone;
+        const market = pickString(sessionRecord, ['market', 'exchange']) ?? defaultMarket;
+        const createdAt = pickIsoDate(sessionRecord, ['created_at', 'createdAt']) ?? defaultCreatedAt;
+        const updatedAt = pickIsoDate(sessionRecord, ['updated_at', 'updatedAt']) ?? defaultUpdatedAt;
+
+        const row: FuturesCsvRow<typeof FUTURES_TRADING_SESSIONS_HEADER> = {
+          symbol: rowSymbol ?? fallbackSymbol,
+          instrumentId: normalizedInstrument,
+          productId,
+          sessionScope: scope,
+          tradingDate,
+          sessionType,
+          isTrading,
+          startsAt,
+          endsAt,
+          timezone,
+          market,
+          createdAt,
+          updatedAt,
+        };
+
+        if (!row.symbol) {
+          row.symbol = fallbackSymbol;
+        }
+
+        if (!row.symbol && !row.instrumentId && !row.productId) {
+          continue;
+        }
+
+        out.push(row);
+      }
     }
-
-    if (!row.symbol && !row.instrumentId && !row.productId) {
-      continue;
-    }
-
-    out.push(row);
   }
 
   return out;
@@ -728,6 +967,8 @@ export function normalizeFuturesMarketHours(
 ): FuturesCsvRow<typeof FUTURES_MARKET_HOURS_HEADER>[] {
   const fallbackSymbol = normaliseSymbol(context.fallbackSymbol);
   const payloadSymbol = extractSymbol(payload, fallbackSymbol);
+  const query = extractQueryParams(context.url);
+  const queryInstrumentId = normaliseSymbol(query.get('ids') ?? undefined);
   const instrumentFromUrl = parseInstrumentFromUrl(context.url);
 
   const out: FuturesCsvRow<typeof FUTURES_MARKET_HOURS_HEADER>[] = [];
@@ -737,9 +978,24 @@ export function normalizeFuturesMarketHours(
     }
 
     const record = entry as Record<string, unknown>;
-    const rowSymbol = extractSymbol(record, payloadSymbol ?? fallbackSymbol) ?? fallbackSymbol;
+    let rowSymbol = extractSymbol(record, payloadSymbol ?? fallbackSymbol) ?? fallbackSymbol;
     const instrumentCandidate =
-      pickString(record, ['instrument_id', 'instrumentId', 'instrument']) ?? instrumentFromUrl ?? rowSymbol;
+      pickString(record, [
+        'instrument_id',
+        'instrumentId',
+        'instrument',
+        'futures_contract_id',
+        'futuresContractId',
+      ]) ??
+      queryInstrumentId ??
+      instrumentFromUrl ??
+      rowSymbol ??
+      fallbackSymbol;
+    const normalizedInstrument =
+      instrumentCandidate ? normaliseSymbol(instrumentCandidate) ?? instrumentCandidate : undefined;
+    if (rowSymbol && normalizedInstrument && rowSymbol === normalizedInstrument && fallbackSymbol) {
+      rowSymbol = fallbackSymbol;
+    }
     const productId =
       pickString(record, ['product_id', 'productId', 'product_code', 'productCode', 'product']) ?? undefined;
     const exchange = pickString(record, ['exchange', 'market']);
@@ -760,13 +1016,28 @@ export function normalizeFuturesMarketHours(
     ]);
     const nextOpenAt = pickIsoDate(record, ['next_open_at', 'nextOpenAt']);
     const previousCloseAt = pickIsoDate(record, ['previous_close_at', 'previousCloseAt']);
+    const lateOptionClosesAt = pickIsoDate(record, ['late_option_closes_at', 'lateOptionClosesAt']);
+    const allDayOpensAt = pickIsoDate(record, ['all_day_opens_at', 'allDayOpensAt']);
+    const allDayClosesAt = pickIsoDate(record, ['all_day_closes_at', 'allDayClosesAt']);
+    const indexOption0dteClosesAt = pickIsoDate(record, ['index_option_0dte_closes_at', 'indexOption0dteClosesAt']);
+    const indexOptionNon0dteClosesAt = pickIsoDate(record, ['index_option_non_0dte_closes_at', 'indexOptionNon0dteClosesAt']);
+    const extendedHours =
+      (record.index_options_extended_hours as Record<string, unknown> | undefined) ??
+      ((record as Record<string, unknown>).indexOptionsExtendedHours as Record<string, unknown> | undefined);
+    const curbOpensAt = pickIsoDate(extendedHours ?? {}, ['curb_opens_at', 'curbOpensAt']);
+    const curbClosesAt = pickIsoDate(extendedHours ?? {}, ['curb_closes_at', 'curbClosesAt']);
+    const fxOpensAt = pickIsoDate(record, ['fx_opens_at', 'fxOpensAt']);
+    const fxClosesAt = pickIsoDate(record, ['fx_closes_at', 'fxClosesAt']);
+    const fxNextOpenAt = pickIsoDate(record, ['fx_next_open_hours', 'fxNextOpenHours']);
+    const fxIsOpen = pickString(record, ['fx_is_open', 'fxIsOpen']);
     const isOpen = pickString(record, ['is_open', 'isOpen']);
+    const isHoliday = pickString(record, ['is_holiday', 'isHoliday']);
     const createdAt = pickIsoDate(record, ['created_at', 'createdAt']);
     const updatedAt = pickIsoDate(record, ['updated_at', 'updatedAt']);
 
     const row: FuturesCsvRow<typeof FUTURES_MARKET_HOURS_HEADER> = {
       symbol: rowSymbol ?? fallbackSymbol,
-      instrumentId: instrumentCandidate ? normaliseSymbol(instrumentCandidate) ?? instrumentCandidate : undefined,
+      instrumentId: normalizedInstrument,
       productId,
       exchange,
       date,
@@ -776,7 +1047,19 @@ export function normalizeFuturesMarketHours(
       extendedClosesAt,
       nextOpenAt,
       previousCloseAt,
+      lateOptionClosesAt,
+      allDayOpensAt,
+      allDayClosesAt,
+      indexOption0dteClosesAt,
+      indexOptionNon0dteClosesAt,
+      curbOpensAt,
+      curbClosesAt,
+      fxOpensAt,
+      fxClosesAt,
+      fxNextOpenAt,
+      fxIsOpen,
       isOpen,
+      isHoliday,
       createdAt,
       updatedAt,
     };
