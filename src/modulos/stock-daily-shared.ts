@@ -648,16 +648,21 @@ export const createNewsFeature = (symbol: string): NewsFeature => {
       return false;
     }
 
-    if (matchesDoraInstrumentFeed(url)) {
+    const trimmedUrl = url.trim();
+    if (!trimmedUrl) {
+      return false;
+    }
+
+    if (matchesDoraInstrumentFeed(trimmedUrl)) {
       return true;
     }
 
-    const normalizedUrl = url.toLowerCase();
+    const normalizedUrl = trimmedUrl.toLowerCase();
     if (normalizedUrl.includes(symbol.toLowerCase())) {
       return true;
     }
 
-    if (NEWS_URL_HINT.test(normalizedUrl)) {
+    if (NEWS_URL_HINT.test(trimmedUrl) || NEWS_URL_HINT.test(normalizedUrl)) {
       return true;
     }
 

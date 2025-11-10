@@ -13,6 +13,7 @@ test('createNewsFeature deduplicates items and writes csv/jsonl outputs', async 
 
   try {
     const newsFeature = createNewsFeature('TSLA');
+    const altNewsFeature = createNewsFeature('QQQ');
 
     assert.ok(
       newsFeature.shouldProcessUrl('https://dora.robinhood.com/feed/instrument/abc123'),
@@ -56,6 +57,10 @@ test('createNewsFeature deduplicates items and writes csv/jsonl outputs', async 
       ),
       'Encoded Dora feed references should be recognized even without symbol hints',
     );
+    assert.ok(
+      altNewsFeature.shouldProcessUrl('https://dora.robinhood.com/feed/instrument/'),
+      'Dora feeds must be captured even when the requested symbol differs from the module symbol',
+    );
 
     const meta = { transport: 'http', source: 'https://dora.robinhood.com/feed/instrument/abc123' } as const;
     const baseItem = {
@@ -77,6 +82,7 @@ test('createNewsFeature deduplicates items and writes csv/jsonl outputs', async 
     newsFeature.processPayload([baseItem, secondItem], meta);
 
     await newsFeature.close();
+    await altNewsFeature.close();
 
     const csvLines = readFileSync(newsFeature.result.csvPath, 'utf-8').trim().split('\n');
     assert.equal(csvLines.length, 3, 'Debe existir encabezado más dos filas únicas');
