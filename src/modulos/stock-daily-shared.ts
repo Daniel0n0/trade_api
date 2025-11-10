@@ -454,66 +454,99 @@ const decodeUriComponentSafely = (value: string): string | null => {
   }
 };
 
-const containsDoraInstrumentHint = (value: string, depth = 0): boolean => {
-  if (!value) {
-    return false;
+const UNICODE_ESCAPE_PATTERN = /\\u([0-9a-fA-F]{4})/g;
+
+const decodeUnicodeEscapes = (value: string): string | null => {
+  if (!value.includes('\\u')) {
+    return null;
   }
 
-  const normalized = value.toLowerCase();
-  if (DORA_INSTRUMENT_PATH_PATTERN.test(normalized)) {
-    return true;
-  }
+  let mutated = false;
+  const decoded = value.replace(UNICODE_ESCAPE_PATTERN, (match, hex) => {
+    const codePoint = Number.parseInt(hex, 16);
+    if (Number.isNaN(codePoint)) {
+      return match;
+    }
+    mutated = true;
+    return String.fromCharCode(codePoint);
+  });
 
-  if (depth >= 3 || !normalized.includes('%')) {
-    return false;
-  }
+  return mutated ? decoded : null;
+};
 
-  const decoded = decodeUriComponentSafely(value);
-  if (!decoded || decoded === value) {
-    return false;
+const pushCandidate = (queue: string[], candidate: string | null | undefined): void => {
+  if (!candidate) {
+    return;
   }
-
-  return containsDoraInstrumentHint(decoded, depth + 1);
+  const trimmed = candidate.trim();
+  if (!trimmed) {
+    return;
+  }
+  queue.push(trimmed);
 };
 
 const matchesDoraInstrumentFeed = (rawUrl: string): boolean => {
-  const candidate = rawUrl.trim();
-  if (!candidate) {
+  const seed = rawUrl.trim();
+  if (!seed) {
     return false;
   }
 
-  if (DORA_INSTRUMENT_FEED_INLINE_PATTERN.test(candidate)) {
-    return true;
-  }
+  const queue = [seed];
+  const visited = new Set<string>();
 
-  if (containsDoraInstrumentHint(candidate)) {
-    return true;
-  }
+  while (queue.length > 0) {
+    const candidate = queue.pop();
+    if (!candidate || visited.has(candidate)) {
+      continue;
+    }
+    visited.add(candidate);
 
-  const parsed = parseUrlSafely(candidate);
-  if (!parsed) {
-    return false;
-  }
-
-  if (DORA_HOST_PATTERN.test(parsed.hostname)) {
-    return true;
-  }
-
-  if (containsDoraInstrumentHint(parsed.pathname)) {
-    return true;
-  }
-
-  if (containsDoraInstrumentHint(parsed.search)) {
-    return true;
-  }
-
-  if (containsDoraInstrumentHint(parsed.hash)) {
-    return true;
-  }
-
-  for (const value of parsed.searchParams.values()) {
-    if (containsDoraInstrumentHint(value)) {
+    if (DORA_INSTRUMENT_FEED_INLINE_PATTERN.test(candidate)) {
       return true;
+    }
+
+    const lowered = candidate.toLowerCase();
+    if (DORA_INSTRUMENT_PATH_PATTERN.test(lowered)) {
+      return true;
+    }
+
+    if (candidate.includes('\\/')) {
+      const unescaped = candidate.replace(/\\\//g, '/');
+      if (!visited.has(unescaped)) {
+        queue.push(unescaped);
+      }
+    }
+
+    const unicodeDecoded = decodeUnicodeEscapes(candidate);
+    if (unicodeDecoded && !visited.has(unicodeDecoded)) {
+      queue.push(unicodeDecoded);
+    }
+
+    const percentDecoded = decodeUriComponentSafely(candidate);
+    if (percentDecoded && percentDecoded !== candidate && !visited.has(percentDecoded)) {
+      queue.push(percentDecoded);
+    }
+
+    const parsed = parseUrlSafely(candidate);
+    if (!parsed) {
+      continue;
+    }
+
+    if (DORA_HOST_PATTERN.test(parsed.hostname)) {
+      if (DORA_INSTRUMENT_PATH_PATTERN.test(parsed.pathname.toLowerCase())) {
+        return true;
+      }
+      if (DORA_INSTRUMENT_PATH_PATTERN.test(parsed.href.toLowerCase())) {
+        return true;
+      }
+    }
+
+    pushCandidate(queue, parsed.pathname);
+    pushCandidate(queue, parsed.search);
+    pushCandidate(queue, parsed.hash);
+
+    for (const value of parsed.searchParams.values()) {
+      pushCandidate(queue, value);
     }
   }
 

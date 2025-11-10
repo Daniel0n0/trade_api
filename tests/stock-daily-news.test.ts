@@ -44,6 +44,10 @@ test('createNewsFeature deduplicates items and writes csv/jsonl outputs', async 
       'Dora feeds should be detected even with uppercase URL components',
     );
     assert.ok(
+      newsFeature.shouldProcessUrl('https:\\/\\/dora.robinhood.com\/feed\/instrument\/abc123'),
+      'Escaped Dora feed URLs must be accepted even when the ticker is ausente',
+    );
+    assert.ok(
       newsFeature.shouldProcessUrl('/feed/instrument/abc123'),
       'Relative Dora feed paths should also be accepted',
     );
