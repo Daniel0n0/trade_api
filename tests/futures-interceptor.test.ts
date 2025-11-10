@@ -318,7 +318,15 @@ describe('futures interceptor normalizers', () => {
       fallbackSymbol: 'mesz25',
     });
 
-    assert.equal(rows.length, 6);
+    assert.equal(rows.length, 7);
+    const summary = rows.find((row) => row.sessionScope === 'summary');
+    assert.ok(summary);
+    assert.equal(summary?.dayDate, '2025-11-10T00:00:00.000Z');
+    assert.equal(summary?.dayStartsAt, '2025-11-09T21:55:00.000Z');
+    assert.equal(summary?.dayEndsAt, '2025-11-10T22:40:00.000Z');
+    assert.equal(summary?.dayIsHoliday, 'false');
+    assert.equal(summary?.startsAt, '2025-11-09T21:55:00.000Z');
+    assert.equal(summary?.endsAt, '2025-11-10T22:40:00.000Z');
     const regularSession = rows.find((row) => row.sessionScope === 'sessions' && row.isTrading === 'true');
     assert.ok(regularSession);
     assert.equal(regularSession?.startsAt, '2025-11-09T23:00:00.000Z');
