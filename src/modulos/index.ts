@@ -19,6 +19,9 @@ export const MODULE_RUNNERS: Record<string, ModuleRunner> = {
   'stock-daily-stats': runStockDailyStatsModule,
   'stock-daily-news': runStockDailyNewsModule,
   'stock-daily-orderbook': runStockDailyOrderbookModule,
+  'daily-stats': runStockDailyStatsModule,
+  'daily-news': runStockDailyNewsModule,
+  'daily-order-book': runStockDailyOrderbookModule,
   'futures-overview': runFuturesOverviewModule,
   'futures-detail': runFuturesDetailModule,
 };

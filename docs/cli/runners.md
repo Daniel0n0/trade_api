@@ -129,7 +129,7 @@ npx trade-api start stocks-generic-chart now \
 
 ## Runners diarios de acciones
 
-Los módulos `stock-daily-stats`, `stock-daily-news` y `stock-daily-orderbook`
+Los módulos `daily-stats`, `daily-news` y `daily-order-book`
 se publican como plantillas documentadas. Por ahora no generan artefactos, pero
 puedes invocarlos para validar la navegación automática con un `--url-code`
 válido (o la variable `TRADE_API_URL_CODE_*` correspondiente) y añadir la lógica
