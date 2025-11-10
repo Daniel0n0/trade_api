@@ -383,4 +383,25 @@ describe('futures interceptor normalizers', () => {
     assert.equal(row.fxIsOpen, 'false');
     assert.equal(row.isOpen, 'true');
   });
+
+  it('falls back to exchange symbol when instrument data is unavailable', () => {
+    const payload = [
+      {
+        market: 'XASE',
+        date: '2025-11-13',
+        opens_at: '2025-11-13T14:30:00Z',
+        closes_at: '2025-11-13T21:00:00Z',
+      },
+    ];
+
+    const rows = normalizeFuturesMarketHours(payload, {
+      url: 'https://api.robinhood.com/markets/XASE/hours/2025-11-13/',
+      fallbackSymbol: 'mesz25',
+    });
+
+    assert.equal(rows.length, 1);
+    const row = rows[0];
+    assert.equal(row.symbol, 'XASE');
+    assert.equal(row.instrumentId, undefined);
+  });
 });

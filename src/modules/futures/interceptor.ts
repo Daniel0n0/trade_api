@@ -249,6 +249,8 @@ const normaliseSymbol = (value: unknown): string | undefined => {
   return trimmed.toUpperCase();
 };
 
+const IGNORED_SEGMENT_PATTERNS = [/^\d{4}-\d{2}-\d{2}$/u, /^v\d+$/iu];
+
 const parseInstrumentFromUrl = (url: string | undefined): string | undefined => {
   if (!url) {
     return undefined;
@@ -256,12 +258,45 @@ const parseInstrumentFromUrl = (url: string | undefined): string | undefined => 
   try {
     const parsed = new URL(url);
     const segments = parsed.pathname.split('/').filter(Boolean);
-    const lastSegment = segments[segments.length - 1];
-    if (lastSegment && !lastSegment.includes('.')) {
-      return lastSegment.toUpperCase();
+    for (let index = segments.length - 1; index >= 0; index -= 1) {
+      const segment = segments[index];
+      if (!segment) {
+        continue;
+      }
+      const trimmed = segment.trim();
+      if (!trimmed || trimmed.includes('.')) {
+        continue;
+      }
+      if (IGNORED_SEGMENT_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+        continue;
+      }
+      const normalised = normaliseSymbol(trimmed);
+      if (normalised) {
+        return normalised;
+      }
     }
-    const penultimate = segments[segments.length - 2];
-    return penultimate ? penultimate.toUpperCase() : undefined;
+    return undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+const parseExchangeSymbolFromUrl = (url: string | undefined): string | undefined => {
+  if (!url) {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(url);
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    const marketsIndex = segments.findIndex((segment) => segment.toLowerCase() === 'markets');
+    if (marketsIndex === -1) {
+      return undefined;
+    }
+    const exchangeSegment = segments[marketsIndex + 1];
+    if (!exchangeSegment) {
+      return undefined;
+    }
+    return normaliseSymbol(exchangeSegment);
   } catch {
     return undefined;
   }
@@ -1043,7 +1078,7 @@ export function normalizeFuturesMarketHours(
   const payloadSymbol = extractSymbol(payload, fallbackSymbol);
   const query = extractQueryParams(context.url);
   const queryInstrumentId = normaliseSymbol(query.get('ids') ?? undefined);
-  const instrumentFromUrl = parseInstrumentFromUrl(context.url);
+  const exchangeFromUrl = parseExchangeSymbolFromUrl(context.url);
 
   const out: FuturesCsvRow<typeof FUTURES_MARKET_HOURS_HEADER>[] = [];
   for (const entry of ensureArray(payload)) {
@@ -1052,7 +1087,10 @@ export function normalizeFuturesMarketHours(
     }
 
     const record = entry as Record<string, unknown>;
-    let rowSymbol = extractSymbol(record, payloadSymbol ?? fallbackSymbol) ?? fallbackSymbol;
+    const symbolFromRecord = extractSymbol(record, payloadSymbol ?? fallbackSymbol);
+    const exchangeValue = pickString(record, ['exchange', 'market']);
+    const exchangeSymbol =
+      normaliseSymbol(exchangeValue) ?? exchangeFromUrl ?? symbolFromRecord ?? fallbackSymbol;
     const instrumentCandidate =
       pickString(record, [
         'instrument_id',
@@ -1062,17 +1100,12 @@ export function normalizeFuturesMarketHours(
         'futuresContractId',
       ]) ??
       queryInstrumentId ??
-      instrumentFromUrl ??
-      rowSymbol ??
-      fallbackSymbol;
+      undefined;
     const normalizedInstrument =
       instrumentCandidate ? normaliseSymbol(instrumentCandidate) ?? instrumentCandidate : undefined;
-    if (rowSymbol && normalizedInstrument && rowSymbol === normalizedInstrument && fallbackSymbol) {
-      rowSymbol = fallbackSymbol;
-    }
     const productId =
       pickString(record, ['product_id', 'productId', 'product_code', 'productCode', 'product']) ?? undefined;
-    const exchange = pickString(record, ['exchange', 'market']);
+    const exchange = exchangeValue ?? (exchangeSymbol ?? undefined);
     const date = pickIsoDate(record, ['date', 'trading_date', 'tradingDate']);
     const opensAt = pickIsoDate(record, ['opens_at', 'open_time', 'openAt', 'openTime']);
     const closesAt = pickIsoDate(record, ['closes_at', 'close_time', 'closeAt', 'closeTime']);
@@ -1122,7 +1155,7 @@ export function normalizeFuturesMarketHours(
     const updatedAt = pickIsoDate(record, ['updated_at', 'updatedAt']);
 
     const row: FuturesCsvRow<typeof FUTURES_MARKET_HOURS_HEADER> = {
-      symbol: rowSymbol ?? fallbackSymbol,
+      symbol: exchangeSymbol ?? fallbackSymbol,
       instrumentId: normalizedInstrument,
       productId,
       exchange,
