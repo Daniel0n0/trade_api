@@ -141,6 +141,8 @@ export const FUTURES_MARKET_HOURS_HEADER = [
   'extendedClosesAt',
   'nextOpenAt',
   'previousCloseAt',
+  'previousOpenHoursUrl',
+  'nextOpenHoursUrl',
   'lateOptionClosesAt',
   'allDayOpensAt',
   'allDayClosesAt',
@@ -1042,6 +1044,18 @@ export function normalizeFuturesMarketHours(
     ]);
     const nextOpenAt = pickIsoDate(record, ['next_open_at', 'nextOpenAt']);
     const previousCloseAt = pickIsoDate(record, ['previous_close_at', 'previousCloseAt']);
+    const previousOpenHoursUrl = pickString(record, [
+      'previous_open_hours',
+      'previousOpenHours',
+      'previous_open_hours_url',
+      'previousOpenHoursUrl',
+    ]);
+    const nextOpenHoursUrl = pickString(record, [
+      'next_open_hours',
+      'nextOpenHours',
+      'next_open_hours_url',
+      'nextOpenHoursUrl',
+    ]);
     const lateOptionClosesAt = pickIsoDate(record, ['late_option_closes_at', 'lateOptionClosesAt']);
     const allDayOpensAt = pickIsoDate(record, ['all_day_opens_at', 'allDayOpensAt']);
     const allDayClosesAt = pickIsoDate(record, ['all_day_closes_at', 'allDayClosesAt']);
@@ -1073,6 +1087,8 @@ export function normalizeFuturesMarketHours(
       extendedClosesAt,
       nextOpenAt,
       previousCloseAt,
+      previousOpenHoursUrl,
+      nextOpenHoursUrl,
       lateOptionClosesAt,
       allDayOpensAt,
       allDayClosesAt,
