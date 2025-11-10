@@ -44,14 +44,24 @@ const WATCHDOG_THRESHOLD_MS = 90_000;
 const WATCHDOG_KEY = 'bar:1min';
 const WATCHDOG_COOLDOWN_MS = 120_000;
 
+const LEGEND_CHANNEL_METADATA: Record<number, { label: string; resolvedType?: string }> = {
+  1: { label: 'candle', resolvedType: 'Candle' },
+  3: { label: 'trade', resolvedType: 'Trade' },
+  5: { label: 'tradeeth', resolvedType: 'TradeETH' },
+  7: { label: 'quote', resolvedType: 'Quote' },
+  9: { label: 'quote-advanced', resolvedType: 'Quote' },
+  11: { label: 'greeks', resolvedType: 'Greeks' },
+  13: { label: 'summary', resolvedType: 'SeriesSummary' },
+};
+
+const LEGEND_CHANNELS = new Set<number>(Object.keys(LEGEND_CHANNEL_METADATA).map((key) => Number.parseInt(key, 10)));
+
+const LEGEND_CHANNEL_LAG_THRESHOLD_MS = 10_000;
+
 const LAG_WARN_THRESHOLDS_MS: Record<string, number> = {
-  ch1: 10_000,
-  ch3: 10_000,
-  ch5: 10_000,
-  ch7: 10_000,
-  ch9: 10_000,
-  ch11: 10_000,
-  ch13: 10_000,
+  ...Object.fromEntries(
+    [...LEGEND_CHANNELS].map((channel) => [`ch${channel}`, LEGEND_CHANNEL_LAG_THRESHOLD_MS]),
+  ),
   other: 30_000,
   legendOptions: 180_000,
   legendNews: 180_000,
@@ -76,18 +86,6 @@ const ROTATE_POLICY: RotatePolicy = {
   maxMinutes: 60,
   gzipOnRotate: false,
 };
-
-const LEGEND_CHANNEL_METADATA: Record<number, { label: string; resolvedType?: string }> = {
-  1: { label: 'candle', resolvedType: 'Candle' },
-  3: { label: 'trade', resolvedType: 'Trade' },
-  5: { label: 'tradeeth', resolvedType: 'TradeETH' },
-  7: { label: 'quote', resolvedType: 'Quote' },
-  9: { label: 'quote', resolvedType: 'Quote' },
-  11: { label: 'greeks', resolvedType: 'Greeks' },
-  13: { label: 'summary', resolvedType: 'SeriesSummary' },
-};
-
-const LEGEND_CHANNELS = new Set<number>(Object.keys(LEGEND_CHANNEL_METADATA).map((key) => Number.parseInt(key, 10)));
 
 const AGGREGATION_SPECS = {
   '1sec': { periodMs: 1_000 },
