@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { after, describe, it } from 'node:test';
+import { after, beforeEach, describe, it } from 'node:test';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import type { Page, Response } from 'playwright';
+import type { BrowserContext, Page, Response } from 'playwright';
 
 const originalCwd = process.cwd();
 const tempDir = await mkdtemp(path.join(os.tmpdir(), 'futures-shared-tests-'));
@@ -16,12 +16,24 @@ const {
   createContractUpdater,
   getFuturesContractCachePath,
   loadFuturesContractCache,
+  resetFuturesContractCacheForTesting,
 } = futuresSharedModule;
 
 type ResponseListener = (response: Response) => void | Promise<void>;
 
-class FakePage implements Pick<Page, 'on' | 'off'> {
+type WaitForResponsePredicate = Parameters<Page['waitForResponse']>[0];
+type WaitForResponseOptions = Parameters<Page['waitForResponse']>[1];
+
+type ResponseWaiter = {
+  readonly predicate: (response: Response) => Promise<boolean>;
+  readonly resolve: (response: Response) => void;
+  readonly reject: (error: Error) => void;
+  readonly timer?: NodeJS.Timeout;
+};
+
+class FakePage implements Pick<Page, 'on' | 'off' | 'waitForResponse'> {
   private readonly listeners = new Set<ResponseListener>();
+  private readonly waiters: ResponseWaiter[] = [];
 
   on(event: 'response', listener: ResponseListener): void {
     if (event === 'response') {
@@ -35,7 +47,73 @@ class FakePage implements Pick<Page, 'on' | 'off'> {
     }
   }
 
+  waitForResponse(
+    predicate: WaitForResponsePredicate,
+    options?: WaitForResponseOptions,
+  ): Promise<Response> {
+    const predicateFn = this.normalizePredicate(predicate);
+
+    return new Promise<Response>((resolve, reject) => {
+      const waiter: ResponseWaiter = {
+        predicate: predicateFn,
+        resolve,
+        reject: (error) => {
+          reject(error);
+        },
+        timer: options?.timeout
+          ? setTimeout(() => {
+              this.removeWaiter(waiter);
+              reject(new Error('Timeout while waiting for response.'));
+            }, options.timeout)
+          : undefined,
+      };
+
+      this.waiters.push(waiter);
+    });
+  }
+
+  private normalizePredicate(
+    predicate: WaitForResponsePredicate,
+  ): ResponseWaiter['predicate'] {
+    if (typeof predicate === 'string') {
+      return async (response) => response.url() === predicate;
+    }
+    if (predicate instanceof RegExp) {
+      return async (response) => predicate.test(response.url());
+    }
+    return async (response) => Boolean(await predicate(response));
+  }
+
+  private removeWaiter(waiter: ResponseWaiter): void {
+    const index = this.waiters.indexOf(waiter);
+    if (index >= 0) {
+      this.waiters.splice(index, 1);
+    }
+    if (waiter.timer) {
+      clearTimeout(waiter.timer);
+    }
+  }
+
+  private async settleWaiters(response: Response): Promise<void> {
+    const pending = [...this.waiters];
+    for (const waiter of pending) {
+      let matched = false;
+      try {
+        matched = await waiter.predicate(response);
+      } catch (error) {
+        this.removeWaiter(waiter);
+        waiter.reject(error instanceof Error ? error : new Error(String(error)));
+        continue;
+      }
+      if (matched) {
+        this.removeWaiter(waiter);
+        waiter.resolve(response);
+      }
+    }
+  }
+
   async emit(response: Response): Promise<void> {
+    await this.settleWaiters(response);
     const pending = Array.from(this.listeners).map((listener) =>
       Promise.resolve(listener(response)),
     );
@@ -53,7 +131,27 @@ const createJsonResponse = (url: string, payload: unknown): Response =>
     body: async () => Buffer.from(JSON.stringify(payload), 'utf8'),
   }) as unknown as Response;
 
+const waitForCacheFile = async (filePath: string, retries = 20, delayMs = 10): Promise<string> => {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    try {
+      return await readFile(filePath, 'utf8');
+    } catch (error) {
+      lastError = error;
+      if ((error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT') {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+};
+
 describe('futures shared helpers', () => {
+  beforeEach(async () => {
+    await resetFuturesContractCacheForTesting();
+  });
+
   after(async () => {
     process.chdir(originalCwd);
     await rm(tempDir, { recursive: true, force: true });
@@ -206,13 +304,43 @@ describe('futures shared helpers', () => {
     handle.close();
   });
 
+  it('runFuturesOverviewModule actualiza la caché con discovery/lists', async () => {
+    const { runFuturesOverviewModule } = await import('../src/modulos/futures-overview.js');
+
+    const page = new FakePage();
+    const runtime = {
+      page: page as unknown as Page,
+      context: {} as unknown as BrowserContext,
+    };
+
+    const runPromise = runFuturesOverviewModule(
+      { module: 'futures-overview', action: 'preview' },
+      runtime,
+    );
+
+    await page.emit(
+      createJsonResponse('https://api.robinhood.com/discovery/lists/top-contracts/', {
+        results: [
+          { contract_code: 'mesu4' },
+          { contract_code: 'mnqz4' },
+        ],
+      }),
+    );
+
+    const cachePath = await runPromise;
+    const resolvedPath = typeof cachePath === 'string' ? cachePath : String(cachePath);
+    const raw = await waitForCacheFile(resolvedPath);
+    const parsed = JSON.parse(raw) as { symbols?: string[] };
+    assert.deepEqual(parsed.symbols, ['MESU4', 'MNQZ4']);
+  });
+
   it('persiste símbolos nuevos sin duplicados en la caché', async () => {
     const updater = createContractUpdater('test-suite');
 
     await updater([' mesu4 ', 'MESU4', 'invalid']);
 
     const cachePath = getFuturesContractCachePath();
-    const raw = await readFile(cachePath, 'utf8');
+    const raw = await waitForCacheFile(cachePath);
     const parsed = JSON.parse(raw) as { symbols?: string[] };
     assert.deepEqual(parsed.symbols, ['MESU4']);
 
@@ -220,5 +348,6 @@ describe('futures shared helpers', () => {
     const cache = await loadFuturesContractCache();
     assert.deepEqual(cache.symbols, ['MESU4', 'MNQZ4']);
   });
+
 });
 
