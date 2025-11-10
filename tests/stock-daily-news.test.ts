@@ -35,6 +35,10 @@ test('createNewsFeature deduplicates items and writes csv/jsonl outputs', async 
       'Query parameters must be detected even when the path lacks a trailing slash',
     );
     assert.ok(
+      newsFeature.shouldProcessUrl('https://dora.robinhood.com/feed/instrument#section'),
+      'Fragments should not prevent Dora feeds from being detected',
+    );
+    assert.ok(
       newsFeature.shouldProcessUrl('HTTPS://DORA.ROBINHOOD.COM/FEED/INSTRUMENT/ABC123'),
       'Dora feeds should be detected even with uppercase URL components',
     );
