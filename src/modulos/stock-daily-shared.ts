@@ -11,7 +11,9 @@ import { normaliseFramePayload, safeJsonParse } from '../utils/payload.js';
 
 const JSON_MIME_PATTERN = /application\/json/i;
 const STATS_URL_HINT = /fundamental|stats|marketdata|phoenix|instruments|quote/i;
-const NEWS_URL_HINT = /news|article|phoenix|press|stories|legend|dora\.robinhood|feed\/instrument/i;
+const NEWS_URL_HINT = /news|article|phoenix|press|stories|legend/i;
+const DORA_HOST_PATTERN = /(^|\.)dora\.robinhood\.com$/i;
+const DORA_INSTRUMENT_PATH_PATTERN = /\/feed\/instrument(\/|$)/i;
 const ORDERBOOK_URL_HINT = /order[-_ ]?book|level2|depth|phoenix|marketdata|quotes/i;
 const STOCK_WS_PATTERN = /(legend|phoenix|stream|socket|ws)/i;
 
@@ -413,6 +415,53 @@ const extractSymbols = (value: unknown): readonly string[] | undefined => {
   return undefined;
 };
 
+const PLACEHOLDER_URL = 'https://placeholder.local';
+
+const parseUrlSafely = (rawUrl: string): URL | null => {
+  try {
+    return new URL(rawUrl);
+  } catch {
+    try {
+      return new URL(rawUrl, PLACEHOLDER_URL);
+    } catch {
+      return null;
+    }
+  }
+};
+
+const matchesDoraInstrumentFeed = (rawUrl: string): boolean => {
+  const candidate = rawUrl.trim();
+  if (!candidate) {
+    return false;
+  }
+
+  const normalized = candidate.toLowerCase();
+  if (DORA_INSTRUMENT_PATH_PATTERN.test(normalized)) {
+    return true;
+  }
+
+  const parsed = parseUrlSafely(candidate);
+  if (!parsed) {
+    return false;
+  }
+
+  if (DORA_HOST_PATTERN.test(parsed.hostname)) {
+    return true;
+  }
+
+  const pathname = parsed.pathname.toLowerCase();
+  if (DORA_INSTRUMENT_PATH_PATTERN.test(pathname)) {
+    return true;
+  }
+
+  const search = parsed.search.toLowerCase();
+  if (search && DORA_INSTRUMENT_PATH_PATTERN.test(search)) {
+    return true;
+  }
+
+  return false;
+};
+
 const looksLikeNewsRecord = (record: Record<string, unknown>): boolean => {
   const tokens = ['news', 'article', 'headline', 'story', 'summary'];
   return Object.keys(record).some((key) => tokens.some((token) => key.toLowerCase().includes(token)));
@@ -550,17 +599,8 @@ export const createNewsFeature = (symbol: string): NewsFeature => {
       return true;
     }
 
-    try {
-      const { hostname, pathname } = new URL(url);
-      const lowerHost = hostname.toLowerCase();
-      if (lowerHost.includes('dora.robinhood.com')) {
-        return true;
-      }
-      if (pathname.toLowerCase().includes('/feed/instrument')) {
-        return true;
-      }
-    } catch {
-      // Ignorar URLs no válidas y continuar con el resto de verificaciones.
+    if (matchesDoraInstrumentFeed(url)) {
+      return true;
     }
 
     return false;
