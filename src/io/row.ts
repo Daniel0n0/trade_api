@@ -176,7 +176,9 @@ export function normalizeDxFeedRow(channel: number, event: BaseEvent): Normalize
   return normalized as NormalizedDxFeedRow;
 }
 
-function inferEventType(channel: number): 'Candle' | 'Trade' | 'TradeETH' | 'Quote' | 'Raw' {
+function inferEventType(
+  channel: number,
+): 'Candle' | 'Trade' | 'TradeETH' | 'Quote' | 'Greeks' | 'SeriesSummary' | 'Raw' {
   switch (channel) {
     case 1:
       return 'Candle';
@@ -186,6 +188,12 @@ function inferEventType(channel: number): 'Candle' | 'Trade' | 'TradeETH' | 'Quo
       return 'TradeETH';
     case 7:
       return 'Quote';
+    case 9:
+      return 'Quote';
+    case 11:
+      return 'Greeks';
+    case 13:
+      return 'SeriesSummary';
     default:
       return 'Raw';
   }
@@ -239,6 +247,9 @@ export type StatsCounts = {
   ch3: number;
   ch5: number;
   ch7: number;
+  ch9: number;
+  ch11: number;
+  ch13: number;
   legendOptions: number;
   legendNews: number;
   other: number;
@@ -263,6 +274,9 @@ export function buildStatsCsvRow(input: StatsSnapshotInput): StatsCsvRow {
     ch3: counts.ch3,
     ch5: counts.ch5,
     ch7: counts.ch7,
+    ch9: counts.ch9,
+    ch11: counts.ch11,
+    ch13: counts.ch13,
     legendOptions: counts.legendOptions,
     legendNews: counts.legendNews,
     other: counts.other,

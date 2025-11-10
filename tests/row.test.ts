@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
   buildCandleCsvRow,
+  buildStatsCsvRow,
   buildQuoteAggregationRow,
   buildQuoteCsvRow,
   buildTradeAggregationRow,
@@ -35,6 +36,13 @@ test('normalizeDxFeedRow normalizes event times to milliseconds', () => {
   const event = BaseEvent.parse({ eventType: 'Trade', time: 1_700_000_000, price: 12.34 });
   const normalized = normalizeDxFeedRow(3, event);
   assert.strictEqual((normalized as { eventTime?: number }).eventTime, 1_700_000_000_000);
+});
+
+test('normalizeDxFeedRow infers quote payloads for advanced legend channel 9', () => {
+  const event = BaseEvent.parse({ bidPrice: 100.5, askPrice: 101.25, bidTime: 1_700_000_000 });
+  const normalized = normalizeDxFeedRow(9, event);
+  assert.strictEqual((normalized as { bidPrice?: number }).bidPrice, 100.5);
+  assert.strictEqual((normalized as { askPrice?: number }).askPrice, 101.25);
 });
 
 test('buildCandleCsvRow honours headers order', () => {
@@ -94,6 +102,39 @@ test('buildQuoteCsvRow uses quote timestamps in milliseconds', () => {
   assert.strictEqual(row?.t, 1_700_000_000_000);
   const line = toCsvLine(CSV_HEADERS.quote, row ?? {});
   assert.strictEqual(line, '1700000000000,1.23,,1.25,,AAPL');
+});
+
+test('buildStatsCsvRow includes counters for advanced legend channels', () => {
+  const counts = {
+    ch1: 1,
+    ch3: 2,
+    ch5: 3,
+    ch7: 4,
+    ch9: 5,
+    ch11: 6,
+    ch13: 7,
+    legendOptions: 8,
+    legendNews: 9,
+    other: 10,
+    total: 11,
+  } as const;
+  const row = buildStatsCsvRow({ ts: 123, counts });
+  assert.deepEqual(row, {
+    ts: 123,
+    total: 11,
+    ch1: 1,
+    ch3: 2,
+    ch5: 3,
+    ch7: 4,
+    ch9: 5,
+    ch11: 6,
+    ch13: 7,
+    legendOptions: 8,
+    legendNews: 9,
+    other: 10,
+    rss: undefined,
+    uptimeSec: undefined,
+  });
 });
 
 test('aggregation helpers convert timestamps consistently', () => {

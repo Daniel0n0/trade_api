@@ -49,6 +49,9 @@ const LAG_WARN_THRESHOLDS_MS: Record<string, number> = {
   ch3: 10_000,
   ch5: 10_000,
   ch7: 10_000,
+  ch9: 10_000,
+  ch11: 10_000,
+  ch13: 10_000,
   other: 30_000,
   legendOptions: 180_000,
   legendNews: 180_000,
@@ -74,7 +77,17 @@ const ROTATE_POLICY: RotatePolicy = {
   gzipOnRotate: false,
 };
 
-const LEGEND_CHANNELS = new Set<number>([1, 3, 5, 7]);
+const LEGEND_CHANNEL_METADATA: Record<number, { label: string; resolvedType?: string }> = {
+  1: { label: 'candle', resolvedType: 'Candle' },
+  3: { label: 'trade', resolvedType: 'Trade' },
+  5: { label: 'tradeeth', resolvedType: 'TradeETH' },
+  7: { label: 'quote', resolvedType: 'Quote' },
+  9: { label: 'quote', resolvedType: 'Quote' },
+  11: { label: 'greeks', resolvedType: 'Greeks' },
+  13: { label: 'summary', resolvedType: 'SeriesSummary' },
+};
+
+const LEGEND_CHANNELS = new Set<number>(Object.keys(LEGEND_CHANNEL_METADATA).map((key) => Number.parseInt(key, 10)));
 
 const AGGREGATION_SPECS = {
   '1sec': { periodMs: 1_000 },
@@ -429,6 +442,9 @@ async function exposeLogger(
     ch3: 0,
     ch5: 0,
     ch7: 0,
+    ch9: 0,
+    ch11: 0,
+    ch13: 0,
     legendOptions: 0,
     legendNews: 0,
     other: 0,
@@ -487,31 +503,19 @@ async function exposeLogger(
 
     const { allowNoise = false } = options;
 
-    let key: string | undefined;
-    if (channel === 1) {
-      counts.ch1 += n;
-      key = 'ch1';
-    } else if (channel === 3) {
-      counts.ch3 += n;
-      key = 'ch3';
-    } else if (channel === 5) {
-      counts.ch5 += n;
-      key = 'ch5';
-    } else if (channel === 7) {
-      counts.ch7 += n;
-      key = 'ch7';
-    } else if (allowNoise) {
-      counts.other += n;
-      key = `ch${channel}`;
-      lastWriteTs.other = Date.now();
-    }
-
-    if (!key) {
+    const channelKey = `ch${channel}` as keyof StatsCounts;
+    if (Object.hasOwn(counts, channelKey)) {
+      counts[channelKey] += n;
+      counts.total += n;
+      lastWriteTs[channelKey as string] = Date.now();
       return;
     }
 
-    counts.total += n;
-    lastWriteTs[key] = Date.now();
+    if (allowNoise) {
+      counts.other += n;
+      counts.total += n;
+      lastWriteTs.other = Date.now();
+    }
   };
 
   const channelWriters = new Map<string, RotatingWriter>();
@@ -750,16 +754,8 @@ async function exposeLogger(
       }
     }
 
-    const label =
-      channel === 1
-        ? 'candle'
-        : channel === 3
-        ? 'trade'
-        : channel === 5
-        ? 'tradeeth'
-        : channel === 7
-        ? 'quote'
-        : 'raw';
+    const metadata = LEGEND_CHANNEL_METADATA[channel];
+    const label = metadata?.label ?? 'raw';
     const writer = getChannelWriter(channel, label);
     bump(channel, rows.length, { allowNoise });
 
@@ -769,17 +765,7 @@ async function exposeLogger(
       lastNow = currentNow;
       const parsed = BaseEvent.safeParse(row ?? {});
       const event = parsed.success ? parsed.data : BaseEvent.parse({});
-      const resolvedType =
-        event.eventType ??
-        (channel === 1
-          ? 'Candle'
-          : channel === 3
-          ? 'Trade'
-          : channel === 5
-          ? 'TradeETH'
-          : channel === 7
-          ? 'Quote'
-          : undefined);
+      const resolvedType = event.eventType ?? metadata?.resolvedType;
 
       if (resolvedType === 'Candle' && !isValidCandle(event)) {
         continue;
