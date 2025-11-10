@@ -1095,7 +1095,7 @@ export const createStockDailyRunner = <T>(options: RunnerOptions<T>): ModuleRunn
 
       logHook('ws-open', { module: moduleName, url });
 
-      const processFrame = (payload: unknown) => {
+      const processFrame = (payload: string | Buffer) => {
         const { parsed, text } = normaliseFramePayload(payload);
         const resolved = parsed ?? (text ? safeJsonParse(text) : undefined);
         if (!resolved) {
@@ -1111,12 +1111,9 @@ export const createStockDailyRunner = <T>(options: RunnerOptions<T>): ModuleRunn
         logGreeksIfNeeded(resolved, meta);
       };
 
-      const onFrameReceived = (event: { payload: string }) => {
-        processFrame(event);
-      };
-      const onFrameSent = (event: { payload: string }) => {
-        processFrame(event);
-      };
+      type WsFrame = { payload: string | Buffer };
+      const onFrameReceived = ({ payload }: WsFrame) => processFrame(payload);
+      const onFrameSent = ({ payload }: WsFrame) => processFrame(payload);
 
       const onClose = () => {
         socket.off('framereceived', onFrameReceived);
