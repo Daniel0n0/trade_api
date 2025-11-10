@@ -11,7 +11,7 @@ import { normaliseFramePayload, safeJsonParse } from '../utils/payload.js';
 
 const JSON_MIME_PATTERN = /application\/json/i;
 const STATS_URL_HINT = /fundamental|stats|marketdata|phoenix|instruments|quote/i;
-const NEWS_URL_HINT = /news|article|phoenix|press|stories|legend|dora|feed/i;
+const NEWS_URL_HINT = /news|article|phoenix|press|stories|legend|dora|feed|instrument/i;
 const DORA_HOST_PATTERN = /(^|\.)dora\.robinhood\.com$/i;
 const DORA_INSTRUMENT_PATH_PATTERN = /\/feeds?\/instrument(?=\/|$|\?)/i;
 const ORDERBOOK_URL_HINT = /order[-_ ]?book|level2|depth|phoenix|marketdata|quotes/i;
@@ -627,16 +627,16 @@ export const createNewsFeature = (symbol: string): NewsFeature => {
       return false;
     }
 
+    if (matchesDoraInstrumentFeed(url)) {
+      return true;
+    }
+
     const normalizedUrl = url.toLowerCase();
     if (normalizedUrl.includes(symbol.toLowerCase())) {
       return true;
     }
 
     if (NEWS_URL_HINT.test(normalizedUrl)) {
-      return true;
-    }
-
-    if (matchesDoraInstrumentFeed(url)) {
       return true;
     }
 
