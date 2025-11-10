@@ -92,6 +92,26 @@ describe('futures shared helpers', () => {
     handle.close();
   });
 
+  it('detecta discovery/lists con parámetros de consulta', async () => {
+    const page = new FakePage();
+    const recorded: string[][] = [];
+    const handle = installFuturesContractTracker(page as unknown as Page, {
+      onSymbols: (symbols) => {
+        recorded.push([...symbols]);
+      },
+    });
+
+    await page.emit(
+      createJsonResponse('https://api.robinhood.com/discovery/lists/top-contracts?cursor=abc123', {
+        results: [{ contract_code: 'CLF5' }],
+      }),
+    );
+
+    assert.deepEqual(recorded, [['CLF5']]);
+
+    handle.close();
+  });
+
   it('omite endpoints cubiertos por el interceptor principal', async () => {
     const page = new FakePage();
     let calls = 0;
