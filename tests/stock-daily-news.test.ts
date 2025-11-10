@@ -19,6 +19,14 @@ test('createNewsFeature deduplicates items and writes csv/jsonl outputs', async 
       'Dora instrument feeds should be accepted',
     );
     assert.ok(
+      newsFeature.shouldProcessUrl('https://dora.robinhood.com/feed/instrument/'),
+      'Dora feeds without a symbol suffix should be accepted',
+    );
+    assert.ok(
+      newsFeature.shouldProcessUrl('https://dora.robinhood.com/feed/instrument/?cursor=next-page'),
+      'Dora feeds con parámetros de paginación deben aceptarse',
+    );
+    assert.ok(
       newsFeature.shouldProcessUrl('HTTPS://DORA.ROBINHOOD.COM/FEED/INSTRUMENT/ABC123'),
       'Dora feeds should be detected even with uppercase URL components',
     );
@@ -68,6 +76,43 @@ test('createNewsFeature deduplicates items and writes csv/jsonl outputs', async 
     assert.deepEqual(
       parsedItems.map((item) => item.id).sort(),
       ['story-1', 'story-2'],
+    );
+  } finally {
+    process.chdir(previousCwd);
+  }
+});
+
+test('createNewsFeature captures Dora feed payloads without symbol hints', async () => {
+  const workspace = mkdtempSync(path.join(tmpdir(), 'trade-api-news-dora-'));
+  const previousCwd = process.cwd();
+  process.chdir(workspace);
+
+  try {
+    const newsFeature = createNewsFeature('SPY');
+
+    const payloadPath = new URL('./fixtures/dora-feed.json', import.meta.url);
+    const payload = JSON.parse(readFileSync(payloadPath, 'utf-8'));
+    const meta = { transport: 'http', source: 'https://dora.robinhood.com/feed/instrument/' } as const;
+
+    newsFeature.processPayload(payload, meta);
+    await newsFeature.close();
+
+    const csvLines = readFileSync(newsFeature.result.csvPath, 'utf-8').trim().split('\n');
+    assert.equal(csvLines.length, 3, 'Deben persistirse el encabezado y dos artículos de Dora');
+    const csvIds = csvLines.slice(1).map((line) => line.split(',')[2]);
+    assert.deepEqual(csvIds.sort(), ['spy-001', 'spy-002']);
+
+    const jsonDir = path.dirname(newsFeature.result.jsonlPath);
+    const jsonFiles = readdirSync(jsonDir).filter((name) => name.startsWith('news-') && name.endsWith('.jsonl'));
+    assert.equal(jsonFiles.length, 1, 'Se espera un archivo jsonl con datos de Dora');
+    const jsonLines = readFileSync(path.join(jsonDir, jsonFiles[0]), 'utf-8')
+      .trim()
+      .split('\n');
+    assert.equal(jsonLines.length, 2, 'Solo los artículos del feed de Dora deben registrarse');
+    const parsedItems = jsonLines.map((line) => JSON.parse(line));
+    assert.deepEqual(
+      parsedItems.map((item) => item.id).sort(),
+      ['spy-001', 'spy-002'],
     );
   } finally {
     process.chdir(previousCwd);

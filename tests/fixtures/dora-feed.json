@@ -1,0 +1,29 @@
+{
+  "results": [
+    {
+      "id": "spy-001",
+      "title": "SPY edges higher as investors await earnings",
+      "summary": "Broader markets gain ahead of key corporate updates.",
+      "article_url": "https://dora.robinhood.com/news/spy-001",
+      "published_at": "2024-07-20T15:00:00Z",
+      "author": "Robinhood News Team",
+      "symbols": ["SPY"],
+      "preview_text": "Markets inch higher on light volume."
+    },
+    {
+      "uuid": "spy-002",
+      "headline": "Tech rally lifts S&P 500 tracker",
+      "description": "Growth names extend their gains, pushing ETFs higher.",
+      "share_url": "https://dora.robinhood.com/news/spy-002",
+      "first_published_at": "2024-07-20T16:00:00Z",
+      "writer": "Dora Desk",
+      "instruments": ["SPY"],
+      "body": "Chipmakers and megacaps continue to outperform.",
+      "related": {
+        "items": [
+          { "symbol": "SPY" }
+        ]
+      }
+    }
+  ]
+}

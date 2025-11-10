@@ -11,9 +11,9 @@ import { normaliseFramePayload, safeJsonParse } from '../utils/payload.js';
 
 const JSON_MIME_PATTERN = /application\/json/i;
 const STATS_URL_HINT = /fundamental|stats|marketdata|phoenix|instruments|quote/i;
-const NEWS_URL_HINT = /news|article|phoenix|press|stories|legend/i;
+const NEWS_URL_HINT = /news|article|phoenix|press|stories|legend|dora|feed/i;
 const DORA_HOST_PATTERN = /(^|\.)dora\.robinhood\.com$/i;
-const DORA_INSTRUMENT_PATH_PATTERN = /\/feed\/instrument(\/|$)/i;
+const DORA_INSTRUMENT_PATH_PATTERN = /\/feeds?\/instrument(?=\/|$|\?)/i;
 const ORDERBOOK_URL_HINT = /order[-_ ]?book|level2|depth|phoenix|marketdata|quotes/i;
 const STOCK_WS_PATTERN = /(legend|phoenix|stream|socket|ws)/i;
 
