@@ -11,6 +11,7 @@ import {
   runSocketSniffer,
   type SocketSnifferHandle,
 } from '../../modulos/socket-sniffer.js';
+import { safeGoto } from '../../utils/navigation.js';
 import { installOptionsResponseRecorder, type OptionsRecorderHandle } from './interceptor.js';
 import {
   assertParentMessage,
@@ -265,8 +266,10 @@ export async function runOptionsRunner(initialArgs: ModuleArgs): Promise<void> {
       sendStatus('navigating');
 
       try {
-        await page.goto(url, { waitUntil: 'domcontentloaded' });
-        await page.waitForLoadState('networkidle', { timeout: 15_000 }).catch(() => page?.waitForTimeout(2_000));
+        await safeGoto(page, url);
+        await page
+          .waitForLoadState('networkidle', { timeout: 15_000 })
+          .catch(() => page?.waitForTimeout(2_000));
       } catch (error) {
         const err = toError(error);
         sendStatus('error', { phase: 'navigation', url });
