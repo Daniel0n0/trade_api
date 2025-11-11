@@ -210,6 +210,13 @@ test('resolveWriter crea rutas proximas2semanas y reanuda lastTimestamp', async 
   );
 
   assert.ok(
+    nearPath.startsWith(
+      path.join(process.cwd(), 'data', 'stock', 'SPY', '2024-05-10'),
+    ),
+    `unexpected base path ${nearPath}`,
+  );
+
+  assert.ok(
     nearPath.endsWith(
       path.join('options', 'proximas2semanas', normalizedExpiration, nearFileName),
     ),
