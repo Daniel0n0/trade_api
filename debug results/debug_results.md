@@ -1,6 +1,69 @@
+bien. para los futures, el directorio tiene que ser:
+data/
+data/futures/
+data/futures/<NOMBRE_DEL_FUTURE>/
+data/futures/<NOMBRE_DEL_FUTURE>/<fechas_salvadas>
+data/futures/<NOMBRE_DEL_FUTURE>/<fechas_salvadas>
 
 
-Voy a ir exponiendo de ultimo a primero los modulos:
+directorio para stock:
+data/
+data/stocks/
+data/stocks/<NOMBRE_DEL_STOCK>/
+data/stocks/<NOMBRE_DEL_STOCK>/<fecha>
+data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/ (datos de las temporalidades)
+.............
+data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/  (datos de los strike)
+data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de los proximos dias de expiracion, 2 semanas adelante)
+
+
+npm run orchestrator session
+
+> trade_api@0.1.0 orchestrator
+> tsx src/orchestrator/cli.ts session
+
+[dotenv@17.2.3] injecting env (4) from .env -- tip: 🔐 encrypt with Dotenvx: https://dotenvx.com
+[console:log] Tracing is NOT enabled
+[console:log] Tracing is NOT enabled
+Sesión detectada. El módulo 5m-1m queda abierto sin automatización para inspección manual.
+El navegador permanecerá abierto hasta que detengas el proceso manualmente.
+Abriendo módulo "spy-5m-1m" (Gráficas Legend de SPY en 1D/1H/15m/5m/1m/1s) en https://robinhood.com/legend/layout/6bb41212-dbb4-4dc0-a0a7-7a75e4aaf9da?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT...
+Abriendo módulo "spy-options-chain" (Cadena de opciones para SPY) en https://robinhood.com/legend/layout/c59d5a8e-397f-421a-a6e4-8ffe753c3456?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT...
+Abriendo módulo "spx-options-chain" (Cadena de opciones para SPX) en https://robinhood.com/legend/layout/0413b972-f84e-4ce7-8eae-c0a50b96cc90?default_web_client=WEB_CLIENT_PREFERENCE_BLACK_WIDOW_DEFAULT...
+Abriendo módulo "options" (Navegador genérico de opciones por símbolo) en https://robinhood.com/options/chains/SPY...
+[console:log] Tracing is NOT enabled
+Abriendo módulo "stock-daily-stats" (Estadísticas diarias para un símbolo específico) en https://robinhood.com/stocks/SPY...
+[console:log] Tracing is NOT enabled
+[console:error] Failed to load resource: the server responded with a status of 417 ()
+Abriendo módulo "daily-stats" (Estadísticas diarias para un símbolo específico) en https://robinhood.com/stocks/SPY...
+[console:log] Tracing is NOT enabled
+Abriendo módulo "stock-daily-news" (Noticias diarias para un símbolo específico) en https://robinhood.com/stocks/SPY...
+[console:log] Tracing is NOT enabled
+Abriendo módulo "daily-news" (Noticias diarias para un símbolo específico) en https://robinhood.com/stocks/SPY...
+[console:log] Tracing is NOT enabled
+Abriendo módulo "stock-daily-orderbook" (Order book diario para un símbolo específico) en https://robinhood.com/stocks/SPY...
+[console:log] Tracing is NOT enabled
+Abriendo módulo "daily-order-book" (Order book diario para un símbolo específico) en https://robinhood.com/stocks/SPY...
+[console:log] Tracing is NOT enabled
+Abriendo módulo "futures" (Panel principal de mercados de futuros) en https://robinhood.com/lists/robinhood/12442aa7-2280-4d5a-86e4-1ee5353f3892/...
+[console:log] Tracing is NOT enabled
+Abriendo módulo "futures-mes" (Futuros Micro E-mini S&P 500 (MES)) en https://robinhood.com/futures/MESZ25...
+[console:log] Tracing is NOT enabled
+[console:log] Tracing is NOT enabled
+Abriendo módulo "futures-mnq" (Futuros Micro E-mini Nasdaq-100 (MNQ)) en https://robinhood.com/futures/MNQZ25...
+[console:log] Tracing is NOT enabled
+[console:error] Failed to load resource: the server responded with a status of 417 ()
+[console:log] Tracing is NOT enabled
+Abriendo módulo "futures-overview" (Panel general de futuros) en https://robinhood.com/lists/robinhood/12442aa7-2280-4d5a-86e4-1ee5353f3892/...
+[console:log] Tracing is NOT enabled
+Abriendo módulo "futures-detail" (Detalle de un contrato de futuros) en https://robinhood.com/futures/MESZ25...
+[console:log] Tracing is NOT enabled
+[console:log] Tracing is NOT enabled
+Depuración activa. Presiona Ctrl+C (SIGINT) o envía SIGTERM cuando quieras finalizar la sesión.
+[console:error] Failed to load resource: the server responded with a status of 417 ()
+[console:warning] [u] Max reconnect attempts reached
+
+
 
 =========================================
 1- módulo "futures-detail" (Detalle de un contrato de futuros) en https://robinhood.com/futures/MESZ25
@@ -936,6 +999,4 @@ America/New_York
 
 
 ====================================================================
-
-
 
