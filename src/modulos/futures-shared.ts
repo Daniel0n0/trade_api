@@ -246,16 +246,21 @@ export const installFuturesContractTracker = (
     }
 
     const url = response.url();
-    let parsed: unknown;
-    let text: string;
-    try {
-      const body = await response.body();
-      text = body.toString('utf8');
-      parsed = safeJsonParse<unknown>(text);
-    } catch (error) {
-      console.warn('[futures-contracts] No se pudo analizar una respuesta JSON:', error);
+    const buffer = await response.body().catch(() => undefined as Buffer | undefined);
+    let text: string | undefined;
+
+    if (buffer && buffer.length > 0) {
+      text = buffer.toString('utf8');
+    } else {
+      text = await response.text().catch(() => undefined);
+    }
+
+    if (!text || text.trim().length === 0) {
+      console.warn('[futures-contracts] Respuesta vacía, se omite el procesamiento para:', url);
       return;
     }
+
+    const parsed = safeJsonParse<unknown>(text);
 
     if (!parsed) {
       return;
