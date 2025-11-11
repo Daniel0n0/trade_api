@@ -33,6 +33,15 @@ const DORA_INSTRUMENT_FEED_INLINE_PATTERN = new RegExp(DORA_INSTRUMENT_FEED_HINT
 const DORA_INSTRUMENT_PATH_PATTERN = /\/feeds?\/instrument(?=[:\/]|$|[?#])/i;
 const ORDERBOOK_URL_HINT = /order[-_ ]?book|level2|depth|phoenix|marketdata|quotes/i;
 const STOCK_WS_PATTERN = /(legend|phoenix|stream|socket|ws)/i;
+const ROBINHOOD_HOST_PATTERN = /(^|\.)robinhood\.com$/i;
+const ROBINHOOD_JSON_PATH_HINT = new RegExp(
+  `${STATS_URL_HINT.source}|${NEWS_URL_HINT.source}|${ORDERBOOK_URL_HINT.source}`,
+  'i',
+);
+const STATS_HOST_PATTERN = /^(?:api|legend|midlands|phoenix)\.robinhood\.com$/i;
+const NEWS_HOST_PATTERN = /^(?:api|legend|midlands|phoenix|dora)\.robinhood\.com$/i;
+const ORDERBOOK_HOST_PATTERN = /^(?:api|legend|midlands|phoenix)\.robinhood\.com$/i;
+const SYMBOL_PARAM_KEY_PATTERN = /(symbol|instrument|ticker|target|underlying|security|id)/i;
 
 const LOG_ENVIRONMENT_FLAGS = [
   'TRADE_API_DEBUG_STOCK_PAGE',
@@ -71,10 +80,108 @@ type TransportMeta = {
   readonly source: string;
 };
 
+const normaliseEscapedUrl = (input: string): string => {
+  return input.replace(/\\\//g, '/');
+};
+
+const tryParseUrl = (value: string): URL | undefined => {
+  if (!value) {
+    return undefined;
+  }
+  const candidates = [value];
+  const normalised = normaliseEscapedUrl(value);
+  if (normalised !== value) {
+    candidates.push(normalised);
+  }
+  for (const candidate of candidates) {
+    try {
+      return new URL(candidate);
+    } catch {
+      try {
+        return new URL(candidate, 'https://robinhood.com');
+      } catch {
+        // continue trying with the next candidate
+      }
+    }
+  }
+  return undefined;
+};
+
+const symbolMatchesPath = (pathname: string, symbol: string): boolean => {
+  if (!pathname) {
+    return false;
+  }
+  const normalizedSymbol = symbol.toUpperCase();
+  const segments = pathname.split('/').filter((segment) => segment.length > 0);
+  for (const segment of segments) {
+    try {
+      if (decodeURIComponent(segment).toUpperCase() === normalizedSymbol) {
+        return true;
+      }
+    } catch {
+      if (segment.toUpperCase() === normalizedSymbol) {
+        return true;
+      }
+    }
+  }
+  return false;
+};
+
+const symbolMatchesSearch = (url: URL, symbol: string): boolean => {
+  const normalizedSymbol = symbol.toLowerCase();
+  for (const [key, value] of url.searchParams.entries()) {
+    if (!value || !SYMBOL_PARAM_KEY_PATTERN.test(key)) {
+      continue;
+    }
+    const tokens = value.split(/[,|\s]+/);
+    for (const token of tokens) {
+      if (token && token.trim().toLowerCase() === normalizedSymbol) {
+        return true;
+      }
+    }
+  }
+  return false;
+};
+
+const escapeRegExp = (value: string): string => {
+  return value.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+};
+
+const createSymbolBoundaryPattern = (symbol: string): RegExp => {
+  const escaped = escapeRegExp(symbol.toUpperCase());
+  return new RegExp(`(?:^|[^A-Z0-9])${escaped}(?=[^A-Z0-9]|$)`, 'i');
+};
+
+const matchesSymbol = (parsed: URL | undefined, rawUrl: string, symbol: string, fallbackPattern: RegExp): boolean => {
+  if (parsed) {
+    if (symbolMatchesPath(parsed.pathname, symbol)) {
+      return true;
+    }
+    if (symbolMatchesSearch(parsed, symbol)) {
+      return true;
+    }
+    if (parsed.hash && fallbackPattern.test(parsed.hash)) {
+      return true;
+    }
+  }
+  return fallbackPattern.test(rawUrl);
+};
+
 const isJsonResponse = (response: Response): boolean => {
   const headers = response.headers();
   const contentType = headers['content-type'] ?? headers['Content-Type'];
-  return typeof contentType === 'string' && JSON_MIME_PATTERN.test(contentType);
+  if (typeof contentType !== 'string' || !JSON_MIME_PATTERN.test(contentType)) {
+    return false;
+  }
+  const url = response.url();
+  if (!url) {
+    return false;
+  }
+  const parsed = tryParseUrl(url);
+  if (!parsed) {
+    return false;
+  }
+  return ROBINHOOD_HOST_PATTERN.test(parsed.hostname) && ROBINHOOD_JSON_PATH_HINT.test(parsed.href);
 };
 
 const resolvePrimarySymbol = (symbols: readonly string[] | undefined, moduleName: string): string => {
@@ -271,7 +378,7 @@ type StatsFeature = {
   readonly close: () => Promise<void>;
 };
 
-const createStatsFeature = (symbol: string): StatsFeature => {
+export const createStatsFeature = (symbol: string): StatsFeature => {
   const statsPath = dataPath({ assetClass: 'stock', symbol }, 'stats.csv');
   let writer: WriteStream | null = null;
   const trackedStreams = new Set<WriteStream>();
@@ -286,12 +393,24 @@ const createStatsFeature = (symbol: string): StatsFeature => {
     return writer;
   };
 
+  const symbolPattern = createSymbolBoundaryPattern(symbol);
+
   const shouldProcessUrl = (url: string): boolean => {
     if (!url) {
       return false;
     }
-    const upperUrl = url.toUpperCase();
-    return upperUrl.includes(symbol) || STATS_URL_HINT.test(url);
+    const trimmedUrl = url.trim();
+    if (!trimmedUrl || !STATS_URL_HINT.test(trimmedUrl)) {
+      return false;
+    }
+    const parsed = tryParseUrl(trimmedUrl);
+    if (!parsed) {
+      return symbolPattern.test(trimmedUrl);
+    }
+    if (!STATS_HOST_PATTERN.test(parsed.hostname)) {
+      return false;
+    }
+    return matchesSymbol(parsed, trimmedUrl, symbol, symbolPattern);
   };
 
   const processPayload = (payload: unknown, meta: TransportMeta) => {
@@ -710,6 +829,8 @@ export const createNewsFeature = (symbol: string): NewsFeature => {
     jsonlWriter.write(JSON.stringify(payload));
   };
 
+  const symbolPattern = createSymbolBoundaryPattern(symbol);
+
   const shouldProcessUrl = (url: string): boolean => {
     if (!url) {
       return false;
@@ -724,19 +845,38 @@ export const createNewsFeature = (symbol: string): NewsFeature => {
       return true;
     }
 
+    if (
+      DORA_INSTRUMENT_PATH_PATTERN.test(trimmedUrl) &&
+      (!trimmedUrl.includes('://') || /dora\.robinhood\.com/i.test(trimmedUrl))
+    ) {
+      return true;
+    }
+
     const normalizedUrl = trimmedUrl.toLowerCase();
     if (normalizedUrl !== trimmedUrl && containsDoraInstrumentFeedHint(normalizedUrl)) {
       return true;
     }
-    if (normalizedUrl.includes(symbol.toLowerCase())) {
+    const parsed = tryParseUrl(trimmedUrl);
+    if (!parsed) {
+      if (!NEWS_URL_HINT.test(trimmedUrl)) {
+        return false;
+      }
+      return symbolPattern.test(trimmedUrl);
+    }
+
+    if (DORA_HOST_PATTERN.test(parsed.hostname) && DORA_INSTRUMENT_PATH_PATTERN.test(parsed.pathname)) {
       return true;
     }
 
-    if (NEWS_URL_HINT.test(trimmedUrl) || NEWS_URL_HINT.test(normalizedUrl)) {
+    if (!NEWS_URL_HINT.test(trimmedUrl) || !NEWS_HOST_PATTERN.test(parsed.hostname)) {
+      return false;
+    }
+
+    if (DORA_HOST_PATTERN.test(parsed.hostname)) {
       return true;
     }
 
-    return false;
+    return matchesSymbol(parsed, trimmedUrl, symbol, symbolPattern);
   };
 
   const processPayload = (payload: unknown, meta: TransportMeta) => {
@@ -867,17 +1007,29 @@ const collectOrderbookLevels = (payload: unknown, symbol: string): OrderbookLeve
   return levels;
 };
 
-const createOrderbookFeature = (symbol: string): OrderbookFeature => {
+export const createOrderbookFeature = (symbol: string): OrderbookFeature => {
   const csvPath = dataPath({ assetClass: 'stock', symbol }, 'orderbook', 'levels.csv');
   const stream = getCsvWriter(csvPath, ORDERBOOK_HEADER);
   const loggedSources = new Set<string>();
+
+  const symbolPattern = createSymbolBoundaryPattern(symbol);
 
   const shouldProcessUrl = (url: string): boolean => {
     if (!url) {
       return false;
     }
-    const upperUrl = url.toUpperCase();
-    return upperUrl.includes(symbol) || ORDERBOOK_URL_HINT.test(url);
+    const trimmedUrl = url.trim();
+    if (!trimmedUrl || !ORDERBOOK_URL_HINT.test(trimmedUrl)) {
+      return false;
+    }
+    const parsed = tryParseUrl(trimmedUrl);
+    if (!parsed) {
+      return symbolPattern.test(trimmedUrl);
+    }
+    if (!ORDERBOOK_HOST_PATTERN.test(parsed.hostname)) {
+      return false;
+    }
+    return matchesSymbol(parsed, trimmedUrl, symbol, symbolPattern);
   };
 
   const writeRows = (meta: TransportMeta, levels: readonly OrderbookLevel[]) => {
