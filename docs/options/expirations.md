@@ -28,8 +28,8 @@ vista tradicional como en **Legend**.
    `optionsLastUrl`, `optionsLastCount` y `optionsPrimaryExpiration`, lo que confirma la captura.
 5. Verifica el archivo generado ejecutando:
    ```bash
-   ls data/options/*/SPY/options/spy-chain-options-*.csv
-   tail -n 5 data/options/$(date +%Y-%m-%d)/SPY/options/spy-chain-options-*.csv
+   ls data/options/SPY/*/options/spy-chain-options-*.csv
+   tail -n 5 data/options/SPY/$(date +%Y-%m-%d)/options/spy-chain-options-*.csv
    ```
    Selecciona el archivo que corresponda a la expiración elegida. El `tail` permite inspeccionar las
    filas nuevas sin cerrar la sesión.
@@ -49,7 +49,7 @@ El nombre del archivo se forma con la regla:
   y se normalizan los separadores: `2024-01-19T09-30-00Z`.
 - Si la API no envía expiración, se usa el marcador `undated`.
 
-Puedes comprobarlo revisando los archivos dentro de `data/options/<AAAA-MM-DD>/<SIMBOLO>/` o ejecutando los
+Puedes comprobarlo revisando los archivos dentro de `data/options/<SIMBOLO>/<AAAA-MM-DD>/` o ejecutando los
 tests unitarios:
 
 ```bash
@@ -66,12 +66,12 @@ expiración.
    npm run orchestrator -- --module spx-options-chain --action now --outPrefix=spx-chain
    ```
 2. Cambia la expiración igual que en SPY y confirma que aparecen archivos bajo
-   `data/options/<fecha>/SPX/options/spx-chain-options-<expiracion>.csv`.
+   `data/options/SPX/<fecha>/options/spx-chain-options-<expiracion>.csv`.
 3. El *socket sniffer* se activa automáticamente para ambos módulos. Puedes inspeccionar la actividad
    de Legend con:
    ```bash
-   ls data/options/*/SPX/spx-chain-*.jsonl
-   tail -f data/options/$(date +%Y-%m-%d)/SPX/spx-chain-*.jsonl | grep legendOptions
+   ls data/options/SPX/*/spx-chain-*.jsonl
+   tail -f data/options/SPX/$(date +%Y-%m-%d)/spx-chain-*.jsonl | grep legendOptions
    ```
    Verás eventos `legendOptions` y `legendNews` cuando la página Legend reciba actualizaciones.
 4. Repite los pasos para SPY si necesitas validar ambas cadenas en paralelo. Usa prefijos distintos

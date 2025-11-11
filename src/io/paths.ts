@@ -94,7 +94,7 @@ const normalizeAssetPathInput = (input: AssetPathInput): { assetClass: string; s
 
 export function ensureSymbolDateDir(input?: AssetPathInput): string {
   const { assetClass, symbol, date } = normalizeAssetPathInput(input);
-  const base = path.join(process.cwd(), 'data', assetClass, date, symbol);
+  const base = path.join(process.cwd(), 'data', assetClass, symbol, date);
   ensureDirectorySync(base);
   return base;
 }

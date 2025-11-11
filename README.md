@@ -198,7 +198,7 @@ npm run clean:profile
 ## Convenciones de almacenamiento y cierre controlado
 
 - **`data/`** – Los módulos que capturan datos usan utilidades como
-  [`dataPath`](src/io/paths.ts) para guardar archivos en `data/<CLASE>/<YYYY-MM-DD>/<SÍMBOLO>/`. El
+  [`dataPath`](src/io/paths.ts) para guardar archivos en `data/<CLASE>/<SÍMBOLO>/<YYYY-MM-DD>/`. El
   orquestador imprime la ruta final cuando un *runner* devuelve un string para que puedas localizar
   rápidamente los artefactos (JSONL, CSV, gzip). Crea la carpeta si vas a versionar datos de prueba.
 - **`state/futures/known-contracts.json`** – La caché de contratos de futuros se actualiza
