@@ -256,8 +256,16 @@ async function launchBootstrapContext(options: LaunchOptions, headless: boolean)
         ensureDirectoryForFileSync(tracePath);
         await context.tracing.stop({ path: tracePath });
       }
-      await context.close();
-      await browser.close();
+      try {
+        await context.close();
+      } catch (error) {
+        console.warn('[browser] Error al cerrar el context (bootstrap):', error);
+      }
+      try {
+        await browser.close();
+      } catch (error) {
+        console.warn('[browser] Error al cerrar el browser (bootstrap):', error);
+      }
       if (!options.preserveUserDataDir) {
         await cleanupProfile(options.userDataDir);
       }
@@ -305,8 +313,16 @@ async function launchReusedContext(
         ensureDirectoryForFileSync(tracePath);
         await context.tracing.stop({ path: tracePath });
       }
-      await context.close();
-      await browser.close();
+      try {
+        await context.close();
+      } catch (error) {
+        console.warn('[browser] Error al cerrar el context (reuse):', error);
+      }
+      try {
+        await browser.close();
+      } catch (error) {
+        console.warn('[browser] Error al cerrar el browser (reuse):', error);
+      }
     },
   };
 }
@@ -347,7 +363,11 @@ async function launchPersistentContext(options: LaunchOptions, headless: boolean
         ensureDirectoryForFileSync(tracePath);
         await context.tracing.stop({ path: tracePath });
       }
-      await context.close();
+      try {
+        await context.close();
+      } catch (error) {
+        console.warn('[browser] Error al cerrar el context (persistent):', error);
+      }
       if (!options.preserveUserDataDir) {
         await cleanupProfile(options.userDataDir);
       }
