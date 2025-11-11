@@ -1390,12 +1390,17 @@ export function installFuturesRecorder(options: FuturesRecorderOptions): Futures
       return;
     }
 
-    let text: string;
-    try {
-      const body = await response.body();
-      text = body.toString('utf8');
-    } catch (error) {
-      console.warn('[futures-recorder] No se pudo leer la respuesta:', error);
+    const buffer = await response.body().catch(() => undefined as Buffer | undefined);
+    let text: string | undefined;
+
+    if (buffer && buffer.length > 0) {
+      text = buffer.toString('utf8');
+    } else {
+      text = await response.text().catch(() => undefined);
+    }
+
+    if (!text || text.trim().length === 0) {
+      console.warn('[futures-recorder] Respuesta vacía, se omite el procesamiento para:', url);
       return;
     }
 
