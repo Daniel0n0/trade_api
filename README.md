@@ -185,6 +185,20 @@ UUID is supplied.
 > the post-login UI is ready (either the home dashboard or the `/stocks/SPY` fallback view). This
 > avoids interrupting any critical requests that must run during the initial login sequence.
 
+Las rutas y dominios bloqueados se mantienen sincronizados con los interceptores automáticos y
+actualmente incluyen:
+
+- `google-analytics.com`
+- `googletagmanager.com`
+- `doubleclick.net`
+- `px.ads.linkedin.com`
+- `www.linkedin.com/px`
+- `singular.net`
+- `sentry.io`
+- `usercentrics.eu`
+- `crumbs.robinhood.com`
+- `nummus.robinhood.com`
+
 ### Resetting the Profile
 
 Normally no manual cleanup is required because the profile directory is removed at the end of each
