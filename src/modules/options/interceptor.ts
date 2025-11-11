@@ -4,7 +4,6 @@ import type { BrowserContext, Page, Response } from 'playwright';
 import { DateTime } from 'luxon';
 
 import { getCsvWriter } from '../../io/csvWriter.js';
-import { formatStrikeForFilename } from '../../io/dir.js';
 import { dataPath } from '../../io/paths.js';
 import { toCsvLine } from '../../io/row.js';
 import type { UrlMode } from '../../orchestrator/messages.js';
@@ -188,47 +187,19 @@ const formatExpirationForFilename = (expiration: string | undefined): string => 
   return expiration.replace(/[^0-9a-zA-Z-]+/g, '-');
 };
 
-const UNKNOWN_OPTION_TYPE_FILENAME = 'UNKNOWN';
-
-const sanitiseOptionTypeForFilename = (optionType: string | undefined): string => {
-  if (!optionType) {
-    return UNKNOWN_OPTION_TYPE_FILENAME;
-  }
-  const upper = optionType.trim().toUpperCase();
-  if (!upper) {
-    return UNKNOWN_OPTION_TYPE_FILENAME;
-  }
-  return upper.replace(/[^A-Z0-9]+/g, '-');
+const sanitizeLogPrefixForFilename = (logPrefix: string): string => {
+  const trimmed = logPrefix.trim();
+  const sanitized = trimmed
+    .replace(/[^0-9a-zA-Z-]+/g, '-')
+    .replace(/-{2,}/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return sanitized || 'options';
 };
 
-const buildOptionsFilename = (
-  _logPrefix: string,
-  _expiration: string | undefined,
-  optionType?: string,
-  strike?: number | string,
-): string => {
-  const typeSegment = sanitiseOptionTypeForFilename(optionType);
-  const strikeSegment = formatStrikeForFilename(strike);
-  return `${typeSegment}_strike_${strikeSegment}.csv`;
-};
-
-const computeOptionsWindowSegment = (
-  dte: number | undefined,
-  horizonDays: number | undefined,
-): string => {
-  if (horizonDays === undefined) {
-    return 'sin_horizonte';
-  }
-  if (horizonDays === 14) {
-    if (dte === undefined || dte <= horizonDays) {
-      return 'proximas2semanas';
-    }
-    return 'fuera_ventana';
-  }
-  if (dte !== undefined && dte <= horizonDays) {
-    return `horizon_${String(horizonDays)}`;
-  }
-  return `fuera_horizon_${String(horizonDays)}`;
+const buildOptionsFilename = (logPrefix: string, expiration: string | undefined): string => {
+  const prefixSegment = sanitizeLogPrefixForFilename(logPrefix);
+  const expirationSegment = formatExpirationForFilename(expiration);
+  return `${prefixSegment}-options-${expirationSegment}.csv`;
 };
 
 const normalizeExpiration = (raw: string | undefined): string | undefined => {
@@ -555,25 +526,24 @@ export function installOptionsResponseRecorder(options: OptionsRecorderOptions):
   const resolveWriter = (
     chainSymbol: string,
     expiration: string,
-    optionType: string | undefined,
-    strike: number | string | undefined,
     dte: number | undefined,
   ) => {
     const normalizedExpiration = formatExpirationForFilename(expiration);
     const symbolDir = chainSymbol || primarySymbol || 'OPTIONS';
-    const typeSegment = sanitiseOptionTypeForFilename(optionType);
-    const strikeSegment = formatStrikeForFilename(strike);
-    const windowSegment = computeOptionsWindowSegment(dte, horizonDays);
-    const key = `${symbolDir}__${windowSegment}__${normalizedExpiration}__${typeSegment}__${strikeSegment}`;
-    let entry = writerMap.get(key);
+    const isWithinHorizon =
+      horizonDays === undefined || dte === undefined || (Number.isFinite(dte) && dte <= horizonDays);
+    const fileName = buildOptionsFilename(logPrefix, expiration);
+    const targetPath = isWithinHorizon
+      ? dataPath({ assetClass: 'stock', symbol: symbolDir }, 'options', fileName)
+      : dataPath(
+          { assetClass: 'stock', symbol: symbolDir },
+          'options',
+          'in_the_future',
+          normalizedExpiration,
+          fileName,
+        );
+    let entry = writerMap.get(targetPath);
     if (!entry) {
-      const targetPath = dataPath(
-        { assetClass: 'stock', symbol: symbolDir },
-        'options',
-        windowSegment,
-        normalizedExpiration,
-        buildOptionsFilename(logPrefix, expiration, optionType, strike),
-      );
       const stream = getCsvWriter(targetPath, OPTION_HEADER_TEXT);
       const write = (line: string) => {
         stream.write(`${line}\n`);
@@ -584,7 +554,7 @@ export function installOptionsResponseRecorder(options: OptionsRecorderOptions):
         stream,
         lastTimestamp: readLastTimestamp(targetPath, OPTION_HEADER_TEXT),
       };
-      writerMap.set(key, entry);
+      writerMap.set(targetPath, entry);
     }
     return entry;
   };
@@ -677,8 +647,6 @@ export function installOptionsResponseRecorder(options: OptionsRecorderOptions):
       const writer = resolveWriter(
         targetSymbol,
         targetExpiration,
-        typeof row.type === 'string' ? row.type : undefined,
-        typeof row.strike === 'number' ? row.strike : undefined,
         typeof row.dte === 'number' ? row.dte : undefined,
       );
       const timestamp = typeof row.t === 'number' ? row.t : undefined;
@@ -731,7 +699,6 @@ export function installOptionsResponseRecorder(options: OptionsRecorderOptions):
 
 export {
   buildOptionsFilename,
-  computeOptionsWindowSegment,
   computeDte,
   collectOptionRecords,
   deriveChainSymbol,
