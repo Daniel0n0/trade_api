@@ -358,24 +358,36 @@ async function launchPersistentContext(options: LaunchOptions, headless: boolean
 const TRACKING_HOST_PATTERNS = [
   /(^|\.)google-analytics\.com$/i,
   /(^|\.)googletagmanager\.com$/i,
+  /(^|\.)doubleclick\.net$/i,
   /(^|\.)sentry\.io$/i,
+  /(^|\.)singular\.net$/i,
+  /(^|\.)px\.ads\.linkedin\.com$/i,
   /(^|\.)usercentrics\.eu$/i,
   /(^|\.)crumbs\.robinhood\.com$/i,
   /(^|\.)nummus\.robinhood\.com$/i,
 ];
 
+const TRACKING_URL_PATTERNS = [/^https:\/\/www\.linkedin\.com\/px\/?/i];
+
 const NOISY_REQUEST_PREFIXES = [
   'https://www.google.com/ccm/collect',
   'https://www.googletagmanager.com/',
+  'https://www.linkedin.com/px/',
 ];
 
 function matchesTrackingHost(url: string): boolean {
   try {
     const { hostname } = new URL(url);
-    return TRACKING_HOST_PATTERNS.some((pattern) => pattern.test(hostname));
+    if (TRACKING_HOST_PATTERNS.some((pattern) => pattern.test(hostname))) {
+      return true;
+    }
   } catch {
-    return TRACKING_HOST_PATTERNS.some((pattern) => pattern.test(url));
+    if (TRACKING_HOST_PATTERNS.some((pattern) => pattern.test(url))) {
+      return true;
+    }
   }
+
+  return TRACKING_URL_PATTERNS.some((pattern) => pattern.test(url));
 }
 
 function configureNetworkBlocking(context: BrowserContext, shouldBlock: boolean): () => void {
@@ -403,7 +415,7 @@ function configureNetworkBlocking(context: BrowserContext, shouldBlock: boolean)
   return () => {
     blockingEnabled = true;
     // eslint-disable-next-line no-console
-    console.log('[network-blocking] ACTIVADO (usercentrics/gtm/ga/sentry)');
+    console.log('[network-blocking] ACTIVADO (ga/gtm/doubleclick/linkedin/singular/sentry/usercentrics)');
   };
 }
 
