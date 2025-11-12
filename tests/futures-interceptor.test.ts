@@ -53,6 +53,34 @@ describe('futures interceptor normalizers', () => {
     assert.ok(csvLine.includes('4750.5'));
   });
 
+  it('preserves instrument id from payload when url omits instrument segment', () => {
+    const payload = {
+      results: [
+        {
+          begins_at: '2024-01-02T15:30:00Z',
+          open_price: '4750.5',
+          high_price: '4752',
+          low_price: '4748.25',
+          close_price: '4749.75',
+          volume: '123',
+          session: 'regular',
+          instrument_id: 'c4021dc3-bc5c-4252-a5b9-209572a1cb78',
+          symbol: 'MES',
+        },
+      ],
+    };
+
+    const rows = normalizeFuturesBars(payload, {
+      url: 'https://api.robinhood.com/marketdata/futures/historicals/?interval=5minute&span=day',
+      fallbackSymbol: 'mes',
+    });
+
+    assert.equal(rows.length, 1);
+    const row = rows[0];
+    assert.equal(row.instrumentId, 'c4021dc3-bc5c-4252-a5b9-209572a1cb78');
+    assert.equal(row.symbol, 'MES');
+  });
+
   it('normalizes snapshot payloads with nested data wrappers', () => {
     const payload = {
       status: 'SUCCESS',

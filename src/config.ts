@@ -104,23 +104,33 @@ export const MODULE_URL_CODES: Readonly<Record<keyof typeof DEFAULT_MODULE_URL_C
 const OPTIONAL_MODULE_URL_CODE_NAMES = [
   'stocks-generic-chart',
   'options-generic',
-  'stock-daily-stats',
-  'stock-daily-news',
-  'stock-daily-orderbook',
   'daily-stats',
   'daily-news',
   'daily-order-book',
+  'stock-daily-stats',
+  'stock-daily-news',
+  'stock-daily-orderbook',
 ] as const;
 
 type OptionalModuleUrlCodeName = (typeof OPTIONAL_MODULE_URL_CODE_NAMES)[number];
 
 const OPTIONAL_MODULE_URL_CODES = Object.freeze(
-  Object.fromEntries(
-    OPTIONAL_MODULE_URL_CODE_NAMES.flatMap((module) => {
+  (() => {
+    const entries = new Map<string, string>();
+    for (const module of OPTIONAL_MODULE_URL_CODE_NAMES) {
       const override = getModuleUrlCodeOverride(module);
-      return override ? ([[module, override]] as const) : [];
-    }),
-  ) as Record<string, string>,
+      if (!override) {
+        continue;
+      }
+
+      const canonical = canonicalizeModuleName(module);
+      if (!entries.has(canonical)) {
+        entries.set(canonical, override);
+      }
+    }
+
+    return Object.fromEntries(entries) as Record<string, string>;
+  })(),
 );
 
 export const getModuleUrlCode = (module: string): string | undefined => {
@@ -128,12 +138,14 @@ export const getModuleUrlCode = (module: string): string | undefined => {
     return undefined;
   }
 
-  if (module in MODULE_URL_CODES) {
-    return MODULE_URL_CODES[module as keyof typeof MODULE_URL_CODES];
+  const canonical = canonicalizeModuleName(module);
+
+  if (canonical in MODULE_URL_CODES) {
+    return MODULE_URL_CODES[canonical as keyof typeof MODULE_URL_CODES];
   }
 
-  if (module in OPTIONAL_MODULE_URL_CODES) {
-    return OPTIONAL_MODULE_URL_CODES[module];
+  if (canonical in OPTIONAL_MODULE_URL_CODES) {
+    return OPTIONAL_MODULE_URL_CODES[canonical];
   }
 
   return undefined;
@@ -261,31 +273,50 @@ const STOCK_DAILY_DEFAULT_SYMBOLS = ['SPY'] as const;
 
 const STOCK_DAILY_MODULE_SPECS = [
   {
-    names: ['stock-daily-stats', 'daily-stats'] as const,
+    name: 'daily-stats',
+    alias: 'stock-daily-stats',
     pageDescription: 'Estadísticas diarias para un símbolo específico',
     legendDescription: 'Estadísticas diarias de acciones',
   },
   {
-    names: ['stock-daily-news', 'daily-news'] as const,
+    name: 'daily-news',
+    alias: 'stock-daily-news',
     pageDescription: 'Noticias diarias para un símbolo específico',
     legendDescription: 'Noticias diarias de acciones',
   },
   {
-    names: ['stock-daily-orderbook', 'daily-order-book'] as const,
+    name: 'daily-order-book',
+    alias: 'stock-daily-orderbook',
     pageDescription: 'Order book diario para un símbolo específico',
     legendDescription: 'Libro de órdenes diario de acciones',
   },
-] as const;
+] as const satisfies readonly {
+  readonly name: string;
+  readonly alias?: string;
+  readonly pageDescription: string;
+  readonly legendDescription: string;
+}[];
 
-const STOCK_DAILY_PAGE_MODULES: readonly ModuleDefinition[] = STOCK_DAILY_MODULE_SPECS.flatMap(
-  ({ names, pageDescription }) =>
-    names.map((name) => ({
+const STOCK_DAILY_ALIAS_ENTRIES = STOCK_DAILY_MODULE_SPECS.flatMap(({ alias, name }) =>
+  alias ? ([[alias, name]] as const) : [],
+);
+
+export const MODULE_ALIASES: Readonly<Record<string, string>> = Object.freeze(
+  Object.fromEntries(STOCK_DAILY_ALIAS_ENTRIES) as Record<string, string>,
+);
+
+export const canonicalizeModuleName = (name: string): string =>
+  MODULE_ALIASES[name] ?? name;
+
+const STOCK_DAILY_PAGE_MODULES: readonly ModuleDefinition[] = STOCK_DAILY_MODULE_SPECS.map(
+  ({ name, pageDescription }) =>
+    ({
       name,
       description: pageDescription,
       urlTemplate: STOCK_PAGE_URL_TEMPLATE,
       defaultSymbols: STOCK_DAILY_DEFAULT_SYMBOLS,
       requiresSymbols: true,
-    } satisfies ModuleDefinition)),
+    } satisfies ModuleDefinition),
 );
 
 const BASE_MODULES: readonly ModuleDefinition[] = [
@@ -357,14 +388,14 @@ const BASE_MODULES: readonly ModuleDefinition[] = [
 
 const STOCK_DAILY_LEGEND_MODULES: readonly (ModuleDefinition & {
   readonly name: OptionalModuleUrlCodeName;
-})[] = STOCK_DAILY_MODULE_SPECS.flatMap(({ names, legendDescription }) =>
-  names.map((name) => ({
+})[] = STOCK_DAILY_MODULE_SPECS.map(({ name, legendDescription }) =>
+  ({
     name: name as OptionalModuleUrlCodeName,
     description: legendDescription,
     urlTemplate: LEGEND_URL_TEMPLATE,
     requiresUrlCode: true,
     defaultSymbols: STOCK_DAILY_DEFAULT_SYMBOLS,
-  } satisfies ModuleDefinition & { readonly name: OptionalModuleUrlCodeName })),
+  } satisfies ModuleDefinition & { readonly name: OptionalModuleUrlCodeName }),
 );
 
 const OPTIONAL_LEGEND_MODULES: readonly (ModuleDefinition & {

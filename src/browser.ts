@@ -48,6 +48,15 @@ import { defaultLaunchOptions, type LaunchOptions } from './config.js';
 const { HEADLESS, DEBUG_NETWORK } = ENV;
 const CHANNEL = process.platform === 'darwin' ? 'chrome' : undefined;
 const BROWSER_ARGS = ['--disable-blink-features=AutomationControlled'];
+const DEFAULT_LOCALE = 'en-US';
+const DEFAULT_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36';
+const DEFAULT_EXTRA_HEADERS: Record<string, string> = {
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Sec-CH-UA': '"Google Chrome";v="123", "Chromium";v="123", "Not=A?Brand";v="24"',
+  'Sec-CH-UA-Mobile': '?0',
+  'Sec-CH-UA-Platform': '"Windows"',
+};
 
 export interface BrowserResources {
   readonly context: BrowserContext;
@@ -113,7 +122,13 @@ async function launchBootstrapContext(options: LaunchOptions, headless: boolean)
     channel: CHANNEL,
     args: BROWSER_ARGS,
   });
-  const context = await browser.newContext({ storageState: undefined });
+  const context = await browser.newContext({
+    storageState: undefined,
+    bypassCSP: true,
+    userAgent: DEFAULT_USER_AGENT,
+    locale: DEFAULT_LOCALE,
+    extraHTTPHeaders: DEFAULT_EXTRA_HEADERS,
+  });
   setupRequestFailedLogging(context);
   const page = await context.newPage();
 
@@ -241,8 +256,16 @@ async function launchBootstrapContext(options: LaunchOptions, headless: boolean)
         ensureDirectoryForFileSync(tracePath);
         await context.tracing.stop({ path: tracePath });
       }
-      await context.close();
-      await browser.close();
+      try {
+        await context.close();
+      } catch (error) {
+        console.warn('[browser] Error al cerrar el context (bootstrap):', error);
+      }
+      try {
+        await browser.close();
+      } catch (error) {
+        console.warn('[browser] Error al cerrar el browser (bootstrap):', error);
+      }
       if (!options.preserveUserDataDir) {
         await cleanupProfile(options.userDataDir);
       }
@@ -264,6 +287,10 @@ async function launchReusedContext(
 
   const context = await browser.newContext({
     storageState: storageStatePath,
+    bypassCSP: true,
+    userAgent: DEFAULT_USER_AGENT,
+    locale: DEFAULT_LOCALE,
+    extraHTTPHeaders: DEFAULT_EXTRA_HEADERS,
   });
   setupRequestFailedLogging(context);
 
@@ -286,8 +313,16 @@ async function launchReusedContext(
         ensureDirectoryForFileSync(tracePath);
         await context.tracing.stop({ path: tracePath });
       }
-      await context.close();
-      await browser.close();
+      try {
+        await context.close();
+      } catch (error) {
+        console.warn('[browser] Error al cerrar el context (reuse):', error);
+      }
+      try {
+        await browser.close();
+      } catch (error) {
+        console.warn('[browser] Error al cerrar el browser (reuse):', error);
+      }
     },
   };
 }
@@ -301,6 +336,10 @@ async function launchPersistentContext(options: LaunchOptions, headless: boolean
     viewport: null,
     channel: CHANNEL,
     args: BROWSER_ARGS,
+    bypassCSP: true,
+    userAgent: DEFAULT_USER_AGENT,
+    locale: DEFAULT_LOCALE,
+    extraHTTPHeaders: DEFAULT_EXTRA_HEADERS,
   });
 
   setupRequestFailedLogging(context);
@@ -324,7 +363,11 @@ async function launchPersistentContext(options: LaunchOptions, headless: boolean
         ensureDirectoryForFileSync(tracePath);
         await context.tracing.stop({ path: tracePath });
       }
-      await context.close();
+      try {
+        await context.close();
+      } catch (error) {
+        console.warn('[browser] Error al cerrar el context (persistent):', error);
+      }
       if (!options.preserveUserDataDir) {
         await cleanupProfile(options.userDataDir);
       }
@@ -335,24 +378,36 @@ async function launchPersistentContext(options: LaunchOptions, headless: boolean
 const TRACKING_HOST_PATTERNS = [
   /(^|\.)google-analytics\.com$/i,
   /(^|\.)googletagmanager\.com$/i,
+  /(^|\.)doubleclick\.net$/i,
   /(^|\.)sentry\.io$/i,
+  /(^|\.)singular\.net$/i,
+  /(^|\.)px\.ads\.linkedin\.com$/i,
   /(^|\.)usercentrics\.eu$/i,
   /(^|\.)crumbs\.robinhood\.com$/i,
   /(^|\.)nummus\.robinhood\.com$/i,
 ];
 
+const TRACKING_URL_PATTERNS = [/^https:\/\/www\.linkedin\.com\/px\/?/i];
+
 const NOISY_REQUEST_PREFIXES = [
   'https://www.google.com/ccm/collect',
   'https://www.googletagmanager.com/',
+  'https://www.linkedin.com/px/',
 ];
 
 function matchesTrackingHost(url: string): boolean {
   try {
     const { hostname } = new URL(url);
-    return TRACKING_HOST_PATTERNS.some((pattern) => pattern.test(hostname));
+    if (TRACKING_HOST_PATTERNS.some((pattern) => pattern.test(hostname))) {
+      return true;
+    }
   } catch {
-    return TRACKING_HOST_PATTERNS.some((pattern) => pattern.test(url));
+    if (TRACKING_HOST_PATTERNS.some((pattern) => pattern.test(url))) {
+      return true;
+    }
   }
+
+  return TRACKING_URL_PATTERNS.some((pattern) => pattern.test(url));
 }
 
 function configureNetworkBlocking(context: BrowserContext, shouldBlock: boolean): () => void {
@@ -380,7 +435,7 @@ function configureNetworkBlocking(context: BrowserContext, shouldBlock: boolean)
   return () => {
     blockingEnabled = true;
     // eslint-disable-next-line no-console
-    console.log('[network-blocking] ACTIVADO (usercentrics/gtm/ga/sentry)');
+    console.log('[network-blocking] ACTIVADO (ga/gtm/doubleclick/linkedin/singular/sentry/usercentrics)');
   };
 }
 

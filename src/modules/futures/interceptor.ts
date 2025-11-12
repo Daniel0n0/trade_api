@@ -511,6 +511,14 @@ const pickIsoDate = (record: Record<string, unknown>, keys: readonly string[]): 
   return pickFromRecord(record, keys, toIsoString);
 };
 
+const pickInstrumentId = (value: unknown): string | undefined => {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  return pickString(record, ['instrument_id', 'instrumentId', 'instrument', 'id']);
+};
+
 const extractSymbol = (payload: unknown, fallbackSymbol: string | undefined): string | undefined => {
   if (payload && typeof payload === 'object') {
     const record = payload as Record<string, unknown>;
@@ -566,7 +574,11 @@ export function normalizeFuturesBars(
   const fallbackSymbol = normaliseSymbol(context.fallbackSymbol);
   const query = extractQueryParams(context.url);
   const payloadSymbol = extractSymbol(payload, fallbackSymbol);
-  const instrumentId = parseInstrumentFromUrl(context.url) ?? extractSymbol(payload, undefined);
+  const baseInstrumentId =
+    parseInstrumentFromUrl(context.url) ??
+    pickInstrumentId(payload) ??
+    toStringValue(query.get('ids') ?? undefined) ??
+    undefined;
   const interval = toStringValue((payload as Record<string, unknown> | undefined)?.interval) ?? query.get('interval') ?? undefined;
   const span = toStringValue((payload as Record<string, unknown> | undefined)?.span) ?? query.get('span') ?? undefined;
   const bounds = toStringValue((payload as Record<string, unknown> | undefined)?.bounds) ?? query.get('bounds') ?? undefined;
@@ -599,6 +611,9 @@ export function normalizeFuturesBars(
     const volume = toNumber(record.volume ?? record.volume_avg ?? record.volumeAvg);
     const session = toStringValue(record.session ?? record.market_session ?? record.marketSession)?.toUpperCase();
 
+    const rowInstrumentId =
+      pickInstrumentId(record) ?? baseInstrumentId ?? rowSymbol ?? fallbackSymbol ?? undefined;
+
     const row: FuturesCsvRow<typeof FUTURES_BARS_HEADER> = {
       beginsAt,
       open,
@@ -608,7 +623,7 @@ export function normalizeFuturesBars(
       volume,
       session,
       symbol: rowSymbol,
-      instrumentId,
+      instrumentId: rowInstrumentId,
       interval: interval ?? undefined,
       span: span ?? undefined,
       bounds: bounds ?? undefined,
@@ -1390,12 +1405,17 @@ export function installFuturesRecorder(options: FuturesRecorderOptions): Futures
       return;
     }
 
-    let text: string;
-    try {
-      const body = await response.body();
-      text = body.toString('utf8');
-    } catch (error) {
-      console.warn('[futures-recorder] No se pudo leer la respuesta:', error);
+    const buffer = await response.body().catch(() => undefined as Buffer | undefined);
+    let text: string | undefined;
+
+    if (buffer && buffer.length > 0) {
+      text = buffer.toString('utf8');
+    } else {
+      text = await response.text().catch(() => undefined);
+    }
+
+    if (!text || text.trim().length === 0) {
+      console.warn('[futures-recorder] Respuesta vacía, se omite el procesamiento para:', url);
       return;
     }
 
