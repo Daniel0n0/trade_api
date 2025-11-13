@@ -219,6 +219,12 @@ const logOrderIssue = (
   writeGeneral(entry);
 };
 
+type RawOrdersGroup = {
+  readonly orders: unknown[];
+  readonly symbol: string;
+  readonly date: string;
+};
+
 const persistOrdersPayload = async (
   payload: OrdersPayload,
   writeGeneral: (entry: GeneralLogEntry) => void,
@@ -228,9 +234,8 @@ const persistOrdersPayload = async (
     return;
   }
 
-  const rawContent = JSON.stringify(payload, null, 2);
   const rawTimestamp = Date.now();
-  const rawPaths = new Set<string>();
+  const rawGroupsByPath = new Map<string, RawOrdersGroup>();
   const orderLinesByPath = new Map<string, string[]>();
   const legRowsByPath = new Map<string, LegsRow[]>();
   const executionRowsByPath = new Map<string, ExecutionsRow[]>();
@@ -263,7 +268,12 @@ const persistOrdersPayload = async (
     appendValues(orderLinesByPath, ordersPath, [JSON.stringify(candidate)]);
 
     const rawPath = dataPath(baseInput, 'options', 'raw', `${RAW_FILE_PREFIX}${rawTimestamp}.json`);
-    rawPaths.add(rawPath);
+    const existingRawGroup = rawGroupsByPath.get(rawPath);
+    if (existingRawGroup) {
+      existingRawGroup.orders.push(candidate);
+    } else {
+      rawGroupsByPath.set(rawPath, { orders: [candidate], symbol: symbolDir, date: orderDate });
+    }
 
     const legsPath = dataPath(baseInput, 'options', 'legs.csv');
     appendValues(legRowsByPath, legsPath, buildLegRows(orderRecord));
@@ -279,8 +289,16 @@ const persistOrdersPayload = async (
   }
 
   const writePromises: Promise<unknown>[] = [];
-  for (const rawPath of rawPaths) {
-    writePromises.push(writeFile(rawPath, rawContent));
+  for (const [rawPath, group] of rawGroupsByPath.entries()) {
+    const filteredPayload: OrdersPayload = { ...payload, results: group.orders };
+    writePromises.push(writeFile(rawPath, JSON.stringify(filteredPayload, null, 2)));
+    writeGeneral({
+      kind: 'options-orders-raw-partition',
+      path: rawPath,
+      symbol: group.symbol,
+      date: group.date,
+      orderCount: group.orders.length,
+    });
   }
   for (const [filePath, lines] of orderLinesByPath.entries()) {
     writePromises.push(appendFile(filePath, `${lines.join('\n')}\n`));
