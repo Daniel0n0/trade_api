@@ -1,9 +1,10 @@
-import { appendFile, writeFile } from 'node:fs/promises';
+import { writeFile } from 'node:fs/promises';
 import type { APIResponse, Page, Response } from 'playwright';
 
 import { RotatingWriter } from '../../modulos/rotating-writer.js';
 import { dataPath } from '../../io/paths.js';
 import { upsertCsv, type CsvRowInput } from '../../io/upsertCsv.js';
+import { upsertJsonl } from '../../io/upsertJsonl.js';
 
 const JSON_MIME_PATTERN = /application\/json/i;
 
@@ -225,6 +226,13 @@ type RawOrdersGroup = {
   readonly date: string;
 };
 
+type OrderEntry = {
+  readonly orderId: string;
+  readonly symbol: string;
+  readonly date: string;
+  readonly line: string;
+};
+
 const persistOrdersPayload = async (
   payload: OrdersPayload,
   writeGeneral: (entry: GeneralLogEntry) => void,
@@ -236,7 +244,7 @@ const persistOrdersPayload = async (
 
   const rawTimestamp = Date.now();
   const rawGroupsByPath = new Map<string, RawOrdersGroup>();
-  const orderLinesByPath = new Map<string, string[]>();
+  const orderEntriesByPath = new Map<string, OrderEntry[]>();
   const legRowsByPath = new Map<string, LegsRow[]>();
   const executionRowsByPath = new Map<string, ExecutionsRow[]>();
   const feeRowsByPath = new Map<string, FeesRow[]>();
@@ -265,7 +273,9 @@ const persistOrdersPayload = async (
 
     const baseInput = { assetClass: 'stock', symbol: symbolDir, date: orderDate } as const;
     const ordersPath = dataPath(baseInput, 'options', 'orders.jsonl');
-    appendValues(orderLinesByPath, ordersPath, [JSON.stringify(candidate)]);
+    appendValues(orderEntriesByPath, ordersPath, [
+      { orderId, symbol: symbolDir, date: orderDate, line: JSON.stringify(candidate) },
+    ]);
 
     const rawPath = dataPath(baseInput, 'options', 'raw', `${RAW_FILE_PREFIX}${rawTimestamp}.json`);
     const existingRawGroup = rawGroupsByPath.get(rawPath);
@@ -300,8 +310,29 @@ const persistOrdersPayload = async (
       orderCount: group.orders.length,
     });
   }
-  for (const [filePath, lines] of orderLinesByPath.entries()) {
-    writePromises.push(appendFile(filePath, `${lines.join('\n')}\n`));
+  for (const [filePath, entries] of orderEntriesByPath.entries()) {
+    writePromises.push(
+      (async () => {
+        const operations = await upsertJsonl(
+          filePath,
+          entries.map((entry) => ({ key: entry.orderId, value: entry.line })),
+        );
+        for (const entry of entries) {
+          const action = operations.get(entry.orderId);
+          if (!action) {
+            continue;
+          }
+          writeGeneral({
+            kind: 'options-orders-order-write',
+            path: filePath,
+            symbol: entry.symbol,
+            date: entry.date,
+            orderId: entry.orderId,
+            action,
+          });
+        }
+      })(),
+    );
   }
 
   if (writePromises.length) {
@@ -623,4 +654,8 @@ export const installOptionsOrdersRecorder = (
   };
 
   return { close };
+};
+
+export const __test__ = {
+  persistOrdersPayload,
 };
