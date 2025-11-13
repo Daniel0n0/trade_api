@@ -43,7 +43,7 @@ Captura las respuestas HTTP de Robinhood Options desde Playwright, normaliza los
     - `close(): Promise<void>` detiene el listener y cierra streams abiertos.
     - `getPrimaryExpiration(): string | undefined` exp actual inferida.
   - **Errores**: No lanza directamente; atrapa errores de lectura JSON y los reporta vía `console.warn` sin interrumpir el flujo.
-  - **Side-effects**: Escritura de CSV en disco (`data/stock/<SYMBOL>/<DATE>/options/...`), logs en `console.warn`.
+  - **Side-effects**: Escritura de CSV en disco (`data/stocks/<SYMBOL>/<DATE>/options/...`), logs en `console.warn`.
 - **Ejemplo de uso**:
   ```ts
   import { installOptionsResponseRecorder } from '../src/modules/options/interceptor.js';
@@ -82,7 +82,7 @@ Captura las respuestas HTTP de Robinhood Options desde Playwright, normaliza los
   * Eventos `BrowserContext.on('response')` (Playwright) para `xhr/fetch`.
   * Endpoints Robinhood `marketdata/options`, `options/`, `option_marketdata`, `options_chains`.
 * **Escribe en**:
-  * `data/stock/<SYMBOL>/<DATE>/options/<logPrefix>-options-<expiration>.csv`
+  * `data/stocks/<SYMBOL>/<DATE>/options/<logPrefix>-options-<expiration>.csv`
   * `.../options/in_the_future/<expiration>/<logPrefix>-options-<expiration>.csv` cuando `dte > horizonDays`.
 * **Depende de**:
   * `src/io/csvWriter.ts` (gestiona streams y encabezados).

@@ -41,9 +41,20 @@ const currentDateFolder = (): string => {
   return `${year}-${month}-${day}`;
 };
 
+const ASSET_CLASS_ALIASES: Record<string, string> = {
+  stock: 'stocks',
+  stocks: 'stocks',
+  equity: 'stocks',
+  option: 'stocks',
+  options: 'stocks',
+  future: 'futures',
+  futures: 'futures',
+};
+
 const sanitizeAssetClass = (input: string | undefined): string => {
-  const sanitized = sanitizeSegment(input);
-  return sanitized.toLowerCase() || DEFAULT_ASSET_CLASS;
+  const sanitized = sanitizeSegment(input).toLowerCase();
+  const normalized = sanitized || DEFAULT_ASSET_CLASS;
+  return ASSET_CLASS_ALIASES[normalized] ?? normalized;
 };
 
 const sanitizeDateSegment = (input: string | Date | undefined): string => {

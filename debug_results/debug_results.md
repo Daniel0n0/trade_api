@@ -121,7 +121,7 @@ type OrderUpdate = {
   * 1 línea por evento; sin compresión.
 
 > Mantén **separado** el flujo de velas (vendrá del WS de Legend o de HTTP) en:
-> `data/stock/SPY/<YYYY-MM-DD>/{1s,1m,5m,15m,1h,1d}.csv` (como ya definimos antes).
+> `data/stocks/SPY/<YYYY-MM-DD>/{1s,1m,5m,15m,1h,1d}.csv` (como ya definimos antes).
 
 ---
 
