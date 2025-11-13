@@ -1,5 +1,6 @@
+import { createWriteStream, existsSync, statSync, type WriteStream } from 'node:fs';
 import path from 'node:path';
-import type { Frame, Page } from 'playwright';
+import type { Frame, Page, WebSocket } from 'playwright';
 import { DateTime } from 'luxon';
 
 import { RotatingWriter, type RotatePolicy } from './rotating-writer.js';
@@ -30,6 +31,29 @@ import { isHookableFrame } from '../utils/origins.js';
 type Serializable = Record<string, unknown>;
 
 const DEFAULT_PREFIX = 'socket';
+const ROBINHOOD_STREAMING_WS_PREFIX = 'wss://api-streaming.robinhood.com/wss/connect';
+const WS_METRICS_HEADER = 'timestamp,url,opCode,server_ts_ms,skew_ms';
+const HEARTBEAT_OPCODES = new Set([9, 10]);
+const ORDER_FIELD_KEYS = [
+  'order_id',
+  'orderId',
+  'orderID',
+  'id',
+  'state',
+  'asset_class',
+  'assetClass',
+  'symbol',
+  'side',
+  'quantity',
+  'qty',
+  'cumulative_quantity',
+  'filled_quantity',
+  'average_price',
+  'price',
+  'trigger_price',
+];
+
+type WsFrameDirection = 'received' | 'sent';
 const HEARTBEAT_INTERVAL_MS = 5_000;
 const STATS_SNAPSHOT_INTERVAL_MS = HEARTBEAT_INTERVAL_MS;
 const HEALTH_INTERVAL_MS = 30_000;
@@ -108,6 +132,213 @@ const AGGREGATION_FILE_SEGMENTS: Record<AggregationTimeframeKey, string> = {
 };
 
 const DEFAULT_TIMEFRAMES: readonly AggregationTimeframeKey[] = ['1sec', '1min', '5min', '15min', '1h', '1d'];
+
+type OrderSummary = {
+  orderId?: string;
+  state?: string;
+  assetClass?: string;
+  symbol?: string;
+  side?: string;
+  quantity?: number;
+  filledQuantity?: number;
+  averagePrice?: number;
+  triggerPrice?: number;
+};
+
+const safeJsonParse = (text: string): unknown | undefined => {
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    void error;
+    return undefined;
+  }
+};
+
+const toFiniteNumber = (value: unknown): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    const parsed = Number(trimmed);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+};
+
+const normalizeText = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
+};
+
+const decodeBase64 = (input: string): string | undefined => {
+  try {
+    return Buffer.from(input, 'base64').toString('utf8');
+  } catch (error) {
+    void error;
+    return undefined;
+  }
+};
+
+const resolveServerTimestamp = (value: unknown): number | undefined => {
+  const direct = toFiniteNumber(value);
+  if (typeof direct === 'number') {
+    return direct;
+  }
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const candidates: readonly unknown[] = [
+    record.serverTsMs,
+    record.server_ts_ms,
+    record.server_ts,
+    record.ts,
+    record.timestamp,
+  ];
+  for (const candidate of candidates) {
+    const resolved = toFiniteNumber(candidate);
+    if (typeof resolved === 'number') {
+      return resolved;
+    }
+  }
+  return undefined;
+};
+
+const resolveHeartbeatPayload = (
+  payload: unknown,
+): { opCode: number; serverTsMs: number } | null => {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+  const record = payload as Record<string, unknown>;
+  const opCandidate = record.opCode ?? record.opcode;
+  const opCode = toFiniteNumber(opCandidate);
+  if (typeof opCode !== 'number' || !HEARTBEAT_OPCODES.has(opCode)) {
+    return null;
+  }
+  const dataText = typeof record.data === 'string' ? record.data : undefined;
+  if (!dataText) {
+    return null;
+  }
+  const decoded = decodeBase64(dataText);
+  if (!decoded) {
+    return null;
+  }
+  const decodedValue = safeJsonParse(decoded) ?? decoded;
+  const serverTsMs = resolveServerTimestamp(decodedValue);
+  if (typeof serverTsMs !== 'number') {
+    return null;
+  }
+  return { opCode, serverTsMs };
+};
+
+const escapeCsvValue = (value: unknown): string => {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  const text = String(value);
+  if (/[",\n]/.test(text)) {
+    return `"${text.replace(/"/g, '""')}"`;
+  }
+  return text;
+};
+
+const looksLikeOrderRecord = (record: Record<string, unknown>): boolean => {
+  let score = 0;
+  let hasPrimaryKey = false;
+  for (const key of ORDER_FIELD_KEYS) {
+    if (Object.prototype.hasOwnProperty.call(record, key)) {
+      score += 1;
+      if (key === 'order_id' || key === 'orderId' || key === 'orderID' || key === 'id' || key === 'symbol') {
+        hasPrimaryKey = true;
+      }
+    }
+  }
+  return hasPrimaryKey && score >= 3;
+};
+
+const collectOrderRecords = (value: unknown): Record<string, unknown>[] => {
+  const results: Record<string, unknown>[] = [];
+  const visit = (node: unknown): void => {
+    if (!node) {
+      return;
+    }
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        visit(item);
+      }
+      return;
+    }
+    if (typeof node !== 'object') {
+      return;
+    }
+    const record = node as Record<string, unknown>;
+    if (looksLikeOrderRecord(record)) {
+      results.push(record);
+    }
+    for (const value of Object.values(record)) {
+      if (value && typeof value === 'object') {
+        visit(value);
+      }
+    }
+  };
+  visit(value);
+  return results;
+};
+
+const buildOrderSummary = (record: Record<string, unknown>): OrderSummary | null => {
+  const summary: OrderSummary = {};
+  const orderId =
+    normalizeText(record.order_id) ||
+    normalizeText(record.orderId) ||
+    normalizeText(record.orderID) ||
+    normalizeText(record.id);
+  if (orderId) {
+    summary.orderId = orderId;
+  }
+  const state = normalizeText(record.state);
+  if (state) {
+    summary.state = state;
+  }
+  const assetClass = normalizeText(record.asset_class) || normalizeText(record.assetClass);
+  if (assetClass) {
+    summary.assetClass = assetClass;
+  }
+  const symbol = normalizeText(record.symbol);
+  if (symbol) {
+    summary.symbol = symbol;
+  }
+  const side = normalizeText(record.side);
+  if (side) {
+    summary.side = side;
+  }
+  const quantity = toFiniteNumber(record.quantity ?? record.qty);
+  if (typeof quantity === 'number') {
+    summary.quantity = quantity;
+  }
+  const filledQuantity = toFiniteNumber(record.filled_quantity ?? record.cumulative_quantity);
+  if (typeof filledQuantity === 'number') {
+    summary.filledQuantity = filledQuantity;
+  }
+  const averagePrice = toFiniteNumber(record.average_price ?? record.price);
+  if (typeof averagePrice === 'number') {
+    summary.averagePrice = averagePrice;
+  }
+  const triggerPrice = toFiniteNumber(record.trigger_price);
+  if (typeof triggerPrice === 'number') {
+    summary.triggerPrice = triggerPrice;
+  }
+  return Object.keys(summary).length ? summary : null;
+};
 
 const AGGREGATION_TIMEFRAME_ALIASES: Record<string, AggregationTimeframeKey> = {
   '1s': '1sec',
@@ -434,6 +665,195 @@ async function exposeLogger(
     const payload: LogEntry = { ts: Date.now(), ...entry };
     generalWriter.write(JSON.stringify(payload));
   };
+
+  const websocketCleanupMap = new Map<WebSocket, () => void>();
+  let websocketMetricsStream: WriteStream | undefined;
+  const orderStreamsByDay = new Map<string, WriteStream>();
+
+  const ensureWebsocketMetricsStream = (): WriteStream => {
+    if (!websocketMetricsStream) {
+      const metricsFile = path.join(
+        process.cwd(),
+        'data',
+        '_metrics',
+        'ws',
+        'robinhood-streaming.csv',
+      );
+      ensureDirectoryForFileSync(metricsFile);
+      const needsHeader = !existsSync(metricsFile) || statSync(metricsFile).size === 0;
+      websocketMetricsStream = createWriteStream(metricsFile, { flags: 'a' });
+      if (needsHeader) {
+        websocketMetricsStream.write(`${WS_METRICS_HEADER}\n`);
+      }
+    }
+    return websocketMetricsStream;
+  };
+
+  const closeWebsocketMetricsStream = () => {
+    if (websocketMetricsStream) {
+      websocketMetricsStream.close();
+      websocketMetricsStream = undefined;
+    }
+  };
+
+  const ensureOrderStream = (day: string): WriteStream => {
+    let stream = orderStreamsByDay.get(day);
+    if (!stream) {
+      const filePath = path.join(process.cwd(), 'data', '_raw', 'orders', `${day}.jsonl`);
+      ensureDirectoryForFileSync(filePath);
+      stream = createWriteStream(filePath, { flags: 'a' });
+      orderStreamsByDay.set(day, stream);
+    }
+    return stream;
+  };
+
+  const closeOrderStreams = () => {
+    for (const stream of orderStreamsByDay.values()) {
+      stream.close();
+    }
+    orderStreamsByDay.clear();
+  };
+
+  const persistOrderPayload = (params: {
+    url: string;
+    direction: WsFrameDirection;
+    payload: unknown;
+    text: string;
+  }) => {
+    const day = DateTime.utc().toISODate();
+    if (!day) {
+      return;
+    }
+    const stream = ensureOrderStream(day);
+    const entry: Record<string, unknown> = {
+      ts: Date.now(),
+      url: params.url,
+      direction: params.direction,
+      payload: params.payload,
+      text: params.text,
+    };
+    stream.write(`${JSON.stringify(entry)}\n`);
+  };
+
+  const handleOrderPayload = (params: {
+    url: string;
+    direction: WsFrameDirection;
+    payload: unknown;
+    text: string;
+  }) => {
+    const candidates = collectOrderRecords(params.payload);
+    if (!candidates.length) {
+      return;
+    }
+    const summaries = candidates
+      .map((record) => buildOrderSummary(record))
+      .filter((summary): summary is OrderSummary => summary !== null);
+    if (!summaries.length) {
+      return;
+    }
+    writeGeneral({
+      kind: 'order-event',
+      url: params.url,
+      direction: params.direction,
+      orders: summaries,
+    });
+    persistOrderPayload(params);
+  };
+
+  const resolveFrameText = (payload: string | Buffer | undefined): string | null => {
+    if (typeof payload === 'string') {
+      return payload;
+    }
+    if (Buffer.isBuffer(payload)) {
+      return payload.toString('utf8');
+    }
+    return null;
+  };
+
+  const processWebSocketFrame = (params: {
+    url: string;
+    direction: WsFrameDirection;
+    payload?: string | Buffer;
+  }) => {
+    const text = resolveFrameText(params.payload);
+    if (!text) {
+      return;
+    }
+    const parsed = safeJsonParse(text);
+    if (parsed === undefined) {
+      return;
+    }
+    const heartbeat = resolveHeartbeatPayload(parsed);
+    if (heartbeat) {
+      const now = Date.now();
+      const skewMs = now - heartbeat.serverTsMs;
+      writeGeneral({
+        kind: 'ws-keepalive',
+        url: params.url,
+        opCode: heartbeat.opCode,
+        serverTsMs: heartbeat.serverTsMs,
+        skewMs,
+      });
+      const metricsStream = ensureWebsocketMetricsStream();
+      const row = [
+        escapeCsvValue(now),
+        escapeCsvValue(params.url),
+        escapeCsvValue(heartbeat.opCode),
+        escapeCsvValue(heartbeat.serverTsMs),
+        escapeCsvValue(skewMs),
+      ].join(',');
+      metricsStream.write(`${row}\n`);
+    }
+    handleOrderPayload({
+      url: params.url,
+      direction: params.direction,
+      payload: parsed,
+      text,
+    });
+  };
+
+  const cleanupWebSocket = (socket: WebSocket) => {
+    const cleanup = websocketCleanupMap.get(socket);
+    if (cleanup) {
+      try {
+        cleanup();
+      } finally {
+        websocketCleanupMap.delete(socket);
+      }
+    }
+  };
+
+  const cleanupAllWebSockets = () => {
+    for (const socket of [...websocketCleanupMap.keys()]) {
+      cleanupWebSocket(socket);
+    }
+  };
+
+  const handleWebsocket = (socket: WebSocket) => {
+    const url = socket.url();
+    if (!url.startsWith(ROBINHOOD_STREAMING_WS_PREFIX)) {
+      return;
+    }
+    const onFrameReceived = (frame: { payload: string | Buffer }) => {
+      processWebSocketFrame({ url, direction: 'received', payload: frame.payload });
+    };
+    const onFrameSent = (frame: { payload: string | Buffer }) => {
+      processWebSocketFrame({ url, direction: 'sent', payload: frame.payload });
+    };
+    const onClose = () => {
+      cleanupWebSocket(socket);
+    };
+    socket.on('framereceived', onFrameReceived);
+    socket.on('framesent', onFrameSent);
+    socket.on('close', onClose);
+    websocketCleanupMap.set(socket, () => {
+      socket.off('framereceived', onFrameReceived);
+      socket.off('framesent', onFrameSent);
+      socket.off('close', onClose);
+    });
+  };
+
+  page.on('websocket', handleWebsocket);
 
   const counts: StatsCounts = {
     ch1: 0,
@@ -973,6 +1393,14 @@ async function exposeLogger(
       void error;
     }
 
+    try {
+      page.off('websocket', handleWebsocket);
+    } catch (error) {
+      void error;
+    }
+    cleanupAllWebSockets();
+    closeWebsocketMetricsStream();
+    closeOrderStreams();
     generalWriter.close();
     writeStatsSnapshot(Date.now(), true);
     legendOptionsWriter.close();
