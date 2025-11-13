@@ -72,6 +72,21 @@ Para instrucciones paso a paso sobre cómo cambiar expiraciones, monitorear las 
 y validar los archivos generados para SPY/SPX (incluyendo Legend), consulta
 [`docs/options/expirations.md`](docs/options/expirations.md).
 
+#### Captura diaria de greeks
+
+El runner `daily-greeks` habilita la escritura de `greeks.csv` y `greeks.jsonl`
+en `data/stocks/<SIMBOLO>/<AAAA-MM-DD>/`, reutilizando la misma carpeta que el
+resto del estado diario. Ejecuta, por ejemplo:
+
+```bash
+npx trade-api start daily-greeks now --symbols SPY --url-code <LEGEND_UUID>
+```
+
+- `greeks.csv` agrupa `chainSymbol`, `occSymbol`, `expirationDate`,
+  `strikePrice`, `delta`, `gamma`, `theta`, `vega`, etc.
+- `greeks.jsonl` conserva cada evento Legend/API con la metadata del transporte
+  (`http` o `ws`) para analizarlo después o reconstruir sesiones Legend.
+
 ### Environment flags
 
 Runtime behaviour can be adjusted with environment variables stored in `.env` and overridden in

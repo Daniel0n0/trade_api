@@ -5,6 +5,7 @@ import { runOptionsGenericModule } from './options-generic.js';
 import { runSpy5m1mModule } from './spy-5m-1m.js';
 import { runSpyOptionsChainModule } from './spy-options-chain.js';
 import { runSpxOptionsChainModule } from './spx-options-chain.js';
+import { runStockDailyGreeksModule } from './stock-daily-greeks.js';
 import { runStockDailyNewsModule } from './stock-daily-news.js';
 import { runStockDailyOrderbookModule } from './stock-daily-orderbook.js';
 import { runStockDailyStatsModule } from './stock-daily-stats.js';
@@ -19,9 +20,11 @@ export const MODULE_RUNNERS: Record<string, ModuleRunner> = {
   'stock-daily-stats': runStockDailyStatsModule,
   'stock-daily-news': runStockDailyNewsModule,
   'stock-daily-orderbook': runStockDailyOrderbookModule,
+  'stock-daily-greeks': runStockDailyGreeksModule,
   'daily-stats': runStockDailyStatsModule,
   'daily-news': runStockDailyNewsModule,
   'daily-order-book': runStockDailyOrderbookModule,
+  'daily-greeks': runStockDailyGreeksModule,
   'futures-overview': runFuturesOverviewModule,
   'futures-detail': runFuturesDetailModule,
 };
