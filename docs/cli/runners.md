@@ -39,7 +39,8 @@ npx trade-api start spy-5m-1m now \
 - El comando imprime el `ctxId` asignado al runner y el prefijo de archivos
   sugerido (`spy-5m-1m-now-YYYYMMDD-HHMMSS-SPY`).
 - Los *logs* del sniffer se guardan bajo `logs/spy-5m-1m-socket-sniffer.log` y
-  las capturas en `data/stocks/SPY/<fecha>/`.
+  las capturas en `data/stocks/SPY/<fecha>/` siguiendo la estructura de
+  `raw.jsonl`, `quotes.csv`, `1s.csv`, `1m.csv`, etc.
 
 ## Runner `spy-options-chain`
 
@@ -121,8 +122,9 @@ npx trade-api start stocks-generic-chart now \
   --url-code <LEGEND_UUID>
 ```
 
-- Los archivos se almacenan en `data/stocks/<SIMBOLO>/<fecha>/bars/` con CSV rotados por
-  timeframe (`1min`, `5min`, etc.) y los *logs* en `logs/stocks-generic-chart-*.log`.
+- Los archivos se almacenan en `data/stocks/<SIMBOLO>/<fecha>/` con CSV fijos por
+  timeframe (`1s.csv`, `1m.csv`, `5m.csv`, etc.) y los *logs* en
+  `logs/stocks-generic-chart-*.log`.
 - Cambia `--url-code` para reutilizar tus propios layouts Legend guardados. Asigna el valor a
   `TRADE_API_URL_CODE_STOCKS_GENERIC_CHART` si deseas reutilizarlo sin pasar la bandera cada vez.
 - Omite `--start`/`--end` si deseas capturar en tiempo real sin recorte.

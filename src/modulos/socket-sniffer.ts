@@ -22,7 +22,7 @@ import {
   toCsvLine,
   toMsUtc,
 } from '../io/row.js';
-import { dataPath } from '../io/paths.js';
+import { dataPath, ensureSymbolDateDir } from '../io/paths.js';
 import { ensureDirectoryForFileSync } from '../io/dir.js';
 import { BaseEvent } from '../io/schemas.js';
 import { extractFeed, MAX_WS_ENTRY_TEXT_LENGTH } from '../utils/payload.js';
@@ -123,10 +123,10 @@ const AGGREGATION_SPECS = {
 type AggregationTimeframeKey = keyof typeof AGGREGATION_SPECS;
 
 const AGGREGATION_FILE_SEGMENTS: Record<AggregationTimeframeKey, string> = {
-  '1sec': '1sec',
-  '1min': '1min',
-  '5min': '5min',
-  '15min': '15min',
+  '1sec': '1s',
+  '1min': '1m',
+  '5min': '5m',
+  '15min': '15m',
   '1h': '1h',
   '1d': '1d',
 };
@@ -499,6 +499,7 @@ export type SocketSnifferOptions = {
   readonly logPrefix?: string;
   readonly start?: string;
   readonly end?: string;
+  readonly assetClassHint?: string;
 };
 
 export type SocketSnifferHandle = {
@@ -645,8 +646,9 @@ function normaliseSymbols(input: readonly string[]): readonly string[] {
 async function exposeLogger(
   page: Page,
   logPath: string,
-  perChannelPrefix: string,
+  symbols: readonly string[] = [],
   meta: { start?: string; end?: string } = {},
+  assetClassHint?: string,
 ): Promise<() => void> {
   const baseDir = path.dirname(logPath);
   const baseName = path.basename(logPath, '.jsonl');
@@ -657,8 +659,6 @@ async function exposeLogger(
     ROTATE_POLICY,
     CSV_HEADER_TEXT.stats,
   );
-  const legendOptionsWriter = new RotatingWriter(path.join(baseDir, 'options.jsonl'), ROTATE_POLICY);
-  const newsWriter = new RotatingWriter(path.join(baseDir, 'news.jsonl'), ROTATE_POLICY);
   const VERBOSE = false; // Cambiado a false para reducir ruido por defecto
 
   const writeGeneral = (entry: Serializable) => {
@@ -936,16 +936,176 @@ async function exposeLogger(
     }
   };
 
-  const channelWriters = new Map<string, RotatingWriter>();
   let closed = false;
-  const getChannelWriter = (channel: number, label: string) => {
-    const key = `ch${channel}-${label}`;
-    let writer = channelWriters.get(key);
-    if (!writer) {
-      writer = new RotatingWriter(path.join(baseDir, `${perChannelPrefix}-${key}.jsonl`), ROTATE_POLICY);
-      channelWriters.set(key, writer);
+
+  const normalizedSymbols = symbols.length > 0 ? symbols : ['GENERAL'];
+  const fallbackSymbol = normalizedSymbols[0] ?? 'GENERAL';
+
+  const normalizeSymbolKey = (input?: string | null): string | undefined => {
+    if (!input) {
+      return undefined;
     }
-    return writer;
+    const trimmed = input.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    const base = trimmed.includes('{') ? trimmed.slice(0, trimmed.indexOf('{')) : trimmed;
+    const sanitized = base.replace(/[^0-9A-Za-z._/-]+/g, '').toUpperCase();
+    return sanitized || undefined;
+  };
+
+  const resolveSymbolKey = (candidate?: string | null): string => normalizeSymbolKey(candidate) ?? fallbackSymbol;
+
+  const normalizeAssetClassHint = (hint: string | undefined): string | undefined => {
+    if (!hint) {
+      return undefined;
+    }
+    const trimmed = hint.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    const lowered = trimmed.toLowerCase();
+    if (lowered.startsWith('future')) {
+      return 'futures';
+    }
+    if (lowered.startsWith('stock') || lowered.startsWith('equity')) {
+      return 'stock';
+    }
+    return lowered;
+  };
+
+  const FUTURES_MONTH_PATTERN = /[FGHJKMNQUVXZ]\d{1,2}$/;
+  const looksLikeFuturesSymbol = (symbol: string): boolean => {
+    const sanitized = symbol.replace(/[^0-9A-Za-z]/g, '').toUpperCase();
+    if (sanitized.length < 3) {
+      return false;
+    }
+    return FUTURES_MONTH_PATTERN.test(sanitized);
+  };
+
+  const assetClassOverride = normalizeAssetClassHint(assetClassHint);
+  const resolveAssetClassForSymbol = (symbol: string): string => {
+    if (assetClassOverride) {
+      return assetClassOverride;
+    }
+    return looksLikeFuturesSymbol(symbol) ? 'futures' : 'stock';
+  };
+
+  type CandleWriterEntry = { writer: WriteStream; lastTimestamp?: number; segment: string };
+  type SymbolDataContext = {
+    readonly symbol: string;
+    readonly assetClass: string;
+    readonly date: string;
+    readonly baseDir: string;
+    readonly rawWriter: WriteStream;
+    readonly quoteWriter: WriteStream;
+    readonly legendOptionsWriter: WriteStream;
+    readonly newsWriter: WriteStream;
+    readonly candleWriters: Map<string, CandleWriterEntry>;
+  };
+
+  const createFileWriter = (filePath: string, header?: string): WriteStream => {
+    const exists = existsSync(filePath);
+    ensureDirectoryForFileSync(filePath);
+    const stream = createWriteStream(filePath, { flags: 'a' });
+    if (!exists && header) {
+      stream.write(`${header}\n`);
+    }
+    return stream;
+  };
+
+  const closeStream = (stream: WriteStream | undefined) => {
+    if (!stream) {
+      return;
+    }
+    const state = stream as WriteStream & { closed?: boolean };
+    if (state.destroyed || state.closed) {
+      return;
+    }
+    stream.end();
+  };
+
+  let activeDate = DateTime.utc().toFormat('yyyy-MM-dd');
+  const symbolContexts = new Map<string, SymbolDataContext>();
+
+  const createSymbolContext = (symbol: string): SymbolDataContext => {
+    const assetClass = resolveAssetClassForSymbol(symbol);
+    const baseDir = ensureSymbolDateDir({ assetClass, symbol, date: activeDate });
+    writeGeneral({ kind: 'data-dir', symbol, assetClass, date: activeDate, baseDir });
+    const rawWriter = createFileWriter(dataPath({ assetClass, symbol, date: activeDate }, 'raw.jsonl'));
+    const quoteWriter = createFileWriter(
+      dataPath({ assetClass, symbol, date: activeDate }, 'quotes.csv'),
+      CSV_HEADER_TEXT.quote,
+    );
+    const legendOptionsWriter = createFileWriter(
+      dataPath({ assetClass, symbol, date: activeDate }, 'options.jsonl'),
+    );
+    const newsWriter = createFileWriter(dataPath({ assetClass, symbol, date: activeDate }, 'news.jsonl'));
+    return {
+      symbol,
+      assetClass,
+      date: activeDate,
+      baseDir,
+      rawWriter,
+      quoteWriter,
+      legendOptionsWriter,
+      newsWriter,
+      candleWriters: new Map<string, CandleWriterEntry>(),
+    };
+  };
+
+  const ensureSymbolContext = (symbol: string): SymbolDataContext => {
+    const key = symbol.toUpperCase();
+    const existing = symbolContexts.get(key);
+    if (existing) {
+      return existing;
+    }
+    const context = createSymbolContext(symbol);
+    symbolContexts.set(key, context);
+    return context;
+  };
+
+  const closeSymbolContext = (context: SymbolDataContext) => {
+    closeStream(context.rawWriter);
+    closeStream(context.quoteWriter);
+    closeStream(context.legendOptionsWriter);
+    closeStream(context.newsWriter);
+    for (const entry of context.candleWriters.values()) {
+      closeStream(entry.writer);
+    }
+    context.candleWriters.clear();
+  };
+
+  const closeAllSymbolContexts = () => {
+    for (const context of symbolContexts.values()) {
+      closeSymbolContext(context);
+    }
+    symbolContexts.clear();
+  };
+
+  const timeframeSegment = (timeframe: string): string => {
+    const normalized = (timeframe || 'general').toLowerCase();
+    const mapped = AGGREGATION_FILE_SEGMENTS[normalized as AggregationTimeframeKey];
+    if (mapped) {
+      return mapped;
+    }
+    if (!normalized || normalized === 'general') {
+      return 'candles';
+    }
+    return normalized.replace(/[^0-9a-z]+/g, '-');
+  };
+
+  const getCandleWriter = (symbol: string, timeframe: string): CandleWriterEntry => {
+    const context = ensureSymbolContext(symbol);
+    const segment = timeframeSegment(timeframe);
+    let entry = context.candleWriters.get(segment);
+    if (!entry) {
+      const filePath = dataPath({ assetClass: context.assetClass, symbol: context.symbol, date: context.date }, `${segment}.csv`);
+      const writer = createFileWriter(filePath, CSV_HEADER_TEXT.candle);
+      entry = { writer, segment };
+      context.candleWriters.set(segment, entry);
+    }
+    return entry;
   };
 
   const bumpLegend = (key: 'legendOptions' | 'legendNews', n: number) => {
@@ -958,8 +1118,43 @@ async function exposeLogger(
     lastWriteTs[key] = Date.now();
   };
 
+  const resolveLegendPayloadSymbol = (payload: Record<string, unknown> | undefined): string | undefined => {
+    if (!payload) {
+      return undefined;
+    }
+    const symbolKeys = ['symbol', 'eventSymbol', 'ticker', 'underlyingSymbol'];
+    for (const key of symbolKeys) {
+      const value = payload[key];
+      if (typeof value === 'string' && value.trim()) {
+        return value;
+      }
+    }
+    const symbolList = payload.symbols;
+    if (Array.isArray(symbolList)) {
+      for (const value of symbolList) {
+        if (typeof value === 'string' && value.trim()) {
+          return value;
+        }
+      }
+    }
+    const rawData = payload.data;
+    if (Array.isArray(rawData)) {
+      for (const entry of rawData) {
+        if (typeof entry === 'string' && entry.trim()) {
+          return entry;
+        }
+        if (entry && typeof entry === 'object') {
+          const nested = resolveLegendPayloadSymbol(entry as Record<string, unknown>);
+          if (nested) {
+            return nested;
+          }
+        }
+      }
+    }
+    return undefined;
+  };
+
   const writeLegendSink = (
-    writer: RotatingWriter,
     key: 'legendOptions' | 'legendNews',
     payload: Record<string, unknown> | undefined,
   ) => {
@@ -968,8 +1163,13 @@ async function exposeLogger(
     }
 
     const now = Date.now();
+    rotateDateIfNeeded(now);
+    const symbolKey = resolveSymbolKey(resolveLegendPayloadSymbol(payload));
+    const context = ensureSymbolContext(symbolKey);
+    const writer = key === 'legendOptions' ? context.legendOptionsWriter : context.newsWriter;
     const base = {
       ts: now,
+      symbol: symbolKey,
       channel: (payload as { channel?: unknown }).channel,
       type: (payload as { type?: unknown }).type,
       topic: (payload as { topic?: unknown }).topic,
@@ -980,10 +1180,10 @@ async function exposeLogger(
       bumpLegend(key, rawData.length);
       for (const item of rawData) {
         writer.write(
-          JSON.stringify({
+          `${JSON.stringify({
             ...base,
             data: item,
-          }),
+          })}\n`,
         );
       }
       return;
@@ -991,39 +1191,12 @@ async function exposeLogger(
 
     bumpLegend(key, 1);
     writer.write(
-      JSON.stringify({
+      `${JSON.stringify({
         ...base,
         payload,
-      }),
+      })}\n`,
     );
   };
-
-  const createCsvWriter = (suffix: string, headerKey: keyof typeof CSV_HEADER_TEXT) =>
-    new RotatingWriter(
-      path.join(baseDir, `${perChannelPrefix}-${suffix}.csv`),
-      ROTATE_POLICY,
-      CSV_HEADER_TEXT[headerKey],
-    );
-
-  type CandleWriterEntry = { writer: RotatingWriter; lastTimestamp?: number };
-  const candleCsvByTimeframe = new Map<string, CandleWriterEntry>();
-  const getCandleWriter = (timeframe: string) => {
-    const key = timeframe || 'general';
-    let entry = candleCsvByTimeframe.get(key);
-    if (!entry) {
-      const suffix = key === 'general' ? 'candle' : `candle-${key}`;
-      const writer = createCsvWriter(suffix, 'candle');
-      entry = { writer };
-      candleCsvByTimeframe.set(key, entry);
-    }
-    return entry;
-  };
-
-  const quoteCsv = new RotatingWriter(
-    path.join(baseDir, `${perChannelPrefix}-quote.csv`),
-    ROTATE_POLICY,
-    CSV_HEADER_TEXT.quote,
-  );
 
   const enabledTimeframes = resolveEnabledTimeframes(process.env.BARS_TIMEFRAMES);
   type AggregationEntry = { readonly timeframe: AggregationTimeframeKey; readonly aggregator: BarAggregator };
@@ -1039,42 +1212,58 @@ async function exposeLogger(
   for (const entry of aggregations) {
     aggregationMap.set(entry.timeframe, entry);
   }
-
-  const barWriters = new Map<string, RotatingWriter>();
-  const getBarWriter = (symbol: string, timeframe: string) => {
-    const key = `${symbol}__${timeframe}`;
-    let writer = barWriters.get(key);
-    if (!writer) {
-      const segment = AGGREGATION_FILE_SEGMENTS[timeframe as AggregationTimeframeKey] ?? timeframe;
-      const baseFile = dataPath({ assetClass: 'stock', symbol }, 'bars', `${segment}.csv`);
-      writer = new RotatingWriter(baseFile, ROTATE_POLICY, CSV_HEADER_TEXT.bars);
-      barWriters.set(key, writer);
-    }
-    return writer;
-  };
-
   const writeAggregatedBars = (bars: readonly AggregatedBarResult[]) => {
+    if (!bars.length) {
+      return;
+    }
+    const now = Date.now();
     for (const result of bars) {
-      const writer = getBarWriter(result.symbol, result.timeframe);
-      writer.write(toCsvLine(CSV_HEADERS.bars, buildBarCsvRow(result.bar)));
-      lastWriteTs[`bar:${result.timeframe}`] = Date.now();
+      if (result.source === 'native') {
+        continue;
+      }
+      const symbolKey = resolveSymbolKey(result.symbol);
+      const entry = getCandleWriter(symbolKey, result.timeframe);
+      const timestamp = result.bar.t;
+      if (
+        typeof timestamp === 'number' &&
+        entry.lastTimestamp !== undefined &&
+        timestamp < entry.lastTimestamp
+      ) {
+        continue;
+      }
+      if (typeof timestamp === 'number') {
+        entry.lastTimestamp = timestamp;
+      }
+      entry.writer.write(`${toCsvLine(CSV_HEADERS.candle, buildBarCsvRow(result.bar))}\n`);
+      lastWriteTs[`bar:${result.timeframe}`] = now;
     }
   };
 
   writeGeneral({ kind: 'boot', msg: 'socket-sniffer up', start: meta.start, end: meta.end });
   writeStatsSnapshot(Date.now(), true);
 
-  const flushBars = (now: number) => {
+  function flushBars(now: number): void {
     for (const { aggregator } of aggregations) {
       const closed = aggregator.drainClosed(now);
       if (closed.length > 0) {
         writeAggregatedBars(closed);
       }
     }
-  };
+  }
+
+  function rotateDateIfNeeded(now: number): void {
+    const nextDate = DateTime.fromMillis(now, { zone: 'utc' }).toFormat('yyyy-MM-dd');
+    if (nextDate === activeDate) {
+      return;
+    }
+    flushBars(now);
+    closeAllSymbolContexts();
+    activeDate = nextDate;
+  }
 
   const heartbeat = setInterval(() => {
     const now = Date.now();
+    rotateDateIfNeeded(now);
     flushBars(now);
     writeStatsSnapshot(now);
   }, HEARTBEAT_INTERVAL_MS);
@@ -1173,17 +1362,18 @@ async function exposeLogger(
     }
 
     const metadata = LEGEND_CHANNEL_METADATA[channel];
-    const label = metadata?.label ?? 'raw';
-    const writer = getChannelWriter(channel, label);
     bump(channel, rows.length, { allowNoise });
 
     let lastNow = Date.now();
     for (const row of rows) {
       const currentNow = Date.now();
       lastNow = currentNow;
+      rotateDateIfNeeded(currentNow);
       const parsed = BaseEvent.safeParse(row ?? {});
       const event = parsed.success ? parsed.data : BaseEvent.parse({});
       const resolvedType = event.eventType ?? metadata?.resolvedType;
+      const baseSymbol = resolveSymbolKey(resolveEventSymbol(event));
+      const symbolContext = ensureSymbolContext(baseSymbol);
 
       if (resolvedType === 'Candle' && !isValidCandle(event)) {
         continue;
@@ -1193,7 +1383,8 @@ async function exposeLogger(
       if (!parsed.success) {
         (normalized as Record<string, unknown>).raw = row;
       }
-      writer.write(JSON.stringify(normalized));
+      (normalized as Record<string, unknown>).symbol = baseSymbol;
+      symbolContext.rawWriter.write(`${JSON.stringify(normalized)}\n`);
 
       const eventTs = resolveEventTimestamp(event);
       if (typeof eventTs === 'number') {
@@ -1202,7 +1393,7 @@ async function exposeLogger(
           writeGeneral({
             kind: 'lag-warn',
             channel,
-            symbol: resolveEventSymbol(event),
+            symbol: baseSymbol,
             lagMs,
             eventTs,
             thresholdMs: EVENT_LAG_WARN_THRESHOLD_MS,
@@ -1214,7 +1405,7 @@ async function exposeLogger(
         const candleRow = buildCandleCsvRow(event);
         if (candleRow) {
           const timeframe = resolveCandleTimeframe(event.eventSymbol);
-          const candleEntry = getCandleWriter(timeframe);
+          const candleEntry = getCandleWriter(baseSymbol, timeframe);
           const timestamp = typeof candleRow.t === 'number' ? candleRow.t : undefined;
           if (
             timestamp !== undefined &&
@@ -1226,7 +1417,8 @@ async function exposeLogger(
           if (timestamp !== undefined) {
             candleEntry.lastTimestamp = timestamp;
           }
-          candleEntry.writer.write(toCsvLine(CSV_HEADERS.candle, candleRow));
+          candleRow.symbol = baseSymbol;
+          candleEntry.writer.write(`${toCsvLine(CSV_HEADERS.candle, candleRow)}\n`);
         }
         const candleAgg = buildCandleAggregationRow(event);
         if (candleAgg) {
@@ -1240,7 +1432,8 @@ async function exposeLogger(
       if (resolvedType === 'Quote') {
         const quoteRow = buildQuoteCsvRow(event);
         if (quoteRow) {
-          quoteCsv.write(toCsvLine(CSV_HEADERS.quote, quoteRow));
+          quoteRow.symbol = baseSymbol;
+          symbolContext.quoteWriter.write(`${toCsvLine(CSV_HEADERS.quote, quoteRow)}\n`);
         }
         const quoteAgg = buildQuoteAggregationRow(event);
         if (quoteAgg) {
@@ -1350,10 +1543,10 @@ async function exposeLogger(
               writeFeedIfValid();
               break;
             case 'options':
-              writeLegendSink(legendOptionsWriter, 'legendOptions', classification.payload);
+              writeLegendSink('legendOptions', classification.payload);
               break;
             case 'news':
-              writeLegendSink(newsWriter, 'legendNews', classification.payload);
+              writeLegendSink('legendNews', classification.payload);
               break;
             case 'unknown':
               writeFeedIfValid();
@@ -1403,19 +1596,8 @@ async function exposeLogger(
     closeOrderStreams();
     generalWriter.close();
     writeStatsSnapshot(Date.now(), true);
-    legendOptionsWriter.close();
-    newsWriter.close();
+    closeAllSymbolContexts();
     statsWriter.close();
-    for (const entry of candleCsvByTimeframe.values()) {
-      entry.writer.close();
-    }
-    quoteCsv.close();
-    for (const writer of barWriters.values()) {
-      writer.close();
-    }
-    for (const writer of channelWriters.values()) {
-      writer.close();
-    }
 
     return undefined;
   };
@@ -1457,10 +1639,16 @@ export async function runSocketSniffer(
 
   ensureDirectoryForFileSync(logFile);
 
-  const closeLogger = await exposeLogger(page, logFile, baseName, {
-    start: options.start,
-    end: options.end,
-  });
+  const closeLogger = await exposeLogger(
+    page,
+    logFile,
+    symbols,
+    {
+      start: options.start,
+      end: options.end,
+    },
+    options.assetClassHint,
+  );
 
   const hookScriptString = buildHookPlainSource({
     wantedSymbols: symbols,
