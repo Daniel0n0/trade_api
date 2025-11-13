@@ -17,195 +17,305 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/  (datos de los strike)
 data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de los proximos dias de expiracion, 2 semanas adelante)
 
 
-PUNTO 1:
-¡Perfecto! Esta conexión **NO** trae velas: es el **socket global de “order updates”** (órdenes de equity/options/crypto/futures) + *heartbeats* (ping/pong). Úsala para **salud de sesión** y telemetría, pero **no** como fuente de candles del SPY. Abajo te dejo el “cómo” completo.
+PUNTO 2:
+¡Vamos! **ORDEN DEL MOMENTO** aplicada a la **Petición 2 (Legend WS)** + **sistema de directorios** que pediste.
+
+# Sistema de directorios (añadido)
+
+```
+data/
+├─ futures/
+│  └─ <FUTURO>/                        # p.ej. MES, MNQ, ES
+│     └─ <YYYY-MM-DD>/                 # fechas salvadas
+│        ├─ 1s.csv
+│        ├─ 1m.csv
+│        ├─ 5m.csv
+│        ├─ 15m.csv
+│        ├─ 1h.csv
+│        ├─ 1d.csv
+│        ├─ quotes.csv                 # libro top (bid/ask) si aplica
+│        └─ raw.jsonl                  # opcional, frames brutos útiles p/depurar
+└─ stocks/
+   └─ <TICKER>/                        # p.ej. SPY, AAPL
+      └─ <YYYY-MM-DD>/
+         ├─ 1s.csv
+         ├─ 1m.csv
+         ├─ 5m.csv
+         ├─ 15m.csv
+         ├─ 1h.csv
+         ├─ 1d.csv
+         ├─ quotes.csv                 # NBBO top (bid/ask)
+         ├─ news.jsonl                 # noticias del día
+         ├─ greeks.jsonl               # IV/greeks si los capturas
+         └─ options/
+            ├─ strikes.csv             # snapshot strikes del día
+            └─ in_the_future/
+               └─ <YYYY-MM-DD>/        # próximos vencimientos (hasta 2 semanas)
+                  └─ chain.jsonl
+```
 
 ---
 
-# 1) Clasificación
+# Fuente: `wss://api.robinhood.com/marketdata/streaming/legend/`
 
-* **URL (WS):** `wss://api-streaming.robinhood.com/wss/connect?...topic=equity_order_update&...`
-* **Función real:** ordenes + *keepalives* (no market data).
-* **Mensajes observados:** objetos con `opCode` `9` (ping) y `10` (pong), `data` base64 con un timestamp (string).
+### Lo que llega (del ejemplo real)
+
+* **type**: `"FEED_DATA"` o `"KEEPALIVE"`.
+* **channel**: entero (1=candles, 3=Trade (REG), 5=TradeETH, 7=Quotes, 0=Keepalive).
+* **data**: array de eventos.
+* **eventType**: `"Candle" | "Trade" | "TradeETH" | "Quote"`.
+* **eventSymbol**:
+
+  * Velas: `SPY{=1s|m|5m|15m|h, tho=false, a=m}`
+  * Trades/ETH: `SPY`
+  * Quotes: `SPY`
+* **Campos útiles por tipo**:
+
+  * **Candle**: `time, open, high, low, close, volume, vwap, impVolatility, openInterest, count`
+  * **Trade/TradeETH**: `time, price, dayVolume`
+  * **Quote**: `bidPrice, bidSize, bidTime, askPrice, askSize, askTime`
 
 ---
 
-# 2) Esquema de datos (para lo que sí aparece aquí)
-
-### A) Keepalive / Heartbeat
+# Estructura de datos (tipos TS recomendados)
 
 ```ts
-type WsKeepalive = {
-  kind: 'keepalive';
-  opCode: 9 | 10;         // 9=ping, 10=pong
-  serverTsMs: number;     // derivado: decode base64 -> número -> ms
-  raw?: unknown;          // por si quieres conservar el frame original
+type LegendMessage =
+  | { type: 'KEEPALIVE'; channel: 0 }
+  | { type: 'FEED_DATA'; channel: number; data: any[] };
+
+type CandleFrame = {
+  eventType: 'Candle';
+  eventSymbol: string;       // ej. "SPY{=5m,tho=false,a=m}"
+  time: number;              // epoch ms del inicio de la vela
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;            // volumen acumulado de la vela
+  vwap?: number | 'NaN';
+  impVolatility?: number | 'NaN';
+  openInterest?: number | 'NaN';
+  count?: number;            // nº de trades
+};
+
+type TradeFrame = {
+  eventType: 'Trade' | 'TradeETH';
+  eventSymbol: string;       // "SPY"
+  time: number;              // epoch ms del trade
+  price: number;
+  dayVolume: number;
+};
+
+type QuoteFrame = {
+  eventType: 'Quote';
+  eventSymbol: string;       // "SPY"
+  bidPrice: number;
+  bidSize: number;
+  bidTime: number;
+  askPrice: number;
+  askSize: number;
+  askTime: number;
 };
 ```
 
-### B) (Potenciales) eventos de orden
+---
 
-Si en algún momento este socket te manda updates reales de órdenes (no en tu captura actual), mapea así:
+# Recepción (cómo recibir)
 
-```ts
-type OrderUpdate = {
-  kind: 'order_update';
-  assetClass: 'equity' | 'option' | 'crypto' | 'futures';
-  orderId: string;
-  state: 'queued' | 'confirmed' | 'filled' | 'canceled' | 'rejected' | string;
-  symbol?: string;              // si viene
-  side?: 'buy' | 'sell';
-  qty?: number;
-  filledQty?: number;
-  avgPrice?: number;
-  ts: number;                   // epoch ms
-  raw?: unknown;
-};
+* Filtra por URL que **contenga** `/marketdata/streaming/legend/`.
+* Suscríbete a `framereceived` y `framesent`. Cada `payload`:
+
+  1. Si es `Buffer` → `toString('utf8')`.
+  2. `JSON.parse`.
+  3. Si `type === 'KEEPALIVE'` → marcar “alive” y seguir.
+  4. Si `type === 'FEED_DATA'`:
+
+     * Recorrer `data[]`.
+     * `eventType` decide el **router**:
+
+       * `"Candle"` → **módulo de velas**.
+       * `"Trade"/"TradeETH"` → **módulo de ticks** (opcional).
+       * `"Quote"` → **módulo de quotes**.
+
+---
+
+# Procesamiento (qué hacer con cada tipo)
+
+## A) Velas (`eventType: "Candle"`)
+
+* **Derivar timeframe** desde `eventSymbol`:
+
+  * `=s` → `1s.csv`
+  * `=m` → `1m.csv`
+  * `=5m` → `5m.csv`
+  * `=15m` → `15m.csv`
+  * `=h` → `1h.csv`
+  * `=d` (si apareciera) → `1d.csv`
+* **Timestamp**: `time` ya viene **alineado** al bucket (ms). Usa ese valor sin “floor”.
+* **Normalización**:
+
+  * Convierte `"NaN"` a vacío (o `null`) para CSV.
+  * `vwap` y `impVolatility` → números o vacío.
+* **Upsert** (por `time`):
+
+  * Si `time` ya existe en el CSV del timeframe, **reemplaza** fila (Legend suele reenviar los últimos buckets en vivo).
+  * Si no existe, **append**.
+* **Consistencia**:
+
+  * Si recibes varias temporalidades, escribe en sus CSV correspondientes, **no re-agregues** 1s→1m; usa la vela ya calculada que llega.
+* **CSV schema** por timeframe:
+
+  ```
+  time,open,high,low,close,volume,vwap,impVolatility,openInterest,count
+  1762911000000,683.68,683.68,683.68,683.68,5,683.68,0.1725,,1
+  ```
+
+  * `time` en **epoch ms** (evita zona horaria).
+  * Vacíos como `""` para NaN.
+
+## B) Quotes (`eventType: "Quote"`)
+
+* Guarda **top-of-book** (NBBO simple):
+
+  * Unifica `bidTime`/`askTime` en `time` = `Math.max(bidTime, askTime)`.
+  * CSV (una fusión por línea):
+
+    ```
+    time,bidPrice,bidSize,askPrice,askSize
+    1762911062000,683.65,826,683.78,707
+    ```
+* **Frecuencia**: pueden llegar por ráfagas → puedes muestrear (p.ej., cada 100 ms última quote) si el volumen es muy alto.
+
+## C) Trades (`"Trade"` y `"TradeETH"`)
+
+* Opcional guardar ticks por carga de datos. Si lo haces:
+
+  ```
+  time,price,dayVolume,session   # session = REG | ETH
+  1762911062525,683.65,2380,ETH
+  ```
+* **Uso**: validación rápida de velas/volúmenes.
+
+## D) KEEPALIVE
+
+* Solo **marca salud** (último keepalive). No persistas.
+
+---
+
+# ¿Se guarda? ¿cómo?
+
+### Stocks (SPY en tu caso)
+
+* Ruta del día: `data/stocks/SPY/<YYYY-MM-DD>/`
+
+  * `1s.csv, 1m.csv, 5m.csv, 15m.csv, 1h.csv, 1d.csv`
+  * `quotes.csv`
+  * `ticks.csv` (opcional)
+  * `raw.jsonl` (opcional, últimos N frames para depurar)
+* **Política de escritura**:
+
+  * **Upsert por `time`** (lee el último bloque a memoria, reemplaza si coincide).
+  * **Flush**: cada 1–5 segundos para no fragmentar disco.
+  * **Rotación**: un directorio por fecha (UTC), al pasar de fecha crea carpeta nueva.
+
+### Futuros (si capturas de Legend u otro feed)
+
+* Idéntico layout pero bajo `data/futures/<CONTRATO>/<YYYY-MM-DD>/...`
+
+---
+
+# Interacción entre archivos (quién usa a quién y por qué)
+
+* `1s.csv`/`1m.csv`/…: **consumidos** por tus módulos de señales/estrategias (backtest o live).
+* `quotes.csv`: usado por lógica de **microestructura** (spreads/slippage) y validación de entrada.
+* `ticks.csv` (opcional): para *replay* y auditoría fina.
+* `news.jsonl`, `greeks.jsonl`, `options/…`: otros módulos; **no** impactan el pipeline de velas, pero comparten la misma carpeta de fecha para que todo el **estado diario** quede junto.
+
+---
+
+# Contratos (lo que “se espera” de funciones y qué devuelven)
+
+### `parseEventSymbol(symbol: string) => { ticker: string; tf: '1s'|'1m'|'5m'|'15m'|'1h'|'1d' }`
+
+* Extrae timeframe (`=s|m|5m|15m|h|d`) y ticker.
+* Se usa en router de velas.
+
+### `upsertCandle(csvPath: string, row: CandleCsvRow) => Promise<void>`
+
+* Garantiza **idempotencia** por `time`.
+* Devuelve `void`; lanza error si I/O falla.
+
+### `appendQuote(csvPath: string, row: QuoteCsvRow) => Promise<void>`
+
+* **Append** directo (o muestreo previo).
+* Devuelve `void`.
+
+### `appendTick(csvPath: string, row: TickCsvRow) => Promise<void>`
+
+* **Append** directo.
+* Devuelve `void`.
+
+### `markKeepalive(feed: 'legend', ts: number): void`
+
+* Actualiza health en memoria, usado por watchdog/reconexión.
+
+---
+
+# Reglas y bordes importantes
+
+* **NaN**: llega como string `"NaN"`. Escribe vacío en CSV → evita `NaN` textual para no romper parsers.
+* **Orden de llegada**: Legend puede **reemitir** velas recientes con agregados (cambian `volume`, `high/low`, `count`). **Por eso upsert.**
+* **Sesiones**: `Trade` (REG) vs `TradeETH` (after-hours). No mezcles en agregaciones propias (pero tus **velas Legend ya vienen correctas** por sesión).
+* **Canal** no es contrato: usa **`eventType`** y **`eventSymbol`** como verdad.
+* **Tiempo**: usa `time` (ms) del evento (no `Date.now()`).
+* **Compresión** (opcional): al finalizar el día, gzip los CSV.
+
+---
+
+# Ejemplo de filas (con tus datos)
+
+**5m.csv**
+
+```
+time,open,high,low,close,volume,vwap,impVolatility,openInterest,count
+1762911000000,683.68,683.68,683.68,683.68,5,683.68,0.1725,,1
+1762911000000,683.68,683.68,683.65,683.65,125,683.6512,0.1725,,3   # upsert reemplaza a la anterior
 ```
 
-> **Importante:** Ninguna de estas dos estructuras es *candle data*. Las velas de Legend suelen venir por **otro WS**: `wss://api.robinhood.com/marketdata/streaming/legend/` (éste sí rútalo al módulo de velas).
+**1m.csv**
 
----
+```
+time,open,high,low,close,volume,vwap,impVolatility,openInterest,count
+1762911000000,683.68,683.68,683.68,683.68,5,683.68,0.1725,,1
+1762911060000,683.65,683.65,683.65,683.65,120,683.65,0.1725,,2
+```
 
-# 3) Recepción
+**1s.csv**
 
-* **Playwright**: `page.on('websocket', ws => { ... }); ws.on('framereceived'| 'framesent', ({payload}) => ...)`.
-* **Normalización del frame**:
+```
+time,open,high,low,close,volume,vwap,impVolatility,openInterest,count
+1762911059000,683.68,683.68,683.68,683.68,5,683.68,,,
+1762911062000,683.65,683.65,683.65,683.65,120,683.65,,,
+```
 
-  1. Si `payload` es `Buffer`, convertir a string `utf-8`.
-  2. `try { const obj = JSON.parse(text); }`
-  3. Si `obj.opCode === 9 || obj.opCode === 10` → **WsKeepalive**.
+**quotes.csv**
 
-     * `serverTsMs` = `Number(Buffer.from(obj.data, 'base64').toString('utf8'))`
-       (en tu traza ese número ya viene como string de epoch).
-  4. Si aparece un objeto con claves de orden (id/estado/asset) → **OrderUpdate**.
-  5. Cualquier otro formato → ignorar o log de depuración.
+```
+time,bidPrice,bidSize,askPrice,askSize
+1762911060000,683.63,201,683.65,120
+1762911061000,683.64,94,683.65,120
+1762911062000,683.65,826,683.78,707
+1762911064000,683.67,795,683.80,729
+```
 
----
+**ticks.csv** (opcional)
 
-# 4) Procesamiento
-
-### Keepalive
-
-* Calcula **skew/latencia**:
-
-  * `now = Date.now()`
-  * `skewMs = now - serverTsMs`
-  * Si observas un ping (9) seguido de un pong (10) con misma marca → puedes estimar RTT simple.
-* Actualiza **estado de conexión** (último mensaje, contador de pings/pongs).
-* **No derives velas** de aquí.
-
-### OrderUpdate (si aparece)
-
-* Valida numéricos, normaliza `symbol` y `ts`.
-* Si no operas órdenes programáticamente, sólo **loga**.
-
----
-
-# 5) ¿Se guarda? ¿Dónde y cómo?
-
-* **Velas:** **NO** (no vienen en este socket).
-* **Keepalives:** por defecto **NO** persistas; usa sólo para health.
-
-  * **Opcional (útil en depuración/observabilidad):** CSV con métricas de salud.
-
-    * Ruta: `data/_metrics/ws/robinhood-streaming.csv`
-    * Cabecera:
-
-      ```
-      timestamp,url,opCode,server_ts_ms,skew_ms
-      ```
-* **Order updates (si llegan):** **Opcional** guardar para auditoría:
-
-  * Ruta: `data/_raw/orders/<YYYY-MM-DD>.jsonl`
-  * 1 línea por evento; sin compresión.
-
-> Mantén **separado** el flujo de velas (vendrá del WS de Legend o de HTTP) en:
-> `data/stocks/SPY/<YYYY-MM-DD>/{1s,1m,5m,15m,1h,1d}.csv` (como ya definimos antes).
-
----
-
-# 6) Snippet recomendado (TS/Playwright)
-
-```ts
-import type { WebSocket } from 'playwright';
-
-function handleStreamingSocket(socket: WebSocket) {
-  const url = socket.url();
-  if (!url.startsWith('wss://api-streaming.robinhood.com/wss/connect')) return;
-
-  const onFrame = ({ payload }: { payload: string | Buffer }) => {
-    const text = Buffer.isBuffer(payload) ? payload.toString('utf8') : payload;
-    let obj: any;
-    try { obj = JSON.parse(text); } catch { return; }
-
-    // Heartbeats
-    if (obj && (obj.opCode === 9 || obj.opCode === 10) && typeof obj.data === 'string') {
-      const serverTsStr = Buffer.from(obj.data, 'base64').toString('utf8');
-      const serverTsMs = Number(serverTsStr);
-      if (!Number.isFinite(serverTsMs)) return;
-
-      const skewMs = Date.now() - serverTsMs;
-      // (opcional) persistencia de métrica
-      // appendCsv('data/_metrics/ws/robinhood-streaming.csv',
-      //   [[Date.now(), url, obj.opCode, serverTsMs, skewMs]],
-      //   { ensureHeader: true, header: 'timestamp,url,opCode,server_ts_ms,skew_ms' }
-      // );
-      return;
-    }
-
-    // Posibles updates de órdenes
-    if (obj && obj.order_id && obj.state) {
-      // normalizar y (opcional) guardar a JSONL de auditoría
-      // appendJsonl(`data/_raw/orders/${today()}.jsonl`, obj);
-      return;
-    }
-  };
-
-  const off = () => {
-    socket.off('framereceived', onFrame);
-    socket.off('framesent', onFrame);
-    socket.off('close', off);
-  };
-
-  socket.on('framereceived', onFrame);
-  socket.on('framesent', onFrame);
-  socket.on('close', off);
-}
+```
+time,price,dayVolume,session
+1762911059615,683.68,2260,ETH
+1762911062525,683.65,2380,ETH
+1762894799967,682.87,2380,REG
 ```
 
 ---
-
-# 7) Enrutamiento correcto para **velas de SPY**
-
-* **Este socket (`api-streaming`)**: salud y órdenes → **NO velas**.
-* **Socket/HTTP de Legend** (ejemplos típicos, pueden variar por build):
-
-  * `wss://api.robinhood.com/marketdata/streaming/legend/`  ⟶ **sí** velas/ticks/series.
-  * Requests HTTP JSON a endpoints “legend” (candles batch).
-* **Acción**: En tu `socket-sniffer`, añade una **tabla de rutas**:
-
-  * Si URL `.../streaming/legend/` → **procesador de velas** (tu módulo SPY 1d/1h/15m/5m/1m/1s).
-  * Si URL `.../wss/connect?...order_update...` → **procesador de health/órdenes** (este).
-
----
-
-# 8) Política de reconexión y *idle*
-
-* El server anuncia `server-idle-timeout-ms: 300000` (5 min).
-* Si no recibes frames en `T_idle = 240s` → intenta **reconectar**.
-* Backoff exponencial c/ jitter: 1s → 2s → 4s → 8s … máx 60s.
-* Marca `connected_at`, `last_msg_at` y expón métricas (en memoria o CSV opcional).
-
----
-
-## Resumen de decisión (para este socket)
-
-* **Recibir:** WS (`framereceived`/`framesent`), parsear JSON, detectar `opCode 9/10`.
-* **Procesar:** calcular `skewMs`/RTT; marcar salud; *no* derivar velas.
-* **Guardar:** **No** por defecto.
-
-  * **Opcional**: métricas CSV en `data/_metrics/ws/robinhood-streaming.csv`.
-  * **Opcional**: auditoría de órdenes en `data/_raw/orders/<YYYY-MM-DD>.jsonl`.
-* **Velas del SPY:** enrútalas desde **otro** WS/HTTP (Legend), a tus CSV por timeframe.
-
