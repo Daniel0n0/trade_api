@@ -1,0 +1,36 @@
+{
+  "results": [
+    {
+      "chain_symbol": "SPY",
+      "occ_symbol": "SPY240621C00350000",
+      "option_type": "call",
+      "expiration_date": "2024-06-21",
+      "strike_price": "350",
+      "instrument": "https://api.robinhood.com/options/instruments/abc123/",
+      "greeks": {
+        "delta": 0.45,
+        "gamma": 0.12,
+        "theta": -0.03,
+        "vega": 0.18,
+        "rho": 0.04,
+        "implied_volatility": 0.32
+      }
+    },
+    {
+      "chain_symbol": "SPY",
+      "occ_symbol": "SPY240621P00350000",
+      "option_type": "put",
+      "expiration_date": "2024-06-21",
+      "strike_price": "350",
+      "instrument": "https://api.robinhood.com/options/instruments/def456/",
+      "greeks": {
+        "delta": -0.48,
+        "gamma": 0.11,
+        "theta": -0.04,
+        "vega": 0.2,
+        "rho": -0.05,
+        "implied_volatility": 0.35
+      }
+    }
+  ]
+}

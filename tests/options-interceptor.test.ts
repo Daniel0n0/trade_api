@@ -204,7 +204,7 @@ test('resolveWriter consolida strikes/tipos y respeta horizonte futuro', async (
 
   assert.ok(
     nearPath.startsWith(
-      path.join(process.cwd(), 'data', 'stock', 'SPY', '2024-05-10'),
+      path.join(process.cwd(), 'data', 'stocks', 'SPY', '2024-05-10'),
     ),
     `unexpected base path ${nearPath}`,
   );

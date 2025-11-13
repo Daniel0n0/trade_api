@@ -107,9 +107,11 @@ const OPTIONAL_MODULE_URL_CODE_NAMES = [
   'daily-stats',
   'daily-news',
   'daily-order-book',
+  'daily-greeks',
   'stock-daily-stats',
   'stock-daily-news',
   'stock-daily-orderbook',
+  'stock-daily-greeks',
 ] as const;
 
 type OptionalModuleUrlCodeName = (typeof OPTIONAL_MODULE_URL_CODE_NAMES)[number];
@@ -289,6 +291,12 @@ const STOCK_DAILY_MODULE_SPECS = [
     alias: 'stock-daily-orderbook',
     pageDescription: 'Order book diario para un símbolo específico',
     legendDescription: 'Libro de órdenes diario de acciones',
+  },
+  {
+    name: 'daily-greeks',
+    alias: 'stock-daily-greeks',
+    pageDescription: 'Greeks y IV diarios para un símbolo específico',
+    legendDescription: 'Eventos Legend y API de greeks',
   },
 ] as const satisfies readonly {
   readonly name: string;

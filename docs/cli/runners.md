@@ -131,13 +131,29 @@ npx trade-api start stocks-generic-chart now \
 
 ## Runners diarios de acciones
 
-Los módulos `daily-stats`, `daily-news` y `daily-order-book`
-se publican como plantillas documentadas. Por ahora no generan artefactos, pero
-puedes invocarlos para validar la navegación automática con un `--url-code`
-válido (o la variable `TRADE_API_URL_CODE_*` correspondiente) y añadir la lógica
-de captura en futuras iteraciones. Los alias heredados `stock-daily-*` siguen
-siendo aceptados en la CLI, pero se resuelven internamente a los nombres
-canónicos y ya no aparecen duplicados al listar módulos.
+`daily-greeks` activa la persistencia de eventos Legend/API relacionados con
+greeks e IV para el símbolo indicado. El módulo escribe `greeks.csv` y
+`greeks.jsonl` bajo `data/stocks/<SIMBOLO>/<fecha>/` usando la misma carpeta que
+velas/noticias.
+
+```bash
+npx trade-api start daily-greeks now \
+  --symbols SPY \
+  --url-code <LEGEND_UUID>
+```
+
+- `greeks.csv` resume cada actualización con `chainSymbol`, `occSymbol`,
+  `expirationDate`, `strikePrice`, `delta`, `gamma`, etc.
+- `greeks.jsonl` conserva el payload normalizado junto con la fuente (`http`
+  o `ws`) para análisis posteriores o reproducción de sesiones Legend.
+
+Los módulos `daily-stats`, `daily-news` y `daily-order-book` continúan como
+plantillas documentadas. Por ahora no generan artefactos, pero puedes invocarlos
+para validar la navegación automática con un `--url-code` válido (o la variable
+`TRADE_API_URL_CODE_*` correspondiente) y añadir la lógica de captura en futuras
+iteraciones. Los alias heredados `stock-daily-*` siguen siendo aceptados en la
+CLI, pero se resuelven internamente a los nombres canónicos y ya no aparecen
+duplicados al listar módulos.
 
 ## Runners de futuros
 

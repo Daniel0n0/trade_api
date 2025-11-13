@@ -9,7 +9,7 @@ import {
   resolveModuleUrl,
 } from '../src/config.js';
 
-type DailyModuleName = 'daily-stats' | 'daily-news' | 'daily-order-book';
+type DailyModuleName = 'daily-stats' | 'daily-news' | 'daily-order-book' | 'daily-greeks';
 
 const EXPECTED_URL = 'https://robinhood.com/stocks/SPY';
 
@@ -37,7 +37,7 @@ const assertModuleAlignment = (name: DailyModuleName) => {
 };
 
 test('daily modules keep default args and urls aligned', () => {
-  const moduleNames: DailyModuleName[] = ['daily-stats', 'daily-news', 'daily-order-book'];
+  const moduleNames: DailyModuleName[] = ['daily-stats', 'daily-news', 'daily-order-book', 'daily-greeks'];
 
   for (const name of moduleNames) {
     assertModuleAlignment(name);

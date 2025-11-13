@@ -6,6 +6,12 @@ import { getCsvWriter } from '../io/csvWriter.js';
 import { dataPath } from '../io/paths.js';
 import { toCsvLine } from '../io/row.js';
 import type { ModuleRunner } from '../orchestrator/types.js';
+import {
+  collectOptionRecords,
+  deriveChainSymbol,
+  normalizeExpiration,
+  normaliseOptionType,
+} from '../modules/options/interceptor.js';
 import { RotatingWriter } from './rotating-writer.js';
 import { normaliseFramePayload, safeJsonParse } from '../utils/payload.js';
 
@@ -32,15 +38,17 @@ const DORA_HOST_PATTERN = /(^|\.)dora\.robinhood\.com$/i;
 const DORA_INSTRUMENT_FEED_INLINE_PATTERN = new RegExp(DORA_INSTRUMENT_FEED_HINT, 'i');
 const DORA_INSTRUMENT_PATH_PATTERN = /\/feeds?\/instrument(?=[:\/]|$|[?#])/i;
 const ORDERBOOK_URL_HINT = /order[-_ ]?book|level2|depth|phoenix|marketdata|quotes/i;
+const GREEKS_URL_HINT = /options|greeks|chains|chain|marketdata|phoenix|legend/i;
 const STOCK_WS_PATTERN = /(legend|phoenix|stream|socket|ws)/i;
 const ROBINHOOD_HOST_PATTERN = /(^|\.)robinhood\.com$/i;
 const ROBINHOOD_JSON_PATH_HINT = new RegExp(
-  `${STATS_URL_HINT.source}|${NEWS_URL_HINT.source}|${ORDERBOOK_URL_HINT.source}`,
+  `${STATS_URL_HINT.source}|${NEWS_URL_HINT.source}|${ORDERBOOK_URL_HINT.source}|${GREEKS_URL_HINT.source}`,
   'i',
 );
 const STATS_HOST_PATTERN = /^(?:api|legend|midlands|phoenix)\.robinhood\.com$/i;
 const NEWS_HOST_PATTERN = /^(?:api|legend|midlands|phoenix|dora)\.robinhood\.com$/i;
 const ORDERBOOK_HOST_PATTERN = /^(?:api|legend|midlands|phoenix)\.robinhood\.com$/i;
+const GREEKS_HOST_PATTERN = /^(?:api|legend|midlands|phoenix)\.robinhood\.com$/i;
 const SYMBOL_PARAM_KEY_PATTERN = /(symbol|instrument|ticker|target|underlying|security|id)/i;
 
 const LOG_ENVIRONMENT_FLAGS = [
@@ -1129,16 +1137,302 @@ const looksLikeGreeksPayload = (payload: unknown): boolean => {
   return false;
 };
 
+const GREEKS_HEADER = [
+  'ts',
+  'symbol',
+  'chainSymbol',
+  'occSymbol',
+  'optionType',
+  'expirationDate',
+  'strikePrice',
+  'impliedVolatility',
+  'delta',
+  'gamma',
+  'theta',
+  'vega',
+  'rho',
+  'phi',
+  'psi',
+  'source',
+] as const;
+
+type GreeksHeader = typeof GREEKS_HEADER;
+
+type GreeksCsvRow = Partial<Record<GreeksHeader[number], string | number | undefined>>;
+
+type NormalizedGreeksRecord = {
+  readonly chainSymbol?: string;
+  readonly underlyingSymbol?: string;
+  readonly occSymbol?: string;
+  readonly optionType?: string;
+  readonly expirationDate?: string;
+  readonly strikePrice?: number;
+  readonly instrumentId?: string;
+  readonly optionId?: string;
+  readonly impliedVolatility?: number;
+  readonly delta?: number;
+  readonly gamma?: number;
+  readonly theta?: number;
+  readonly vega?: number;
+  readonly rho?: number;
+  readonly phi?: number;
+  readonly psi?: number;
+};
+
+type GreeksFeature = {
+  readonly result: { csvPath: string; jsonlPath: string };
+  readonly shouldProcessUrl: (url: string) => boolean;
+  readonly processPayload: (payload: unknown, meta: TransportMeta) => void;
+  readonly close: () => Promise<void>;
+};
+
+const GREEKS_ROTATE_POLICY = {
+  maxBytes: 25_000_000,
+  maxMinutes: 60,
+  gzipOnRotate: false,
+} as const;
+
+const GREEK_VALUE_ALIASES: Record<keyof NormalizedGreeksRecord, readonly string[]> = {
+  chainSymbol: ['chainSymbol', 'chain_symbol', 'chain'],
+  underlyingSymbol: ['underlyingSymbol', 'underlying_symbol', 'symbol'],
+  occSymbol: ['occSymbol', 'occ_symbol'],
+  optionType: ['optionType', 'option_type', 'type', 'call_put'],
+  expirationDate: ['expirationDate', 'expiration_date', 'expiration', 'expiry'],
+  strikePrice: ['strikePrice', 'strike_price', 'strike'],
+  instrumentId: ['instrumentId', 'instrument_id', 'option_id', 'optionId', 'id'],
+  optionId: ['optionId', 'option_id', 'instrumentId', 'instrument_id', 'id'],
+  impliedVolatility: ['implied_volatility', 'impliedVolatility', 'mark_iv', 'markIv'],
+  delta: ['delta'],
+  gamma: ['gamma'],
+  theta: ['theta'],
+  vega: ['vega'],
+  rho: ['rho'],
+  phi: ['phi'],
+  psi: ['psi'],
+};
+
+const pickNumberField = (record: Record<string, unknown>, keys: readonly string[]): number | undefined => {
+  for (const key of keys) {
+    const value = record[key];
+    const parsed = toNumber(value);
+    if (parsed !== undefined) {
+      return parsed;
+    }
+  }
+  return undefined;
+};
+
+const pickTextField = (record: Record<string, unknown>, keys: readonly string[]): string | undefined => {
+  for (const key of keys) {
+    const value = record[key];
+    const text = toText(value);
+    if (text) {
+      return text;
+    }
+  }
+  return undefined;
+};
+
+const normaliseChainSymbol = (record: Record<string, unknown>): string | undefined => {
+  const derived = deriveChainSymbol(record);
+  if (derived) {
+    return derived;
+  }
+  const fallback = pickTextField(record, GREEK_VALUE_ALIASES.chainSymbol);
+  return fallback ? fallback.toUpperCase() : undefined;
+};
+
+const normaliseOptionTypeField = (record: Record<string, unknown>): string | undefined => {
+  const candidate = pickTextField(record, GREEK_VALUE_ALIASES.optionType);
+  return candidate ? normaliseOptionType(candidate) : undefined;
+};
+
+const normaliseExpirationDate = (record: Record<string, unknown>): string | undefined => {
+  const raw = pickTextField(record, GREEK_VALUE_ALIASES.expirationDate);
+  return normalizeExpiration(raw);
+};
+
+const normaliseStrikePrice = (record: Record<string, unknown>): number | undefined => {
+  return pickNumberField(record, GREEK_VALUE_ALIASES.strikePrice);
+};
+
+const normaliseInstrumentId = (record: Record<string, unknown>): string | undefined => {
+  const raw = pickTextField(record, GREEK_VALUE_ALIASES.instrumentId);
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(raw);
+    const segments = parsed.pathname.split('/').filter((segment) => segment.length > 0);
+    const last = segments.pop();
+    return last ?? raw;
+  } catch {
+    const match = raw.match(/[0-9a-fA-F-]{10,}/);
+    return match ? match[0] : raw;
+  }
+};
+
+const extractGreekValues = (record: Record<string, unknown>): Partial<NormalizedGreeksRecord> => {
+  const values: Partial<NormalizedGreeksRecord> = {};
+  let matches = 0;
+  const numericKeys: (keyof NormalizedGreeksRecord)[] = [
+    'impliedVolatility',
+    'delta',
+    'gamma',
+    'theta',
+    'vega',
+    'rho',
+    'phi',
+    'psi',
+  ];
+  for (const key of numericKeys) {
+    const aliases = GREEK_VALUE_ALIASES[key];
+    const value = pickNumberField(record, aliases);
+    if (value !== undefined) {
+      values[key] = value;
+      matches += 1;
+    }
+  }
+  return matches > 0 ? values : {};
+};
+
+const normaliseGreeksRecord = (record: Record<string, unknown>): NormalizedGreeksRecord | undefined => {
+  const greekValues = extractGreekValues(record);
+  if (Object.keys(greekValues).length === 0) {
+    return undefined;
+  }
+
+  const chainSymbol = normaliseChainSymbol(record);
+  const underlyingSymbol = pickTextField(record, GREEK_VALUE_ALIASES.underlyingSymbol)?.toUpperCase();
+  const occSymbol = pickTextField(record, GREEK_VALUE_ALIASES.occSymbol);
+  const optionType = normaliseOptionTypeField(record);
+  const expirationDate = normaliseExpirationDate(record);
+  const strikePrice = normaliseStrikePrice(record);
+  const instrumentId = normaliseInstrumentId(record);
+  const optionId = pickTextField(record, GREEK_VALUE_ALIASES.optionId) ?? instrumentId;
+
+  return {
+    chainSymbol,
+    underlyingSymbol,
+    occSymbol,
+    optionType,
+    expirationDate,
+    strikePrice,
+    instrumentId,
+    optionId,
+    ...greekValues,
+  };
+};
+
+const collectGreeksRecords = (payload: unknown): NormalizedGreeksRecord[] => {
+  if (!looksLikeGreeksPayload(payload)) {
+    return [];
+  }
+  const records = collectOptionRecords(payload);
+  const normalized = records
+    .map((record) => normaliseGreeksRecord(record))
+    .filter((entry): entry is NormalizedGreeksRecord => Boolean(entry));
+  return normalized;
+};
+
+export const createGreeksFeature = (symbol: string): GreeksFeature => {
+  const csvPath = dataPath({ assetClass: 'stock', symbol }, 'greeks.csv');
+  const jsonlPath = dataPath({ assetClass: 'stock', symbol }, 'greeks.jsonl');
+
+  const csvStream = getCsvWriter(csvPath, GREEKS_HEADER);
+  const jsonlWriter = new RotatingWriter(jsonlPath, GREEKS_ROTATE_POLICY);
+  const trackedStreams = new Set<WriteStream>([csvStream]);
+  const loggedSources = new Set<string>();
+
+  const shouldProcessUrl = (url: string): boolean => {
+    if (!url) {
+      return false;
+    }
+    const trimmed = url.trim();
+    if (!trimmed || !GREEKS_URL_HINT.test(trimmed)) {
+      return false;
+    }
+    const parsed = tryParseUrl(trimmed);
+    if (!parsed) {
+      return false;
+    }
+    return GREEKS_HOST_PATTERN.test(parsed.hostname);
+  };
+
+  const processPayload = (payload: unknown, meta: TransportMeta) => {
+    const entries = collectGreeksRecords(payload);
+    if (entries.length === 0) {
+      return;
+    }
+
+    for (const entry of entries) {
+      const ts = Date.now();
+      const csvRow: GreeksCsvRow = {
+        ts,
+        symbol,
+        chainSymbol: entry.chainSymbol ?? entry.underlyingSymbol ?? symbol,
+        occSymbol: entry.occSymbol,
+        optionType: entry.optionType,
+        expirationDate: entry.expirationDate,
+        strikePrice: entry.strikePrice,
+        impliedVolatility: entry.impliedVolatility,
+        delta: entry.delta,
+        gamma: entry.gamma,
+        theta: entry.theta,
+        vega: entry.vega,
+        rho: entry.rho,
+        phi: entry.phi,
+        psi: entry.psi,
+        source: meta.source,
+      };
+      csvStream.write(`${toCsvLine(GREEKS_HEADER, csvRow)}\n`);
+
+      const payloadEntry = {
+        ...entry,
+        ts,
+        symbol,
+        transport: meta.transport,
+        source: meta.source,
+      };
+      jsonlWriter.write(JSON.stringify(payloadEntry));
+    }
+
+    if (!loggedSources.has(meta.source)) {
+      loggedSources.add(meta.source);
+      logHook('greeks', { transport: meta.transport, source: meta.source, entries: entries.length });
+    }
+  };
+
+  const close = async () => {
+    const closing = Array.from(trackedStreams.values()).map((stream) => closeStream(stream));
+    if (closing.length > 0) {
+      await Promise.allSettled(closing);
+    }
+    jsonlWriter.close();
+  };
+
+  return {
+    result: { csvPath, jsonlPath },
+    shouldProcessUrl,
+    processPayload,
+    close,
+  };
+};
+
+
+
 type StockDailyFeatures = {
   readonly stats?: boolean;
   readonly news?: boolean;
   readonly orderbook?: boolean;
+  readonly greeks?: boolean;
 };
 
 type StockDailyState = {
   stats?: StatsFeature['result'];
   news?: NewsFeature['result'];
   orderbook?: OrderbookFeature['result'];
+  greeks?: GreeksFeature['result'];
 };
 
 const logGreeksIfNeeded = (() => {
@@ -1173,12 +1467,14 @@ export const createStockDailyRunner = <T>(options: RunnerOptions<T>): ModuleRunn
     const statsFeature = features.stats ? createStatsFeature(symbol) : undefined;
     const newsFeature = features.news ? createNewsFeature(symbol) : undefined;
     const orderbookFeature = features.orderbook ? createOrderbookFeature(symbol) : undefined;
+    const greeksFeature = features.greeks ? createGreeksFeature(symbol) : undefined;
 
     if (LOGGING_ENABLED) {
       const enabledFeatures = [
         statsFeature ? 'stats' : null,
         newsFeature ? 'news' : null,
         orderbookFeature ? 'orderbook' : null,
+        greeksFeature ? 'greeks' : null,
       ]
         .filter((item): item is string => item !== null)
         .join(', ');
@@ -1196,8 +1492,9 @@ export const createStockDailyRunner = <T>(options: RunnerOptions<T>): ModuleRunn
       const wantsStats = statsFeature?.shouldProcessUrl(url) ?? false;
       const wantsNews = newsFeature?.shouldProcessUrl(url) ?? false;
       const wantsOrderbook = orderbookFeature?.shouldProcessUrl(url) ?? false;
+      const wantsGreeks = greeksFeature?.shouldProcessUrl(url) ?? false;
 
-      if (!wantsStats && !wantsNews && !wantsOrderbook) {
+      if (!wantsStats && !wantsNews && !wantsOrderbook && !wantsGreeks) {
         return;
       }
       if (response.status() >= 400) {
@@ -1231,12 +1528,15 @@ export const createStockDailyRunner = <T>(options: RunnerOptions<T>): ModuleRunn
       if (wantsOrderbook && orderbookFeature) {
         orderbookFeature.processPayload(parsed, meta);
       }
+      if (wantsGreeks && greeksFeature) {
+        greeksFeature.processPayload(parsed, meta);
+      }
 
       logGreeksIfNeeded(parsed, meta);
     };
 
     const handleWebSocket = (socket: WebSocket) => {
-      if (!newsFeature && !orderbookFeature) {
+      if (!newsFeature && !orderbookFeature && !greeksFeature) {
         return;
       }
 
@@ -1259,6 +1559,9 @@ export const createStockDailyRunner = <T>(options: RunnerOptions<T>): ModuleRunn
         }
         if (orderbookFeature) {
           orderbookFeature.processPayload(resolved, meta);
+        }
+        if (greeksFeature) {
+          greeksFeature.processPayload(resolved, meta);
         }
         logGreeksIfNeeded(resolved, meta);
       };
@@ -1285,13 +1588,13 @@ export const createStockDailyRunner = <T>(options: RunnerOptions<T>): ModuleRunn
     };
 
     page.on('response', handleResponse);
-    if (newsFeature || orderbookFeature) {
+    if (newsFeature || orderbookFeature || greeksFeature) {
       page.on('websocket', handleWebSocket);
     }
 
     registerCloser(async () => {
       page.off('response', handleResponse);
-      if (newsFeature || orderbookFeature) {
+      if (newsFeature || orderbookFeature || greeksFeature) {
         page.off('websocket', handleWebSocket);
       }
 
@@ -1310,6 +1613,9 @@ export const createStockDailyRunner = <T>(options: RunnerOptions<T>): ModuleRunn
       if (orderbookFeature) {
         closers.push(orderbookFeature.close());
       }
+      if (greeksFeature) {
+        closers.push(greeksFeature.close());
+      }
       if (closers.length > 0) {
         await Promise.allSettled(closers);
       }
@@ -1324,6 +1630,9 @@ export const createStockDailyRunner = <T>(options: RunnerOptions<T>): ModuleRunn
     }
     if (orderbookFeature) {
       state.orderbook = orderbookFeature.result;
+    }
+    if (greeksFeature) {
+      state.greeks = greeksFeature.result;
     }
 
     return buildResult(state);
