@@ -17,305 +17,284 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/  (datos de los strike)
 data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de los proximos dias de expiracion, 2 semanas adelante)
 
 
-PUNTO 2:
-¡Vamos! **ORDEN DEL MOMENTO** aplicada a la **Petición 2 (Legend WS)** + **sistema de directorios** que pediste.
+PUNTO 3:
+¡Recibido! Sigo la **ORDEN DEL MOMENTO** y **no asumo nada**: dejo todo explícito.
 
-# Sistema de directorios (añadido)
+# Petición 3 — `GET https://api.robinhood.com/options/orders/…`
+
+**Qué es:** listado paginado de **órdenes de opciones** (con legs y ejecuciones) para una cuenta, filtradas por `created_at__gte`.
+
+---
+
+## 1) Dónde encaja en el sistema de directorios (sin ambigüedad)
+
+Vamos a guardar **por subyacente** (usa `chain_symbol` de cada orden) y por **fecha UTC del evento**. No mezclamos SPY con SPXW.
 
 ```
 data/
-├─ futures/
-│  └─ <FUTURO>/                        # p.ej. MES, MNQ, ES
-│     └─ <YYYY-MM-DD>/                 # fechas salvadas
-│        ├─ 1s.csv
-│        ├─ 1m.csv
-│        ├─ 5m.csv
-│        ├─ 15m.csv
-│        ├─ 1h.csv
-│        ├─ 1d.csv
-│        ├─ quotes.csv                 # libro top (bid/ask) si aplica
-│        └─ raw.jsonl                  # opcional, frames brutos útiles p/depurar
 └─ stocks/
-   └─ <TICKER>/                        # p.ej. SPY, AAPL
-      └─ <YYYY-MM-DD>/
-         ├─ 1s.csv
-         ├─ 1m.csv
-         ├─ 5m.csv
-         ├─ 15m.csv
-         ├─ 1h.csv
-         ├─ 1d.csv
-         ├─ quotes.csv                 # NBBO top (bid/ask)
-         ├─ news.jsonl                 # noticias del día
-         ├─ greeks.jsonl               # IV/greeks si los capturas
+   └─ <CHAIN_SYMBOL>/                 # ej. SPY, SPXW (tal cual llega en chain_symbol)
+      └─ <YYYY-MM-DD>/                # fecha UTC de created_at de la orden
          └─ options/
-            ├─ strikes.csv             # snapshot strikes del día
-            └─ in_the_future/
-               └─ <YYYY-MM-DD>/        # próximos vencimientos (hasta 2 semanas)
-                  └─ chain.jsonl
+            ├─ orders.jsonl           # bruto (1 línea = 1 orden)
+            ├─ legs.csv               # 1 fila por leg
+            ├─ executions.csv         # 1 fila por ejecución
+            ├─ fees.csv               # 1 fila por fee (si viene no vacío)
+            └─ raw/
+               └─ options_orders_<TS>.json  # respuesta completa tal cual (para auditoría)
+```
+
+> Nota: Si **una** orden tiene `chain_symbol=SPXW`, va al árbol de `data/stocks/SPXW/...`. Si fuese otro símbolo, se crea su carpeta correspondiente.
+
+---
+
+## 2) Estructura exacta recibida (basada solo en lo que enviaste)
+
+### Respuesta HTTP
+
+```json
+{
+  "next": "https://api.robinhood.com/options/orders/?...&cursor=...",
+  "previous": null,
+  "results": [ <Order[]> ]
+}
+```
+
+### `Order` (campos observados en tu payload)
+
+* `account_number: string`
+* `cancel_url: string | null`
+* `canceled_quantity: string`               // decimal en texto
+* `created_at: string`                      // ISO, ej. "2025-11-11T14:52:28.423799Z"
+* `direction: "credit" | "debit" | ...`
+* `id: string`                              // UUID de la orden
+* `legs: Leg[]`
+* `pending_quantity: string`
+* `premium: string`
+* `processed_premium: string | number`      // llegó "550" (número) y "93" (número)
+* `processed_premium_direction: string`
+* `market_hours: "regular_hours" | ...`
+* `net_amount: string | number`
+* `net_amount_direction: "credit" | "debit"`
+* `price: string`
+* `processed_quantity: string`
+* `quantity: string`
+* `ref_id: string`
+* `regulatory_fees: string`
+* `contract_fees: string`
+* `gold_savings: string`
+* `state: "filled" | ...`
+* `time_in_force: "gfd" | ...`
+* `trigger: "immediate" | ...`
+* `type: "limit" | ...`
+* `updated_at: string`
+* `chain_id: string`
+* `chain_symbol: string`                    // **clave** para decidir carpeta (SPY, SPXW,…)
+* `response_category: any | null`
+* `opening_strategy: string | null`
+* `closing_strategy: string | null`
+* `stop_price: string | null`
+* `form_source: string | null`
+* `client_bid_at_submission: string`
+* `client_ask_at_submission: string`
+* `client_time_at_submission: string | null`
+* `average_net_premium_paid: string`
+* `estimated_total_net_amount: string | number`
+* `estimated_total_net_amount_direction: string`
+* `is_replaceable: boolean`
+* `strategy: string`
+* `derived_state: string`
+* `sales_taxes: any[]`
+
+### `Leg`
+
+* `id: string`
+* `executions: Execution[]`
+* `option: string`          // URL del instrumento
+* `position_effect: "open" | "close"`
+* `ratio_quantity: number`
+* `side: "buy" | "sell"`
+* `expiration_date: string` // "YYYY-MM-DD"
+* `strike_price: string`    // decimal texto
+* `option_type: "call" | "put"`
+* `long_strategy_code: string`
+* `short_strategy_code: string`
+
+### `Execution`
+
+* `id: string`
+* `price: string`           // decimal texto
+* `quantity: string`
+* `settlement_date: string` // "YYYY-MM-DD"
+* `timestamp: string`       // ISO, ej. "2025-11-11T14:52:28.886000Z"
+
+> **No inferimos** datos que no estén presentes. No resolvemos el `option` URL; **no es necesario** porque `leg` ya trae `expiration_date`, `strike_price` y `option_type`. Si en el futuro quieres enriquecer (`multiplier`, `underlying`, etc.), eso sería **otro paso** adicional contra `/options/instruments/:id` y se guardaría en archivos aparte (no en esta orden).
+
+---
+
+## 3) Cómo recibir (hook HTTP) y procesar — paso a paso, sin suposiciones
+
+1. **Intercepta respuesta** HTTP cuya URL incluya `/options/orders/`.
+2. **Exige**:
+
+   * `status < 400`
+   * `Content-Type` JSON.
+3. **Parsea** el cuerpo a objeto.
+4. **Valida** que existe `results` como array. Si no → registrar error y **no** escribir.
+5. **Paginación**: si `next` es no nulo **debes** repetir el GET hasta agotar (esto es parte de “procesarla completa”).
+
+   * Cada página se procesa idéntico y se escribe **append/idempotente** (ver abajo).
+6. **Por cada orden** en `results`:
+
+   * Determina `chain_symbol` **exactamente** del campo.
+   * Deriva `order_date_utc` = `created_at.slice(0,10)` (YYYY-MM-DD) **sin conversión** (ya viene en `Z`).
+   * Directorio **destino**:
+
+     ```
+     data/stocks/<chain_symbol>/<order_date_utc>/options/
+     ```
+   * **Guarda**:
+
+     * **Bruto** (opcional pero recomendado para auditoría):
+
+       * `raw/options_orders_<epochms>.json` con la página completa.
+       * `orders.jsonl`: 1 línea por orden (objeto original).
+     * **Normalizado** en CSV:
+
+       * `legs.csv` (una fila por leg)
+       * `executions.csv` (una fila por ejecución)
+       * `fees.csv` (si `regulatory_fees`, `contract_fees`, `sales_taxes` no están vacíos)
+
+---
+
+## 4) Esquemas exactos de salida (CSV / JSONL)
+
+### `orders.jsonl` (tal cual orden)
+
+* **1 línea = 1 `Order`** completo en JSON textual, sin modificar claves ni tipos.
+* Ventaja: auditoría perfecta / reprocesado posterior.
+
+### `legs.csv`
+
+Columnas (todas **literales**, en este orden):
+
+```
+order_id,account_number,created_at,updated_at,state,derived_state,
+direction,market_hours,time_in_force,trigger,type,strategy,
+chain_id,chain_symbol,ref_id,
+leg_id,position_effect,side,ratio_quantity,option_type,expiration_date,strike_price,
+long_strategy_code,short_strategy_code,option_url
+```
+
+### `executions.csv`
+
+Columnas:
+
+```
+order_id,leg_id,execution_id,timestamp,settlement_date,price,quantity
+```
+
+### `fees.csv`
+
+Columnas:
+
+```
+order_id,regulatory_fees,contract_fees,gold_savings,estimated_total_net_amount,estimated_total_net_amount_direction,net_amount,net_amount_direction,processed_premium,processed_premium_direction,average_net_premium_paid
+```
+
+> **Tipos** en CSV: los dejamos como **texto** tal cual recibidos (para no perder precisión ni formato). La ETL que consuma estos CSV puede tipar después.
+
+---
+
+## 5) Idempotencia y actualización (sin adivinar)
+
+* **Clave primaria**:
+
+  * `orders`: `order_id`
+  * `legs`: `order_id + leg_id`
+  * `executions`: `execution_id` (si faltara, usar `order_id + leg_id + index`)
+* **Regla**: si la fila **ya existe** por clave primaria → **reemplazar** (por si `state` u otros cambian en páginas siguientes).
+* **Orden** de escritura sugerido:
+
+  1. `orders.jsonl` (append)
+  2. `legs.csv` (upsert)
+  3. `executions.csv` (upsert)
+  4. `fees.csv` (upsert)
+* **Batch/flush**: acumular en memoria y escribir cada N órdenes (p.ej., 100) para eficiencia.
+
+---
+
+## 6) Contratos (funciones y lo que devuelven)
+
+### `shouldProcessUrl(url: string) => boolean`
+
+* Devuelve `true` si la URL **contiene** `/options/orders/`.
+
+### `processPayload(payload: unknown) => void`
+
+* Precondición: `payload` es un objeto con `results` (array).
+* Efecto: llama a normalizadores y escribe en disco (según directorio definido).
+* No devuelve nada; si hay error, **log** y **no escribir**.
+
+### `normalizeOrder(order: Order) => { legs: LegRow[]; execs: ExecRow[]; fees: FeeRow | null; date: string; symbol: string }`
+
+* Solo **transforma** campos 1:1 sin inventar datos.
+* Devuelve:
+
+  * `date`: `YYYY-MM-DD` desde `created_at`.
+  * `symbol`: desde `chain_symbol`.
+* No enriquece con instrumentos (no se asume).
+
+### `upsertCsv(path: string, row: Row, key: (row)=>string) => Promise<void>`
+
+* Lee (si existe), reemplaza por clave, o `append`.
+* Devuelve `void` o lanza error I/O.
+
+---
+
+## 7) Seguridad y privacidad (explícito)
+
+* **No** guardamos `Authorization` ni headers sensibles.
+* Solo persistimos **cuerpo** de la respuesta.
+* `account_number` viene en las órdenes; se guarda tal cual porque es un **dato del recurso**. Si quieres anonimizar, define una tabla de mapeo y aplícala **antes** de escribir.
+
+---
+
+## 8) Ejemplo real con tus datos (filas generadas)
+
+**legs.csv**
+
+```
+order_id,account_number,created_at,updated_at,state,derived_state,direction,market_hours,time_in_force,trigger,type,strategy,chain_id,chain_symbol,ref_id,leg_id,position_effect,side,ratio_quantity,option_type,expiration_date,strike_price,long_strategy_code,short_strategy_code,option_url
+69134dac-afd7-4fde-9f93-e17064c59a65,646012153,2025-11-11T14:52:28.423799Z,2025-11-11T14:52:29.040865Z,filled,filled,credit,regular_hours,gfd,immediate,limit,short_put,7a7fa2b1-b65e-4c75-a0b3-7f62749bee0a,SPXW,acdac931-0040-44b6-a1d4-423202133292,69134dac-d3b8-4e75-bf31-9a76ab1489e0,close,sell,1,put,2025-11-11,6795.0000,e08606eb-..._L1,e08606eb-..._S1,https://api.robinhood.com/options/instruments/e08606eb-...
+69134d98-3639-476f-a5af-6caabf30ec89,646012153,2025-11-11T14:52:08.732506Z,2025-11-11T14:52:09.137009Z,filled,filled,credit,regular_hours,gfd,immediate,limit,short_put,c277b118-58d9-4060-8dc5-a3b5898955cb,SPY,67ba099c-1d4d-4893-a248-d13940d26f8a,69134d98-2adc-4b0b-8577-975e4c6a377f,close,sell,1,put,2025-11-11,679.0000,aa50e936-..._L1,aa50e936-..._S1,https://api.robinhood.com/options/instruments/aa50e936-...
+...
+```
+
+**executions.csv**
+
+```
+order_id,leg_id,execution_id,timestamp,settlement_date,price,quantity
+69134dac-afd7-4fde-9f93-e17064c59a65,69134dac-d3b8-4e75-bf31-9a76ab1489e0,69134dac-80a9-4dc5-88f0-36b8edb5d819,2025-11-11T14:52:28.886000Z,2025-11-12,5.50000000,1.00000
+69134d98-3639-476f-a5af-6caabf30ec89,69134d98-2adc-4b0b-8577-975e4c6a377f,69134d98-f48e-4a82-90c2-4cdef38f384a,2025-11-11T14:52:08.960000Z,2025-11-12,0.93000000,1.00000
+...
+```
+
+**fees.csv**
+
+```
+order_id,regulatory_fees,contract_fees,gold_savings,estimated_total_net_amount,estimated_total_net_amount_direction,net_amount,net_amount_direction,processed_premium,processed_premium_direction,average_net_premium_paid
+69134dac-afd7-4fde-9f93-e17064c59a65,0.63,0.35,0.15,549.02,credit,549.02,credit,550,credit,-550.00000000
+69134d98-3639-476f-a5af-6caabf30ec89,0.04,0,0,92.96,credit,92.96,credit,93,credit,-93.00000000
+...
 ```
 
 ---
 
-# Fuente: `wss://api.robinhood.com/marketdata/streaming/legend/`
-
-### Lo que llega (del ejemplo real)
-
-* **type**: `"FEED_DATA"` o `"KEEPALIVE"`.
-* **channel**: entero (1=candles, 3=Trade (REG), 5=TradeETH, 7=Quotes, 0=Keepalive).
-* **data**: array de eventos.
-* **eventType**: `"Candle" | "Trade" | "TradeETH" | "Quote"`.
-* **eventSymbol**:
-
-  * Velas: `SPY{=1s|m|5m|15m|h, tho=false, a=m}`
-  * Trades/ETH: `SPY`
-  * Quotes: `SPY`
-* **Campos útiles por tipo**:
-
-  * **Candle**: `time, open, high, low, close, volume, vwap, impVolatility, openInterest, count`
-  * **Trade/TradeETH**: `time, price, dayVolume`
-  * **Quote**: `bidPrice, bidSize, bidTime, askPrice, askSize, askTime`
-
----
-
-# Estructura de datos (tipos TS recomendados)
-
-```ts
-type LegendMessage =
-  | { type: 'KEEPALIVE'; channel: 0 }
-  | { type: 'FEED_DATA'; channel: number; data: any[] };
-
-type CandleFrame = {
-  eventType: 'Candle';
-  eventSymbol: string;       // ej. "SPY{=5m,tho=false,a=m}"
-  time: number;              // epoch ms del inicio de la vela
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;            // volumen acumulado de la vela
-  vwap?: number | 'NaN';
-  impVolatility?: number | 'NaN';
-  openInterest?: number | 'NaN';
-  count?: number;            // nº de trades
-};
-
-type TradeFrame = {
-  eventType: 'Trade' | 'TradeETH';
-  eventSymbol: string;       // "SPY"
-  time: number;              // epoch ms del trade
-  price: number;
-  dayVolume: number;
-};
-
-type QuoteFrame = {
-  eventType: 'Quote';
-  eventSymbol: string;       // "SPY"
-  bidPrice: number;
-  bidSize: number;
-  bidTime: number;
-  askPrice: number;
-  askSize: number;
-  askTime: number;
-};
-```
-
----
-
-# Recepción (cómo recibir)
-
-* Filtra por URL que **contenga** `/marketdata/streaming/legend/`.
-* Suscríbete a `framereceived` y `framesent`. Cada `payload`:
-
-  1. Si es `Buffer` → `toString('utf8')`.
-  2. `JSON.parse`.
-  3. Si `type === 'KEEPALIVE'` → marcar “alive” y seguir.
-  4. Si `type === 'FEED_DATA'`:
-
-     * Recorrer `data[]`.
-     * `eventType` decide el **router**:
-
-       * `"Candle"` → **módulo de velas**.
-       * `"Trade"/"TradeETH"` → **módulo de ticks** (opcional).
-       * `"Quote"` → **módulo de quotes**.
-
----
-
-# Procesamiento (qué hacer con cada tipo)
-
-## A) Velas (`eventType: "Candle"`)
-
-* **Derivar timeframe** desde `eventSymbol`:
-
-  * `=s` → `1s.csv`
-  * `=m` → `1m.csv`
-  * `=5m` → `5m.csv`
-  * `=15m` → `15m.csv`
-  * `=h` → `1h.csv`
-  * `=d` (si apareciera) → `1d.csv`
-* **Timestamp**: `time` ya viene **alineado** al bucket (ms). Usa ese valor sin “floor”.
-* **Normalización**:
-
-  * Convierte `"NaN"` a vacío (o `null`) para CSV.
-  * `vwap` y `impVolatility` → números o vacío.
-* **Upsert** (por `time`):
-
-  * Si `time` ya existe en el CSV del timeframe, **reemplaza** fila (Legend suele reenviar los últimos buckets en vivo).
-  * Si no existe, **append**.
-* **Consistencia**:
-
-  * Si recibes varias temporalidades, escribe en sus CSV correspondientes, **no re-agregues** 1s→1m; usa la vela ya calculada que llega.
-* **CSV schema** por timeframe:
-
-  ```
-  time,open,high,low,close,volume,vwap,impVolatility,openInterest,count
-  1762911000000,683.68,683.68,683.68,683.68,5,683.68,0.1725,,1
-  ```
-
-  * `time` en **epoch ms** (evita zona horaria).
-  * Vacíos como `""` para NaN.
-
-## B) Quotes (`eventType: "Quote"`)
-
-* Guarda **top-of-book** (NBBO simple):
-
-  * Unifica `bidTime`/`askTime` en `time` = `Math.max(bidTime, askTime)`.
-  * CSV (una fusión por línea):
-
-    ```
-    time,bidPrice,bidSize,askPrice,askSize
-    1762911062000,683.65,826,683.78,707
-    ```
-* **Frecuencia**: pueden llegar por ráfagas → puedes muestrear (p.ej., cada 100 ms última quote) si el volumen es muy alto.
-
-## C) Trades (`"Trade"` y `"TradeETH"`)
-
-* Opcional guardar ticks por carga de datos. Si lo haces:
-
-  ```
-  time,price,dayVolume,session   # session = REG | ETH
-  1762911062525,683.65,2380,ETH
-  ```
-* **Uso**: validación rápida de velas/volúmenes.
-
-## D) KEEPALIVE
-
-* Solo **marca salud** (último keepalive). No persistas.
-
----
-
-# ¿Se guarda? ¿cómo?
-
-### Stocks (SPY en tu caso)
-
-* Ruta del día: `data/stocks/SPY/<YYYY-MM-DD>/`
-
-  * `1s.csv, 1m.csv, 5m.csv, 15m.csv, 1h.csv, 1d.csv`
-  * `quotes.csv`
-  * `ticks.csv` (opcional)
-  * `raw.jsonl` (opcional, últimos N frames para depurar)
-* **Política de escritura**:
-
-  * **Upsert por `time`** (lee el último bloque a memoria, reemplaza si coincide).
-  * **Flush**: cada 1–5 segundos para no fragmentar disco.
-  * **Rotación**: un directorio por fecha (UTC), al pasar de fecha crea carpeta nueva.
-
-### Futuros (si capturas de Legend u otro feed)
-
-* Idéntico layout pero bajo `data/futures/<CONTRATO>/<YYYY-MM-DD>/...`
-
----
-
-# Interacción entre archivos (quién usa a quién y por qué)
-
-* `1s.csv`/`1m.csv`/…: **consumidos** por tus módulos de señales/estrategias (backtest o live).
-* `quotes.csv`: usado por lógica de **microestructura** (spreads/slippage) y validación de entrada.
-* `ticks.csv` (opcional): para *replay* y auditoría fina.
-* `news.jsonl`, `greeks.jsonl`, `options/…`: otros módulos; **no** impactan el pipeline de velas, pero comparten la misma carpeta de fecha para que todo el **estado diario** quede junto.
-
----
-
-# Contratos (lo que “se espera” de funciones y qué devuelven)
-
-### `parseEventSymbol(symbol: string) => { ticker: string; tf: '1s'|'1m'|'5m'|'15m'|'1h'|'1d' }`
-
-* Extrae timeframe (`=s|m|5m|15m|h|d`) y ticker.
-* Se usa en router de velas.
-
-### `upsertCandle(csvPath: string, row: CandleCsvRow) => Promise<void>`
-
-* Garantiza **idempotencia** por `time`.
-* Devuelve `void`; lanza error si I/O falla.
-
-### `appendQuote(csvPath: string, row: QuoteCsvRow) => Promise<void>`
-
-* **Append** directo (o muestreo previo).
-* Devuelve `void`.
-
-### `appendTick(csvPath: string, row: TickCsvRow) => Promise<void>`
-
-* **Append** directo.
-* Devuelve `void`.
-
-### `markKeepalive(feed: 'legend', ts: number): void`
-
-* Actualiza health en memoria, usado por watchdog/reconexión.
-
----
-
-# Reglas y bordes importantes
-
-* **NaN**: llega como string `"NaN"`. Escribe vacío en CSV → evita `NaN` textual para no romper parsers.
-* **Orden de llegada**: Legend puede **reemitir** velas recientes con agregados (cambian `volume`, `high/low`, `count`). **Por eso upsert.**
-* **Sesiones**: `Trade` (REG) vs `TradeETH` (after-hours). No mezcles en agregaciones propias (pero tus **velas Legend ya vienen correctas** por sesión).
-* **Canal** no es contrato: usa **`eventType`** y **`eventSymbol`** como verdad.
-* **Tiempo**: usa `time` (ms) del evento (no `Date.now()`).
-* **Compresión** (opcional): al finalizar el día, gzip los CSV.
-
----
-
-# Ejemplo de filas (con tus datos)
-
-**5m.csv**
-
-```
-time,open,high,low,close,volume,vwap,impVolatility,openInterest,count
-1762911000000,683.68,683.68,683.68,683.68,5,683.68,0.1725,,1
-1762911000000,683.68,683.68,683.65,683.65,125,683.6512,0.1725,,3   # upsert reemplaza a la anterior
-```
-
-**1m.csv**
-
-```
-time,open,high,low,close,volume,vwap,impVolatility,openInterest,count
-1762911000000,683.68,683.68,683.68,683.68,5,683.68,0.1725,,1
-1762911060000,683.65,683.65,683.65,683.65,120,683.65,0.1725,,2
-```
-
-**1s.csv**
-
-```
-time,open,high,low,close,volume,vwap,impVolatility,openInterest,count
-1762911059000,683.68,683.68,683.68,683.68,5,683.68,,,
-1762911062000,683.65,683.65,683.65,683.65,120,683.65,,,
-```
-
-**quotes.csv**
-
-```
-time,bidPrice,bidSize,askPrice,askSize
-1762911060000,683.63,201,683.65,120
-1762911061000,683.64,94,683.65,120
-1762911062000,683.65,826,683.78,707
-1762911064000,683.67,795,683.80,729
-```
-
-**ticks.csv** (opcional)
-
-```
-time,price,dayVolume,session
-1762911059615,683.68,2260,ETH
-1762911062525,683.65,2380,ETH
-1762894799967,682.87,2380,REG
-```
+## 9) ¿Se guarda? Sí. ¿Cómo debe guardarse?
+
+* **Siempre** guardamos el **bruto** (`orders.jsonl` + `raw/*.json`) y el **normalizado** (`legs.csv`, `executions.csv`, `fees.csv`).
+* **Particionado** por `chain_symbol` y **fecha UTC** de `created_at`.
+* **Upsert** por claves mencionadas para evitar duplicados si re-procesas la misma ventana temporal o si hay actualizaciones.
 
 ---
