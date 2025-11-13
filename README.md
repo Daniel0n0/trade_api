@@ -191,6 +191,26 @@ The default session launches the following modules automatically:
 - `futures-overview`
 - `futures-detail`
 
+### Capturing Legend layouts during the session
+
+Add the `--record-layouts` flag when running `trade-api session` to persist the snapshot served by
+`https://api.robinhood.com/hippo/bw/layouts` as soon as the login flow reaches the authenticated
+dashboard:
+
+```bash
+npx trade-api session --record-layouts
+```
+
+The recorder stores the payload under `data/app/layouts/<YYYY-MM-DD>/` (UTC date) and produces:
+
+- `raw/hippo_bw_layouts_<epoch_ms>.json` — original response body.
+- `layouts.jsonl` — one JSON object per layout exactly as received.
+- `layouts_index.csv` — layout metadata with `snapshot_ts_ms`/`snapshot_date_utc`.
+- `widgets.csv` — flattened widget geometry per layout.
+
+Each run also appends diagnostics to `logs/layouts-session-*.jsonl` (detection, validation errors, file
+paths) so you can audit when the snapshot was written.
+
 Modules that rely on custom Legend layouts (for example `stocks-generic-chart`, `options-generic` and
 the daily stock dashboards) now require an explicit `--url-code` flag or matching
 `TRADE_API_URL_CODE_*` environment variable. They stay out of the default session until a real layout

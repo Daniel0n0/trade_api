@@ -23,6 +23,25 @@ captura.
 > defecto no coincida con tu cuenta. Ambos parámetros también están disponibles
 > en `trade-api orchestrator` mediante el archivo de configuración.
 
+## Captura de layouts Legend durante `session`
+
+El comando interactivo admite `--record-layouts` para interceptar la respuesta
+`https://api.robinhood.com/hippo/bw/layouts` justo después del login y escribir
+los artefactos en `data/app/layouts/<YYYY-MM-DD>/`:
+
+```bash
+npx trade-api session --record-layouts
+```
+
+- `raw/hippo_bw_layouts_<epoch_ms>.json` conserva el payload completo.
+- `layouts.jsonl` replica cada layout como JSON independiente.
+- `layouts_index.csv` lista `snapshot_ts_ms`, `layout_id`, `version`, `name`,
+  `icon` y el número de widgets.
+- `widgets.csv` plana los widgets con posición y tamaño.
+
+El registro de control cae en `logs/layouts-session-*.jsonl` para saber cuándo se
+detectó el snapshot o si la validación falló.
+
 ## Runner `spy-5m-1m`
 
 Captura el *socket sniffer* para SPY cubriendo los marcos 1D, 1H, 15m, 5m, 1m y 1s.

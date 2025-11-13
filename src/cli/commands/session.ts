@@ -1,6 +1,7 @@
+import path from 'node:path';
 import process from 'node:process';
 
-import { Command } from 'commander';
+import type { Command } from 'commander';
 import { chromium } from 'playwright';
 
 import { FLAGS } from '../../bootstrap/env.js';
@@ -10,11 +11,35 @@ import { bindContextDebugObservers, attachPageDebugObservers } from '../../debug
 import { openModuleWindows } from '../../modules.js';
 import { ensureLoggedInByUrlFlow } from '../../sessionFlow.js';
 import { ensureDirectoryForFile } from '../../io/dir.js';
+import { RotatingWriter } from '../../modulos/rotating-writer.js';
+import { registerLayoutsRecorder } from '../../modules/layouts/layouts-recorder.js';
+import type { LayoutsRecorderClock, LayoutsRecorderLogger } from '../../modules/layouts/layouts-recorder.js';
 import type { CommandContext, GlobalOptions } from './shared.js';
 
 type SessionOutcome = 'ready' | 'missing' | 'error';
 
-async function runInteractiveSession(globals: GlobalOptions): Promise<SessionOutcome> {
+const LAYOUTS_LOG_ROTATE_POLICY = { maxBytes: 256_000, maxMinutes: 15, gzipOnRotate: true } as const;
+
+type LayoutsLoggerHandle = { logger: LayoutsRecorderLogger; close: () => void };
+
+const createLayoutsLoggerHandle = (logPrefix = 'session'): LayoutsLoggerHandle => {
+  const filename = `layouts-${logPrefix}.jsonl`;
+  const basePath = path.join(process.cwd(), 'logs', filename);
+  const writer = new RotatingWriter(basePath, LAYOUTS_LOG_ROTATE_POLICY);
+  const logger: LayoutsRecorderLogger = {
+    writeGeneral: (entry) => {
+      writer.write(JSON.stringify({ ts: Date.now(), ...entry }));
+    },
+  };
+  return { logger, close: () => writer.close() };
+};
+
+type SessionOptions = { readonly recordLayouts?: boolean };
+
+async function runInteractiveSession(
+  globals: GlobalOptions,
+  options: SessionOptions = {},
+): Promise<SessionOutcome> {
   const json = globals.json;
 
   const { waitForShutdown } = bindProcessSignals();
@@ -72,6 +97,16 @@ async function runInteractiveSession(globals: GlobalOptions): Promise<SessionOut
 
     if (FLAGS.debugNetwork || FLAGS.debugConsole) {
       attachPageDebugObservers(page);
+    }
+
+    if (options.recordLayouts) {
+      const { logger, close } = createLayoutsLoggerHandle('session');
+      const clock: LayoutsRecorderClock = { now: () => Date.now() };
+      const handle = registerLayoutsRecorder(page, clock, logger);
+      registerCloser(() => {
+        handle.unregister();
+        close();
+      });
     }
 
     try {
@@ -228,8 +263,11 @@ export function registerSessionCommand(program: Command, context: CommandContext
   return program
     .command('session')
     .description('Inicia la sesión interactiva estándar.')
+    .option('--record-layouts', 'Intercepta el snapshot de layouts Legend durante el login.')
     .action(async function action(this: Command) {
       const globals = context.resolveGlobals(this);
+      const options = this.opts<{ recordLayouts?: boolean }>();
+      const recordLayouts = Boolean(options.recordLayouts);
 
       if (globals.dryRun) {
         if (globals.json) {
@@ -252,7 +290,7 @@ export function registerSessionCommand(program: Command, context: CommandContext
         return;
       }
 
-      const outcome = await runInteractiveSession(globals);
+      const outcome = await runInteractiveSession(globals, { recordLayouts });
 
       if (outcome !== 'ready' && !process.exitCode) {
         process.exitCode = 1;
