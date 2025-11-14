@@ -204,6 +204,39 @@ const formatHeadersBlock = (entries: HeaderEntries, options: { omitAuthorization
   return lines.join('\n');
 };
 
+const ORDER_UPDATE_TOPICS = [
+  'equity_order_update',
+  'option_order_update',
+  'crypto_order_update',
+  'futures_order_update',
+] as const;
+
+const normaliseTopic = (topic: string): string => topic.trim().toLowerCase();
+
+export const isOrderUpdateWs = (url: string): boolean => {
+  try {
+    const parsed = new URL(url);
+    const topics = parsed
+      .searchParams
+      .getAll('topic')
+      .map(normaliseTopic)
+      .filter(Boolean);
+    if (topics.length !== ORDER_UPDATE_TOPICS.length) {
+      return false;
+    }
+    const remaining = new Set<string>(ORDER_UPDATE_TOPICS);
+    for (const topic of topics) {
+      if (!remaining.delete(topic)) {
+        return false;
+      }
+    }
+    return remaining.size === 0;
+  } catch (error) {
+    void error;
+    return false;
+  }
+};
+
 const collectOrderTopics = (url: string): string => {
   try {
     const parsed = new URL(url);
@@ -861,6 +894,10 @@ async function exposeLogger(
     if (!url.startsWith(ROBINHOOD_STREAMING_WS_PREFIX)) {
       return;
     }
+    if (!isOrderUpdateWs(url)) {
+      writeGeneral({ kind: 'order-ws-ignore', reason: 'unexpected-topics', url });
+      return;
+    }
     const startTs = Date.now();
     const day = resolveUtcDateFromTimestamp(startTs);
     const { rawDir } = ensureOrderTelemetryDir(day);
@@ -1027,6 +1064,10 @@ async function exposeLogger(
   const handleWebsocket = (socket: WebSocket) => {
     const url = socket.url();
     if (!url.startsWith(ROBINHOOD_STREAMING_WS_PREFIX)) {
+      return;
+    }
+    if (!isOrderUpdateWs(url)) {
+      writeGeneral({ kind: 'order-ws-ignore', reason: 'unexpected-topics', url });
       return;
     }
     const onFrameReceived = (frame: { payload: string | Buffer }) => {
