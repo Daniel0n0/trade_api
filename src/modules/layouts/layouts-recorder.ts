@@ -1,8 +1,7 @@
-import path from 'node:path';
 import { appendFile, writeFile } from 'node:fs/promises';
 import type { BrowserContext, Page, Response } from 'playwright';
 
-import { ensureDirectoryForFileSync, ensureDirectorySync } from '../../io/dir.js';
+import { dataPath } from '../../io/paths.js';
 import { upsertCsv, type CsvRowInput } from '../../io/upsertCsv.js';
 
 const LAYOUTS_ENDPOINT = new URL('https://api.robinhood.com/hippo/bw/layouts');
@@ -119,20 +118,21 @@ const toSnapshot = (clock: LayoutsRecorderClock): SnapshotInfo => {
   return { snapshotTsMs, snapshotDateUtc };
 };
 
-const ensureSnapshotDirs = (snapshot: SnapshotInfo) => {
-  const baseDir = path.join(process.cwd(), 'data', 'app', 'layouts', snapshot.snapshotDateUtc);
-  ensureDirectorySync(baseDir);
-  ensureDirectorySync(path.join(baseDir, 'raw'));
-  return baseDir;
-};
-
-const appendJsonLines = async (filePath: string, layouts: readonly RawLayout[]): Promise<void> => {
+const appendJsonl = async (filePath: string, layouts: readonly RawLayout[]): Promise<void> => {
   if (!layouts.length) {
     return;
   }
-  ensureDirectoryForFileSync(filePath);
   const payload = layouts.map((layout) => JSON.stringify(layout)).join('\n');
   await appendFile(filePath, `${payload}\n`);
+};
+
+const appendCsv = async <T extends readonly string[]>(
+  filePath: string,
+  rows: readonly CsvRowInput<T>[],
+  header: T,
+  keyFn: (row: CsvRowInput<T>) => string,
+): Promise<void> => {
+  await upsertCsv(filePath, header, rows, keyFn);
 };
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -167,7 +167,7 @@ const toStringValue = (value: unknown): string | undefined => {
   return trimmed || undefined;
 };
 
-const buildLayoutRows = (
+const toLayoutsIndexRows = (
   layouts: readonly RawLayout[],
   snapshot: SnapshotInfo,
 ): CsvRowInput<typeof LAYOUTS_INDEX_HEADER>[] => {
@@ -182,7 +182,7 @@ const buildLayoutRows = (
   }));
 };
 
-const buildWidgetRows = (
+const toWidgetRows = (
   layouts: readonly RawLayout[],
   snapshot: SnapshotInfo,
 ): CsvRowInput<typeof WIDGETS_HEADER>[] => {
@@ -216,39 +216,42 @@ const keyLayoutsIndexRow = (row: CsvRowInput<typeof LAYOUTS_INDEX_HEADER>): stri
 const keyWidgetRow = (row: CsvRowInput<typeof WIDGETS_HEADER>): string =>
   `${row.snapshot_ts_ms ?? 'unknown'}:${row.layout_id ?? 'unknown'}:${row.widget_id ?? 'unknown'}`;
 
-const processLayoutsPayload = async (
+export const processLayoutsPayload = async (
   payload: unknown,
   clock: LayoutsRecorderClock,
-  logger: LayoutsRecorderLogger,
+  logger?: LayoutsRecorderLogger,
 ): Promise<ProcessResult | null> => {
   if (!isPlainObject(payload) || !Array.isArray(payload.layouts)) {
-    logger.writeGeneral({ kind: 'layouts-snapshot-invalid', reason: 'missing-layouts-array' });
+    logger?.writeGeneral({ kind: 'layouts-snapshot-invalid', reason: 'missing-layouts-array' });
     return null;
   }
 
   const rawLayouts = payload.layouts;
   const layouts = rawLayouts.filter(isRawLayout);
   if (rawLayouts.length > 0 && layouts.length === 0) {
-    logger.writeGeneral({ kind: 'layouts-snapshot-invalid', reason: 'no-valid-layouts' });
+    logger?.writeGeneral({ kind: 'layouts-snapshot-invalid', reason: 'no-valid-layouts' });
     return null;
   }
 
   const snapshot = toSnapshot(clock);
-  const baseDir = ensureSnapshotDirs(snapshot);
+  const baseInput = { kind: 'app', segments: ['layouts', snapshot.snapshotDateUtc] } as const;
 
-  const rawPath = path.join(baseDir, 'raw', `hippo_bw_layouts_${snapshot.snapshotTsMs}.json`);
-  const jsonlPath = path.join(baseDir, 'layouts.jsonl');
-  const layoutsIndexPath = path.join(baseDir, 'layouts_index.csv');
-  const widgetsPath = path.join(baseDir, 'widgets.csv');
+  const rawPath = dataPath(
+    { kind: 'app', segments: [...baseInput.segments, 'raw'] },
+    `hippo_bw_layouts_${snapshot.snapshotTsMs}.json`,
+  );
+  const jsonlPath = dataPath(baseInput, 'layouts.jsonl');
+  const layoutsIndexPath = dataPath(baseInput, 'layouts_index.csv');
+  const widgetsPath = dataPath(baseInput, 'widgets.csv');
 
   await writeFile(rawPath, `${JSON.stringify(payload, null, 2)}\n`);
-  await appendJsonLines(jsonlPath, layouts);
+  await appendJsonl(jsonlPath, layouts);
 
-  const layoutRows = buildLayoutRows(layouts, snapshot);
-  const widgetRows = buildWidgetRows(layouts, snapshot);
+  const layoutRows = toLayoutsIndexRows(layouts, snapshot);
+  const widgetRows = toWidgetRows(layouts, snapshot);
 
-  await upsertCsv(layoutsIndexPath, LAYOUTS_INDEX_HEADER, layoutRows, keyLayoutsIndexRow);
-  await upsertCsv(widgetsPath, WIDGETS_HEADER, widgetRows, keyWidgetRow);
+  await appendCsv(layoutsIndexPath, layoutRows, LAYOUTS_INDEX_HEADER, keyLayoutsIndexRow);
+  await appendCsv(widgetsPath, widgetRows, WIDGETS_HEADER, keyWidgetRow);
 
   return {
     snapshot,
@@ -348,3 +351,9 @@ export function registerLayoutsRecorder(
     },
   };
 }
+
+export const __test__ = {
+  toLayoutsIndexRows,
+  toWidgetRows,
+  processLayoutsPayload,
+};

@@ -17,6 +17,10 @@ export type AssetPathInput =
       readonly date?: string | Date;
     };
 
+type AppPathInput = { readonly kind: 'app'; readonly segments?: readonly string[] };
+
+type DataPathInput = AssetPathInput | AppPathInput;
+
 const sanitizeSegment = (input: string | undefined): string => {
   if (!input) {
     return DEFAULT_SYMBOL;
@@ -103,6 +107,24 @@ const normalizeAssetPathInput = (input: AssetPathInput): { assetClass: string; s
   };
 };
 
+const isAppPathInput = (input: DataPathInput): input is AppPathInput =>
+  typeof input === 'object' && input !== null && (input as { kind?: string }).kind === 'app';
+
+const sanitizeAppSegments = (segments: readonly string[] | undefined): string[] => {
+  if (!segments || segments.length === 0) {
+    return [];
+  }
+  return segments
+    .map((segment) => (typeof segment === 'string' ? segment.trim() : ''))
+    .filter((segment): segment is string => segment.length > 0);
+};
+
+const ensureAppDir = (segments: readonly string[]): string => {
+  const baseDir = path.join(process.cwd(), 'data', 'app', ...segments);
+  ensureDirectorySync(baseDir);
+  return baseDir;
+};
+
 export function ensureSymbolDateDir(input?: AssetPathInput): string {
   const { assetClass, symbol, date } = normalizeAssetPathInput(input);
   const base = path.join(process.cwd(), 'data', assetClass, symbol, date);
@@ -110,7 +132,17 @@ export function ensureSymbolDateDir(input?: AssetPathInput): string {
   return base;
 }
 
-export function dataPath(input: AssetPathInput, ...segments: string[]): string {
+export function dataPath(input: DataPathInput, ...segments: string[]): string {
+  if (isAppPathInput(input)) {
+    const baseDir = ensureAppDir(sanitizeAppSegments(input.segments));
+    if (segments.length === 0) {
+      return baseDir;
+    }
+    const target = path.join(baseDir, ...segments);
+    ensureDirectoryForFileSync(target);
+    return target;
+  }
+
   const baseDir = ensureSymbolDateDir(input);
   if (segments.length === 0) {
     return baseDir;
