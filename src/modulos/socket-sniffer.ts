@@ -58,10 +58,6 @@ const ORDER_FIELD_KEYS = [
 ];
 
 type WsFrameDirection = 'received' | 'sent';
-const HEARTBEAT_DIRECTION_MAP: Record<WsFrameDirection, 'recv' | 'send'> = {
-  received: 'recv',
-  sent: 'send',
-};
 const HEARTBEAT_INTERVAL_MS = 5_000;
 const STATS_SNAPSHOT_INTERVAL_MS = HEARTBEAT_INTERVAL_MS;
 const HEALTH_INTERVAL_MS = 30_000;
@@ -305,7 +301,7 @@ const resolveServerTimestamp = (value: unknown): number | undefined => {
 
 const resolveHeartbeatPayload = (
   payload: unknown,
-): { opCode: number; serverTsMs?: number; dataBase64: string } | null => {
+): { opCode: number; dataBase64: string } | null => {
   if (!payload || typeof payload !== 'object') {
     return null;
   }
@@ -319,16 +315,16 @@ const resolveHeartbeatPayload = (
   if (!dataText) {
     return null;
   }
-  const decoded = decodeBase64(dataText);
+  return { opCode, dataBase64: dataText };
+};
+
+const resolveHeartbeatServerTimestamp = (dataBase64: string): number | undefined => {
+  const decoded = decodeBase64(dataBase64);
   if (!decoded) {
-    return { opCode, dataBase64: dataText };
+    return undefined;
   }
   const decodedValue = safeJsonParse(decoded) ?? decoded;
-  const serverTsMs = resolveServerTimestamp(decodedValue);
-  if (typeof serverTsMs === 'number') {
-    return { opCode, serverTsMs, dataBase64: dataText };
-  }
-  return { opCode, dataBase64: dataText };
+  return resolveServerTimestamp(decodedValue);
 };
 
 const escapeCsvValue = (value: unknown): string => {
@@ -813,19 +809,19 @@ async function exposeLogger(
   };
 
   const appendHeartbeatRow = (params: {
-    timestampMs: number;
     url: string;
     direction: WsFrameDirection;
     opCode: number;
     dataBase64: string;
   }) => {
-    const day = resolveUtcDateFromTimestamp(params.timestampMs);
+    const snapshotTsMs = Date.now();
+    const day = resolveUtcDateFromTimestamp(snapshotTsMs);
     const stream = ensureHeartbeatStream(day);
     const row = [
-      escapeCsvValue(params.timestampMs),
+      escapeCsvValue(snapshotTsMs),
       escapeCsvValue(day),
       escapeCsvValue(params.url),
-      escapeCsvValue(HEARTBEAT_DIRECTION_MAP[params.direction]),
+      escapeCsvValue(params.direction),
       escapeCsvValue(params.opCode),
       escapeCsvValue(params.dataBase64),
       '',
@@ -979,13 +975,14 @@ async function exposeLogger(
     const heartbeat = resolveHeartbeatPayload(parsed);
     if (heartbeat) {
       const now = Date.now();
-      if (typeof heartbeat.serverTsMs === 'number') {
-        const skewMs = now - heartbeat.serverTsMs;
+      const serverTsMs = resolveHeartbeatServerTimestamp(heartbeat.dataBase64);
+      if (typeof serverTsMs === 'number') {
+        const skewMs = now - serverTsMs;
         writeGeneral({
           kind: 'ws-keepalive',
           url: params.url,
           opCode: heartbeat.opCode,
-          serverTsMs: heartbeat.serverTsMs,
+          serverTsMs,
           skewMs,
         });
       } else {
@@ -996,7 +993,6 @@ async function exposeLogger(
         });
       }
       appendHeartbeatRow({
-        timestampMs: now,
         url: params.url,
         direction: params.direction,
         opCode: heartbeat.opCode,
