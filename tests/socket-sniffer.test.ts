@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { resolveEventTimestamp } from '../src/modulos/socket-sniffer.js';
+import { resolveEventTimestamp, isOrderUpdateWs } from '../src/modulos/socket-sniffer.js';
 import { BaseEvent } from '../src/io/schemas.js';
 
 test('resolveEventTimestamp converts seconds-based timestamps to milliseconds', () => {
@@ -44,4 +44,14 @@ test('resolveEventTimestamp returns undefined when no timestamp is present', () 
   const resolved = resolveEventTimestamp(event);
 
   assert.strictEqual(resolved, undefined);
+});
+
+test('isOrderUpdateWs validates only the global order websocket', () => {
+  const validUrl =
+    'wss://api-streaming.robinhood.com/wss/connect?topic=equity_order_update&topic=option_order_update&topic=crypto_order_update&topic=futures_order_update';
+  const invalidUrl =
+    'wss://api-streaming.robinhood.com/wss/connect?topic=equity_order_update&topic=option_order_update&topic=futures_order_update';
+
+  assert.ok(isOrderUpdateWs(validUrl));
+  assert.ok(!isOrderUpdateWs(invalidUrl));
 });
