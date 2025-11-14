@@ -18,165 +18,151 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 5:
-¡Vamos con la **ORDEN DEL MOMENTO** para el **módulo de opciones avanzadas (SPY)** — **Petición 1**.
-No asumo nada: solo trabajo con lo que enviaste (handshake + ráfaga de **opCode 9 (ping)** y **opCode 10 (pong)**). No llegó ningún evento de negocio (no hay “order update” con contenido).
+PUNTO 6:
+¡Vamos con la ORDEN DEL MOMENTO — Módulo “opciones avanzadas (SPY)” · **Petición 2** `wss://api.robinhood.com/marketdata/streaming/legend/`!
 
-# Petición 1 — `wss://api-streaming.robinhood.com/wss/connect?...topic=equity_order_update&topic=option_order_update&topic=crypto_order_update&topic=futures_order_update`
+No asumo nada. Solo uso lo que enviaste: mensajes `KEEPALIVE` (channel 0) y `FEED_DATA` con `eventType` **Trade** (channel 1) y **TradeETH** (channel 3) para `eventSymbol: "SPY"` con campos: `price`, `dayVolume`, `eventSymbol`, `eventType`, `time`.
 
-## 1) Dónde guardarlo (sistema de directorios)
+---
 
-Este stream **no** pertenece a un símbolo ni a futuros; es un **stream global de órdenes**. Ubícalo como **telemetría** de WS:
+# 1) Dónde guardarlo (sistema de directorios)
+
+Como es **por símbolo** (SPY), va en **stocks** con fecha (UTC del frame):
 
 ```
 data/
-└─ app/
-   └─ streams/
-      └─ orders/                         # streams de órdenes (equity/option/crypto/futures)
-         └─ <YYYY-MM-DD>/                # fecha UTC del snapshot
+└─ stocks/
+   └─ SPY/
+      └─ <YYYY-MM-DD>/
+         └─ legend/
             ├─ raw/
-            │  └─ wss_connect_<epoch_ms>.txt     # handshake (request/response) tal cual
-            ├─ heartbeats.csv                     # pings/pongs observados
-            └─ session_index.csv                  # metadatos mínimos de la sesión
+            │  └─ ws_connect_<epoch_ms>.txt          # handshake request/response (sin Authorization)
+            ├─ keepalive.csv                          # latidos del canal 0
+            ├─ trades.jsonl                           # FEED_DATA eventType="Trade"
+            └─ trades_eth.jsonl                       # FEED_DATA eventType="TradeETH"
 ```
 
-> No se mezcla con `data/stocks/...` ni `data/futures/...`.
+> No mezclo con candles u otros tipos no presentes aquí. Solo guardo lo que enviaste.
 
 ---
 
-## 2) Qué recibimos exactamente
+# 2) Cómo recibir y procesar
 
-Solo mensajes **keepalive**:
+**Filtro de URL exacto**
 
-* `opCode: 9` con `data` (base64) → **PING**
-* `opCode: 10` con `data` (base64) → **PONG**
+* Procesar **solo** si `url === "wss://api.robinhood.com/marketdata/streaming/legend/"`.
 
-No recibimos cuerpos JSON de órdenes (ni de equity ni options ni crypto ni futures) en lo que compartiste.
+**Handshake**
+
+* Guardar en `legend/raw/ws_connect_<epoch_ms>.txt`:
+
+  * Línea “REQUEST” con URL y headers **sin** `Authorization`.
+  * Separador.
+  * Línea “RESPONSE” con status + headers.
+
+**Frames**
+
+* Cada frame debe ser un JSON con estructura `{ type, channel, data? }`.
+* Ramas:
+
+  1. `type === "KEEPALIVE"` → escribir fila en `keepalive.csv`.
+  2. `type === "FEED_DATA"` y `Array.isArray(data)`:
+
+     * Iterar elementos de `data`.
+     * Si el objeto incluye **exactamente** los campos observados:
+
+       * `eventSymbol` (ej. `"SPY"`)
+       * `eventType` ∈ {`"Trade"`, `"TradeETH"`}
+       * `price` (num)
+       * `dayVolume` (num)
+       * `time` (entero ms)
+     * Guardar cada elemento:
+
+       * `eventType === "Trade"` → `trades.jsonl` (una línea por objeto)
+       * `eventType === "TradeETH"` → `trades_eth.jsonl`
+     * Si aparece otro `eventType` **no** lo proceses ni guardes (no asumimos contrato).
+* No hay transformaciones. Se guardan **tal cual** los valores.
 
 ---
 
-## 3) Cómo recibir y procesar (paso a paso, claro y mínimo)
+# 3) Esquemas de archivos (exactos y mínimos)
 
-1. **Detectar** el WS por URL exacta que contenga:
-
-   ```
-   wss://api-streaming.robinhood.com/wss/connect?topic=equity_order_update&topic=option_order_update&topic=crypto_order_update&topic=futures_order_update
-   ```
-2. **Guardar handshake** (solo texto):
-
-   * En `raw/wss_connect_<epoch_ms>.txt` escribe:
-
-     * Línea 1: `REQUEST` (método y URL)
-     * Encabezados **sin Authorization** (omite/anonimiza)
-     * Línea separadora
-     * `RESPONSE` status y encabezados de respuesta
-3. **Procesar frames**:
-
-   * Para cada frame recibido/enviado que incluya un objeto con campos `opCode` y `data`:
-
-     * Si `opCode` es `9` o `10`, registrar en **heartbeats.csv**.
-   * Si el frame trae **otra cosa** (no visible aquí), **no** la inventamos ni la parseamos.
-4. **Escritura de índices de sesión**:
-
-   * Crear/append en `session_index.csv` con metadatos básicos.
-
----
-
-## 4) Esquemas de salida (exactos)
-
-### `heartbeats.csv`
+## `keepalive.csv`
 
 Columnas (en este orden):
 
 ```
-snapshot_ts_ms,snapshot_date_utc,ws_url,dir,opCode,data_base64,decoded_hint
+ts_ms,date_utc,ws_url,channel,type
 ```
 
-* `snapshot_ts_ms` = epoch ms del **frame**
-* `snapshot_date_utc` = `YYYY-MM-DD` derivado de ese timestamp
-* `ws_url` = la URL completa del WS
-* `dir` = `recv` | `send` (si puedes distinguirlo; si no, usa `recv`)
-* `opCode` = `9` o `10` (solo esos según lo observado)
-* `data_base64` = la cadena base64 recibida (tal cual)
-* `decoded_hint` = **cadena vacía** (no asumimos decodificación; puedes dejarlo vacío)
+* `ts_ms`: epoch ms del frame.
+* `date_utc`: `YYYY-MM-DD` derivado del `ts_ms`.
+* `ws_url`: `wss://api.robinhood.com/marketdata/streaming/legend/`
+* `channel`: `0`
+* `type`: la cadena `"KEEPALIVE"`
 
-> No realizamos *decode* porque no diste el significado del payload base64. No se asume.
-
-**Ejemplos con tus frames:**
+**Ejemplo fila:**
 
 ```
-1762913097620,2025-11-12,wss://api-streaming.robinhood.com/wss/connect?...&topic=futures_order_update,recv,9,MTc2MjkxMzAwOTc2Mg==,
-1762913098320,2025-11-12,wss://api-streaming.robinhood.com/wss/connect?...&topic=futures_order_update,recv,10,MTc2MjkxMzAwOTc2Mg==,
+1762912422316,2025-11-12,wss://api.robinhood.com/marketdata/streaming/legend/,0,KEEPALIVE
 ```
 
-### `session_index.csv`
+## `trades.jsonl`  (una línea por objeto)
 
-Columnas (en este orden):
+Cada línea es un JSON **solo con los campos que viste**:
 
+```json
+{"channel":1,"eventSymbol":"SPY","eventType":"Trade","price":682.87,"dayVolume":2398,"time":1762894799967}
 ```
-session_start_ts_ms,session_date_utc,ws_url,topics,server_idle_timeout_ms,client_user_agent,origin
+
+## `trades_eth.jsonl`
+
+Igual, para `eventType: "TradeETH"` (ej. channel `3`):
+
+```json
+{"channel":3,"eventSymbol":"SPY","eventType":"TradeETH","price":683.65,"dayVolume":2398,"time":1762911120499}
 ```
 
-* `topics` = cadena exacta del query de la URL (`equity_order_update,option_order_update,crypto_order_update,futures_order_update`)
-* `server_idle_timeout_ms` = si está presente en la respuesta (aquí vimos `300000`)
-* `client_user_agent` = el UA del request (si lo tienes)
-* `origin` = `https://robinhood.com`
-
-> Un **registro por conexión**. Si reabres, generas otra fila.
+> No añado columnas derivadas (timezone, flags, etc.). **No se asume nada**.
 
 ---
 
-## 5) Reglas de guardado e idempotencia
+# 4) Reglas de guardado
 
-* **raw/** es inmutable (cada archivo lleva `<epoch_ms>` único).
-* `heartbeats.csv` y `session_index.csv` usan **append**.
-* Claves naturales (no estrictas, solo referencia):
-
-  * `session_index.csv`: `session_start_ts_ms + ws_url`
-  * `heartbeats.csv`: `(snapshot_ts_ms + ws_url + opCode + dir + data_base64)`
+* `raw/` → **inmutable**. Nombre con `<epoch_ms>` para unicidad.
+* `keepalive.csv` → **append**.
+* `trades.jsonl` y `trades_eth.jsonl` → **append** (una línea por evento).
+* Si en una misma sesión hay múltiples días (por diferencias de hora), el `date_utc` del frame decide la carpeta `<YYYY-MM-DD>` destino.
 
 ---
 
-## 6) Funciones (qué hacen y qué devuelven)
+# 5) Funciones (qué hacen y qué devuelven)
 
-* `shouldProcessWebSocket(url: string): boolean`
+* `shouldProcessLegendWS(url: string): boolean`
 
-  * `true` **solo** si la URL es el `wss://api-streaming.robinhood.com/wss/connect` con **todos** los topics de tu ejemplo.
+  * Devuelve `true` **solo** para `"wss://api.robinhood.com/marketdata/streaming/legend/"`.
 
-* `onWebSocketOpen(ctx): void`
+* `onLegendOpen(ctx): void`
 
-  * Crea `raw/wss_connect_<epoch_ms>.txt` con request/response (sin Authorization).
-  * Inserta/actualiza `session_index.csv` (append).
+  * Escribe el handshake en `legend/raw/ws_connect_<epoch_ms>.txt`.
 
-* `onFrameReceived(payload: unknown, url: string, ts_ms: number): void`
+* `onLegendFrame(json: unknown, url: string, ts_ms: number): void`
 
-  * Si `payload` es objeto con **campos** `opCode` y `data`:
+  * Si `type === "KEEPALIVE"` → escribe una fila en `keepalive.csv`.
+  * Si `type === "FEED_DATA"` → para cada elemento de `data`:
 
-    * Si `opCode` ∈ {9,10}, escribe una fila en `heartbeats.csv`.
-  * Si no cumple, **no** lo proceses (no asumimos nada).
+    * Si `eventType === "Trade"` con los campos observados → append en `trades.jsonl`.
+    * Si `eventType === "TradeETH"` con los campos observados → append en `trades_eth.jsonl`.
+    * En cualquier otro caso → **ignorar** (sin logs ruidosos).
 
-* `onFrameSent(...)` (opcional)
-
-  * Igual que `onFrameReceived` pero con `dir = "send"`.
-
-> Todas devuelven `void`; en error de I/O, loguean y continúan.
+Todas devuelven `void`. En errores de I/O, log mínimo y continuar.
 
 ---
 
-## 7) Qué **no** hacemos (porque no está en lo que enviaste)
+# 6) Interacciones con otros archivos/módulos
 
-* No guardamos “order updates” de negocio porque **no aparecieron** en tus frames.
-* No decodificamos el base64 (no diste el contrato).
-* No inferimos *schemas* de eventos de órdenes.
-
----
-
-## 8) Relación con otros módulos/archivos
-
-* **Independiente**. Es telemetría WS global.
-* Puede ayudarte a:
-
-  * Ver latencia entre `ping` y `pong`.
-  * Validar sesiones y caídas cuando un módulo dependa de order updates reales.
+* **Directorio base** `data/stocks/SPY/<YYYY-MM-DD>/` es coherente con tu árbol (temporalidades/noticias/greeks irán en otras carpetas; **este stream** solo aporta **Trade / TradeETH**).
+* No depende de futuros ni de la telemetría de órdenes (es independiente).
+* Si después recibes **Candle** o **Quote** por este WS, se agregan archivos nuevos (p. ej. `candles_*.jsonl` o `quotes.jsonl`) pero **solo** cuando compartas esos mensajes (para no asumir).
 
 ---
