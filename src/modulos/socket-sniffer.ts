@@ -1,6 +1,7 @@
 import { createWriteStream, existsSync, statSync, type WriteStream } from 'node:fs';
+import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import type { Frame, Page, WebSocket } from 'playwright';
+import type { Frame, Page, Request, WebSocket } from 'playwright';
 import { DateTime } from 'luxon';
 
 import { RotatingWriter, type RotatePolicy } from './rotating-writer.js';
@@ -23,7 +24,7 @@ import {
   toMsUtc,
 } from '../io/row.js';
 import { dataPath, ensureSymbolDateDir } from '../io/paths.js';
-import { ensureDirectoryForFileSync } from '../io/dir.js';
+import { ensureDirectoryForFileSync, ensureDirectorySync } from '../io/dir.js';
 import { BaseEvent } from '../io/schemas.js';
 import { extractFeed, MAX_WS_ENTRY_TEXT_LENGTH } from '../utils/payload.js';
 import { isHookableFrame } from '../utils/origins.js';
@@ -32,7 +33,10 @@ type Serializable = Record<string, unknown>;
 
 const DEFAULT_PREFIX = 'socket';
 const ROBINHOOD_STREAMING_WS_PREFIX = 'wss://api-streaming.robinhood.com/wss/connect';
-const WS_METRICS_HEADER = 'timestamp,url,opCode,server_ts_ms,skew_ms';
+const ORDER_HEARTBEATS_HEADER =
+  'snapshot_ts_ms,snapshot_date_utc,ws_url,dir,opCode,data_base64,decoded_hint';
+const ORDER_SESSION_INDEX_HEADER =
+  'session_start_ts_ms,session_date_utc,ws_url,topics,server_idle_timeout_ms,client_user_agent,origin';
 const HEARTBEAT_OPCODES = new Set([9, 10]);
 const ORDER_FIELD_KEYS = [
   'order_id',
@@ -54,6 +58,10 @@ const ORDER_FIELD_KEYS = [
 ];
 
 type WsFrameDirection = 'received' | 'sent';
+const HEARTBEAT_DIRECTION_MAP: Record<WsFrameDirection, 'recv' | 'send'> = {
+  received: 'recv',
+  sent: 'send',
+};
 const HEARTBEAT_INTERVAL_MS = 5_000;
 const STATS_SNAPSHOT_INTERVAL_MS = HEARTBEAT_INTERVAL_MS;
 const HEALTH_INTERVAL_MS = 30_000;
@@ -145,6 +153,88 @@ type OrderSummary = {
   triggerPrice?: number;
 };
 
+type HeaderEntry = { name: string; value: string };
+type HeaderEntries = readonly HeaderEntry[];
+
+const ORDER_DEFAULT_ORIGIN = 'https://robinhood.com';
+
+const normalizeTelemetryDate = (input: string | null | undefined): string => {
+  if (typeof input === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(input)) {
+    return input;
+  }
+  if (typeof input === 'string') {
+    const parsed = DateTime.fromISO(input, { zone: 'utc' });
+    if (parsed.isValid) {
+      return parsed.toFormat('yyyy-MM-dd');
+    }
+  }
+  const now = DateTime.utc();
+  return now.isValid ? now.toFormat('yyyy-MM-dd') : new Date().toISOString().slice(0, 10);
+};
+
+const ensureOrderTelemetryDir = (date: string): { baseDir: string; rawDir: string } => {
+  const normalized = normalizeTelemetryDate(date);
+  const baseDir = path.join(process.cwd(), 'data', 'app', 'streams', 'orders', normalized);
+  ensureDirectorySync(baseDir);
+  const rawDir = path.join(baseDir, 'raw');
+  ensureDirectorySync(rawDir);
+  return { baseDir, rawDir };
+};
+
+const resolveUtcDateFromTimestamp = (timestampMs: number): string => {
+  const resolved = DateTime.fromMillis(timestampMs, { zone: 'utc' });
+  if (resolved.isValid) {
+    return resolved.toFormat('yyyy-MM-dd');
+  }
+  return new Date(timestampMs).toISOString().slice(0, 10);
+};
+
+const toHeaderLookup = (entries: HeaderEntries): Map<string, string> => {
+  const lookup = new Map<string, string>();
+  for (const entry of entries) {
+    lookup.set(entry.name.toLowerCase(), entry.value);
+  }
+  return lookup;
+};
+
+const formatHeadersBlock = (entries: HeaderEntries, options: { omitAuthorization?: boolean } = {}): string => {
+  const lines: string[] = [];
+  for (const { name, value } of entries) {
+    if (options.omitAuthorization && name.toLowerCase() === 'authorization') {
+      continue;
+    }
+    lines.push(`${name}: ${value}`);
+  }
+  return lines.join('\n');
+};
+
+const collectOrderTopics = (url: string): string => {
+  try {
+    const parsed = new URL(url);
+    const topics = parsed.searchParams.getAll('topic');
+    return topics.join(',');
+  } catch (error) {
+    void error;
+    return '';
+  }
+};
+
+const parseServerIdleTimeoutMs = (headers: Map<string, string>): number | undefined => {
+  const candidates = [
+    headers.get('x-server-idle-timeout-ms'),
+    headers.get('server-idle-timeout-ms'),
+    headers.get('x-server-idle-timeout'),
+    headers.get('server-idle-timeout'),
+  ];
+  for (const candidate of candidates) {
+    const resolved = toFiniteNumber(candidate);
+    if (typeof resolved === 'number') {
+      return resolved;
+    }
+  }
+  return undefined;
+};
+
 const safeJsonParse = (text: string): unknown | undefined => {
   try {
     return JSON.parse(text);
@@ -215,7 +305,7 @@ const resolveServerTimestamp = (value: unknown): number | undefined => {
 
 const resolveHeartbeatPayload = (
   payload: unknown,
-): { opCode: number; serverTsMs: number } | null => {
+): { opCode: number; serverTsMs?: number; dataBase64: string } | null => {
   if (!payload || typeof payload !== 'object') {
     return null;
   }
@@ -231,14 +321,14 @@ const resolveHeartbeatPayload = (
   }
   const decoded = decodeBase64(dataText);
   if (!decoded) {
-    return null;
+    return { opCode, dataBase64: dataText };
   }
   const decodedValue = safeJsonParse(decoded) ?? decoded;
   const serverTsMs = resolveServerTimestamp(decodedValue);
-  if (typeof serverTsMs !== 'number') {
-    return null;
+  if (typeof serverTsMs === 'number') {
+    return { opCode, serverTsMs, dataBase64: dataText };
   }
-  return { opCode, serverTsMs };
+  return { opCode, dataBase64: dataText };
 };
 
 const escapeCsvValue = (value: unknown): string => {
@@ -667,51 +757,156 @@ async function exposeLogger(
   };
 
   const websocketCleanupMap = new Map<WebSocket, () => void>();
-  let websocketMetricsStream: WriteStream | undefined;
-  const orderStreamsByDay = new Map<string, WriteStream>();
+  const orderRawStreamsByDay = new Map<string, WriteStream>();
+  const heartbeatStreamsByDay = new Map<string, WriteStream>();
+  const sessionIndexStreamsByDay = new Map<string, WriteStream>();
 
-  const ensureWebsocketMetricsStream = (): WriteStream => {
-    if (!websocketMetricsStream) {
-      const metricsFile = path.join(
-        process.cwd(),
-        'data',
-        '_metrics',
-        'ws',
-        'robinhood-streaming.csv',
-      );
-      ensureDirectoryForFileSync(metricsFile);
-      const needsHeader = !existsSync(metricsFile) || statSync(metricsFile).size === 0;
-      websocketMetricsStream = createWriteStream(metricsFile, { flags: 'a' });
-      if (needsHeader) {
-        websocketMetricsStream.write(`${WS_METRICS_HEADER}\n`);
-      }
-    }
-    return websocketMetricsStream;
-  };
-
-  const closeWebsocketMetricsStream = () => {
-    if (websocketMetricsStream) {
-      websocketMetricsStream.close();
-      websocketMetricsStream = undefined;
-    }
-  };
-
-  const ensureOrderStream = (day: string): WriteStream => {
-    let stream = orderStreamsByDay.get(day);
-    if (!stream) {
-      const filePath = path.join(process.cwd(), 'data', '_raw', 'orders', `${day}.jsonl`);
-      ensureDirectoryForFileSync(filePath);
-      stream = createWriteStream(filePath, { flags: 'a' });
-      orderStreamsByDay.set(day, stream);
+  const ensureCsvStream = (filePath: string, header: string): WriteStream => {
+    ensureDirectoryForFileSync(filePath);
+    const needsHeader = !existsSync(filePath) || statSync(filePath).size === 0;
+    const stream = createWriteStream(filePath, { flags: 'a' });
+    if (needsHeader) {
+      stream.write(`${header}\n`);
     }
     return stream;
   };
 
-  const closeOrderStreams = () => {
-    for (const stream of orderStreamsByDay.values()) {
+  const ensureOrderRawStream = (day: string): WriteStream => {
+    let stream = orderRawStreamsByDay.get(day);
+    if (!stream) {
+      const { rawDir } = ensureOrderTelemetryDir(day);
+      const filePath = path.join(rawDir, `orders_${day}.jsonl`);
+      ensureDirectoryForFileSync(filePath);
+      stream = createWriteStream(filePath, { flags: 'a' });
+      orderRawStreamsByDay.set(day, stream);
+    }
+    return stream;
+  };
+
+  const ensureHeartbeatStream = (day: string): WriteStream => {
+    let stream = heartbeatStreamsByDay.get(day);
+    if (!stream) {
+      const { baseDir } = ensureOrderTelemetryDir(day);
+      const filePath = path.join(baseDir, 'heartbeats.csv');
+      stream = ensureCsvStream(filePath, ORDER_HEARTBEATS_HEADER);
+      heartbeatStreamsByDay.set(day, stream);
+    }
+    return stream;
+  };
+
+  const ensureSessionIndexStream = (day: string): WriteStream => {
+    let stream = sessionIndexStreamsByDay.get(day);
+    if (!stream) {
+      const { baseDir } = ensureOrderTelemetryDir(day);
+      const filePath = path.join(baseDir, 'session_index.csv');
+      stream = ensureCsvStream(filePath, ORDER_SESSION_INDEX_HEADER);
+      sessionIndexStreamsByDay.set(day, stream);
+    }
+    return stream;
+  };
+
+  const closeStreamMap = (map: Map<string, WriteStream>) => {
+    for (const stream of map.values()) {
       stream.close();
     }
-    orderStreamsByDay.clear();
+    map.clear();
+  };
+
+  const appendHeartbeatRow = (params: {
+    timestampMs: number;
+    url: string;
+    direction: WsFrameDirection;
+    opCode: number;
+    dataBase64: string;
+  }) => {
+    const day = resolveUtcDateFromTimestamp(params.timestampMs);
+    const stream = ensureHeartbeatStream(day);
+    const row = [
+      escapeCsvValue(params.timestampMs),
+      escapeCsvValue(day),
+      escapeCsvValue(params.url),
+      escapeCsvValue(HEARTBEAT_DIRECTION_MAP[params.direction]),
+      escapeCsvValue(params.opCode),
+      escapeCsvValue(params.dataBase64),
+      '',
+    ].join(',');
+    stream.write(`${row}\n`);
+  };
+
+  const appendSessionIndexRow = (params: {
+    startTs: number;
+    url: string;
+    topics: string;
+    userAgent?: string;
+    origin?: string;
+    responseHeaders: HeaderEntries;
+  }) => {
+    const day = resolveUtcDateFromTimestamp(params.startTs);
+    const stream = ensureSessionIndexStream(day);
+    const responseLookup = toHeaderLookup(params.responseHeaders);
+    const idleTimeout = parseServerIdleTimeoutMs(responseLookup);
+    const row = [
+      escapeCsvValue(params.startTs),
+      escapeCsvValue(day),
+      escapeCsvValue(params.url),
+      escapeCsvValue(params.topics),
+      escapeCsvValue(idleTimeout ?? ''),
+      escapeCsvValue(params.userAgent ?? ''),
+      escapeCsvValue(params.origin ?? ORDER_DEFAULT_ORIGIN),
+    ].join(',');
+    stream.write(`${row}\n`);
+  };
+
+  const handleOrderWsRequest = (request: Request) => {
+    if (request.resourceType() !== 'websocket') {
+      return;
+    }
+    const url = request.url();
+    if (!url.startsWith(ROBINHOOD_STREAMING_WS_PREFIX)) {
+      return;
+    }
+    const startTs = Date.now();
+    const day = resolveUtcDateFromTimestamp(startTs);
+    const { rawDir } = ensureOrderTelemetryDir(day);
+    const rawFilePath = path.join(rawDir, `wss_connect_${startTs}.txt`);
+    const requestHeaders = request.headersArray();
+    const requestLookup = toHeaderLookup(requestHeaders);
+    const requestBlock = [
+      `REQUEST ${request.method()} ${url}`,
+      formatHeadersBlock(requestHeaders, { omitAuthorization: true }),
+    ]
+      .filter(Boolean)
+      .join('\n');
+    const topics = collectOrderTopics(url);
+    const userAgent = requestLookup.get('user-agent');
+    const origin = requestLookup.get('origin') ?? ORDER_DEFAULT_ORIGIN;
+
+    void (async () => {
+      try {
+        const response = await request.response().catch(() => null);
+        const responseHeaders = response ? response.headersArray() : [];
+        const responseLine = response
+          ? `RESPONSE ${response.status()} ${response.statusText()}`
+          : 'RESPONSE <unavailable>';
+        const responseBlock = [responseLine, formatHeadersBlock(responseHeaders)]
+          .filter(Boolean)
+          .join('\n');
+        const fileContents = [requestBlock, '----', responseBlock].filter(Boolean).join('\n');
+        await writeFile(rawFilePath, `${fileContents}\n`, 'utf8');
+        appendSessionIndexRow({
+          startTs,
+          url,
+          topics,
+          userAgent,
+          origin,
+          responseHeaders,
+        });
+      } catch (error) {
+        /* eslint-disable no-console */
+        console.error('[socket-sniffer] Failed to persist order session handshake:', error);
+        /* eslint-enable no-console */
+      }
+    })();
   };
 
   const persistOrderPayload = (params: {
@@ -720,13 +915,11 @@ async function exposeLogger(
     payload: unknown;
     text: string;
   }) => {
-    const day = DateTime.utc().toISODate();
-    if (!day) {
-      return;
-    }
-    const stream = ensureOrderStream(day);
+    const timestampMs = Date.now();
+    const day = resolveUtcDateFromTimestamp(timestampMs);
+    const stream = ensureOrderRawStream(day);
     const entry: Record<string, unknown> = {
-      ts: Date.now(),
+      ts: timestampMs,
       url: params.url,
       direction: params.direction,
       payload: params.payload,
@@ -786,23 +979,29 @@ async function exposeLogger(
     const heartbeat = resolveHeartbeatPayload(parsed);
     if (heartbeat) {
       const now = Date.now();
-      const skewMs = now - heartbeat.serverTsMs;
-      writeGeneral({
-        kind: 'ws-keepalive',
+      if (typeof heartbeat.serverTsMs === 'number') {
+        const skewMs = now - heartbeat.serverTsMs;
+        writeGeneral({
+          kind: 'ws-keepalive',
+          url: params.url,
+          opCode: heartbeat.opCode,
+          serverTsMs: heartbeat.serverTsMs,
+          skewMs,
+        });
+      } else {
+        writeGeneral({
+          kind: 'ws-keepalive',
+          url: params.url,
+          opCode: heartbeat.opCode,
+        });
+      }
+      appendHeartbeatRow({
+        timestampMs: now,
         url: params.url,
+        direction: params.direction,
         opCode: heartbeat.opCode,
-        serverTsMs: heartbeat.serverTsMs,
-        skewMs,
+        dataBase64: heartbeat.dataBase64,
       });
-      const metricsStream = ensureWebsocketMetricsStream();
-      const row = [
-        escapeCsvValue(now),
-        escapeCsvValue(params.url),
-        escapeCsvValue(heartbeat.opCode),
-        escapeCsvValue(heartbeat.serverTsMs),
-        escapeCsvValue(skewMs),
-      ].join(',');
-      metricsStream.write(`${row}\n`);
     }
     handleOrderPayload({
       url: params.url,
@@ -854,6 +1053,7 @@ async function exposeLogger(
   };
 
   page.on('websocket', handleWebsocket);
+  page.on('request', handleOrderWsRequest);
 
   const counts: StatsCounts = {
     ch1: 0,
@@ -1591,9 +1791,15 @@ async function exposeLogger(
     } catch (error) {
       void error;
     }
+    try {
+      page.off('request', handleOrderWsRequest);
+    } catch (error) {
+      void error;
+    }
     cleanupAllWebSockets();
-    closeWebsocketMetricsStream();
-    closeOrderStreams();
+    closeStreamMap(orderRawStreamsByDay);
+    closeStreamMap(heartbeatStreamsByDay);
+    closeStreamMap(sessionIndexStreamsByDay);
     generalWriter.close();
     writeStatsSnapshot(Date.now(), true);
     closeAllSymbolContexts();
