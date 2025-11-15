@@ -24,6 +24,15 @@ const withTempCwd = async (fn: (cwd: string) => Promise<void>) => {
   }
 };
 
+const readJsonLines = async (filePath: string): Promise<unknown[]> => {
+  const contents = await readFile(filePath, 'utf8');
+  return contents
+    .trim()
+    .split('\n')
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line));
+};
+
 test('shouldProcessLegendWS enforces the legend streaming url', () => {
   assert.ok(shouldProcessLegendWS('wss://api.robinhood.com/marketdata/streaming/legend/'));
   assert.ok(shouldProcessLegendWS('wss://api.robinhood.com/marketdata/streaming/legend'));
@@ -155,5 +164,153 @@ test('legend recorder persists handshake, keepalive and trade frames', async () 
         },
       ],
     );
+  });
+});
+
+test('legend recorder persists options payloads', async () => {
+  await withTempCwd(async (cwd) => {
+    const optionSymbol = '.SPY250118C00470000';
+    const optionTs = Date.UTC(2024, 0, 3, 14, 45, 0);
+    onLegendFrame({
+      url: LEGEND_URL,
+      timestampMs: optionTs,
+      symbols: ['SPY'],
+      payload: {
+        type: 'FEED_DATA',
+        channel: 10,
+        data: [
+          {
+            channel: 10,
+            eventSymbol: optionSymbol,
+            eventType: 'Trade',
+            price: 0.41,
+            dayVolume: 150,
+            time: optionTs,
+            markPrice: 'NaN',
+          },
+          {
+            channel: 10,
+            eventSymbol: optionSymbol,
+            eventType: 'TradeETH',
+            price: 0.42,
+            dayVolume: 150,
+            time: optionTs,
+            markPrice: 'NaN',
+          },
+          {
+            channel: 10,
+            eventSymbol: optionSymbol,
+            eventType: 'Quote',
+            bid: 0.4,
+            ask: 0.5,
+            time: optionTs,
+            mid: 'NaN',
+          },
+          {
+            channel: 10,
+            eventSymbol: optionSymbol,
+            eventType: 'Summary',
+            openInterest: 500,
+            previousClosePrice: 0.39,
+            time: optionTs,
+          },
+          {
+            channel: 10,
+            eventSymbol: optionSymbol,
+            eventType: 'Greeks',
+            delta: 0.25,
+            theta: -0.08,
+            time: optionTs,
+          },
+        ],
+      },
+    });
+
+    const baseDir = path.join(cwd, 'data', 'stocks', 'SPY', '2024-01-03');
+    const legendDir = path.join(baseDir, 'legend');
+    const optionSymbolDir = path.join(baseDir, 'options', 'by_symbol', optionSymbol);
+
+    const aggregatedTrades = await readJsonLines(path.join(legendDir, 'options_trades.jsonl'));
+    assert.deepEqual(
+      aggregatedTrades,
+      [
+        {
+          channel: 10,
+          eventSymbol: optionSymbol,
+          eventType: 'Trade',
+          price: 0.41,
+          dayVolume: 150,
+          time: optionTs,
+          markPrice: 'NaN',
+        },
+        {
+          channel: 10,
+          eventSymbol: optionSymbol,
+          eventType: 'TradeETH',
+          price: 0.42,
+          dayVolume: 150,
+          time: optionTs,
+          markPrice: 'NaN',
+        },
+      ],
+    );
+
+    const aggregatedQuotes = await readJsonLines(path.join(legendDir, 'options_quotes.jsonl'));
+    assert.deepEqual(
+      aggregatedQuotes,
+      [
+        {
+          channel: 10,
+          eventSymbol: optionSymbol,
+          eventType: 'Quote',
+          bid: 0.4,
+          ask: 0.5,
+          time: optionTs,
+          mid: 'NaN',
+        },
+      ],
+    );
+
+    const aggregatedSummaries = await readJsonLines(path.join(legendDir, 'options_summaries.jsonl'));
+    assert.deepEqual(
+      aggregatedSummaries,
+      [
+        {
+          channel: 10,
+          eventSymbol: optionSymbol,
+          eventType: 'Summary',
+          openInterest: 500,
+          previousClosePrice: 0.39,
+          time: optionTs,
+        },
+      ],
+    );
+
+    const aggregatedGreeks = await readJsonLines(path.join(legendDir, 'options_greeks.jsonl'));
+    assert.deepEqual(
+      aggregatedGreeks,
+      [
+        {
+          channel: 10,
+          eventSymbol: optionSymbol,
+          eventType: 'Greeks',
+          delta: 0.25,
+          theta: -0.08,
+          time: optionTs,
+        },
+      ],
+    );
+
+    const perSymbolTrades = await readJsonLines(path.join(optionSymbolDir, 'options_trades.jsonl'));
+    assert.deepEqual(perSymbolTrades, aggregatedTrades);
+
+    const perSymbolQuotes = await readJsonLines(path.join(optionSymbolDir, 'options_quotes.jsonl'));
+    assert.deepEqual(perSymbolQuotes, aggregatedQuotes);
+
+    const perSymbolSummaries = await readJsonLines(path.join(optionSymbolDir, 'options_summaries.jsonl'));
+    assert.deepEqual(perSymbolSummaries, aggregatedSummaries);
+
+    const perSymbolGreeks = await readJsonLines(path.join(optionSymbolDir, 'options_greeks.jsonl'));
+    assert.deepEqual(perSymbolGreeks, aggregatedGreeks);
   });
 });
