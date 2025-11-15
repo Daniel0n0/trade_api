@@ -31,7 +31,7 @@ import {
 } from './legend-advanced-recorder.js';
 import { ensureDirectoryForFileSync, ensureDirectorySync } from '../io/dir.js';
 import { BaseEvent } from '../io/schemas.js';
-import { extractFeed, MAX_WS_ENTRY_TEXT_LENGTH } from '../utils/payload.js';
+import { extractFeed, MAX_WS_ENTRY_TEXT_LENGTH, shouldProcessLegendWS } from '../utils/payload.js';
 import { isHookableFrame } from '../utils/origins.js';
 
 type Serializable = Record<string, unknown>;
@@ -648,8 +648,6 @@ type LogEntry = Serializable & {
   readonly ts: number;
 };
 
-const LEGEND_WS_PATTERN = /marketdata\/streaming\/legend\//i;
-
 type LegendMessageKind = 'marketdata' | 'options' | 'news' | 'ignore' | 'unknown';
 
 type LegendClassificationResult =
@@ -703,7 +701,7 @@ const resolveDeepestLegendPayload = (root: Record<string, unknown>): Record<stri
 };
 
 const classifyLegendWsMessage = (entry: WsMessageEntry): LegendClassificationResult => {
-  if (!LEGEND_WS_PATTERN.test(entry.url)) {
+  if (!shouldProcessLegendWS(entry.url)) {
     return { matched: false };
   }
 
@@ -2080,7 +2078,7 @@ ${HOOK_POLYFILL}
     (function(){
       const OriginalWebSocket = window.WebSocket;
       const originalSend = OriginalWebSocket.prototype.send;
-      const LEGEND_RE = new RegExp('^wss://api\\.robinhood\\.com/marketdata/streaming/legend/?', 'i');
+      const LEGEND_WS_URL = 'wss://api.robinhood.com/marketdata/streaming/legend/';
 
       const normaliseUrl = (arg) => {
         if (typeof arg === 'string') {
@@ -2092,8 +2090,19 @@ ${HOOK_POLYFILL}
         return '';
       };
 
+      const shouldProcessLegendWs = (url) => {
+        if (typeof url !== 'string') {
+          return false;
+        }
+        const normalized = url.trim().toLowerCase();
+        if (!normalized) {
+          return false;
+        }
+        return normalized === LEGEND_WS_URL;
+      };
+
       const emit = (kind, url, text, parsed) => {
-        if (!LEGEND_RE.test(url)) {
+        if (!shouldProcessLegendWs(url)) {
           return;
         }
         if (parsed && !shouldKeep(parsed)) {
@@ -2189,6 +2198,6 @@ ${HOOK_POLYFILL}
 }
 
 function isLegend(sourceUrl: string): boolean {
-  return LEGEND_WS_PATTERN.test(sourceUrl);
+  return shouldProcessLegendWS(sourceUrl);
 }
 
