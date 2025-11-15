@@ -1,6 +1,7 @@
 import type { BrowserContext, Page } from 'playwright';
+import type { ModuleAction, ModuleArgs } from './messages.js';
 
-export type { ModuleAction, ModuleArgs } from './messages.js';
+export type { ModuleAction, ModuleArgs };
 
 export type SubBrowserRuntime = {
   readonly context: BrowserContext;

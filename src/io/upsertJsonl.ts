@@ -95,12 +95,13 @@ export async function upsertJsonl(filePath: string, entries: readonly JsonlUpser
     return operations;
   });
 
-  jsonlLocks.set(filePath, task.catch(() => {}));
+  const lockPromise = task.then(() => undefined, () => undefined);
+  jsonlLocks.set(filePath, lockPromise);
 
   try {
     return await task;
   } finally {
-    if (jsonlLocks.get(filePath) === task) {
+    if (jsonlLocks.get(filePath) === lockPromise) {
       jsonlLocks.delete(filePath);
     }
   }

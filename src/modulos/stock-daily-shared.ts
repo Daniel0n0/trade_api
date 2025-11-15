@@ -1179,6 +1179,10 @@ type NormalizedGreeksRecord = {
   readonly psi?: number;
 };
 
+type MutableNormalizedGreeksRecord = {
+  -readonly [K in keyof NormalizedGreeksRecord]: NormalizedGreeksRecord[K];
+};
+
 type GreeksFeature = {
   readonly result: { csvPath: string; jsonlPath: string };
   readonly shouldProcessUrl: (url: string) => boolean;
@@ -1210,6 +1214,17 @@ const GREEK_VALUE_ALIASES: Record<keyof NormalizedGreeksRecord, readonly string[
   phi: ['phi'],
   psi: ['psi'],
 };
+
+const NUMERIC_GREEK_KEYS = [
+  'impliedVolatility',
+  'delta',
+  'gamma',
+  'theta',
+  'vega',
+  'rho',
+  'phi',
+  'psi',
+] as const satisfies readonly (keyof NormalizedGreeksRecord)[];
 
 const pickNumberField = (record: Record<string, unknown>, keys: readonly string[]): number | undefined => {
   for (const key of keys) {
@@ -1272,20 +1287,12 @@ const normaliseInstrumentId = (record: Record<string, unknown>): string | undefi
   }
 };
 
-const extractGreekValues = (record: Record<string, unknown>): Partial<NormalizedGreeksRecord> => {
-  const values: Partial<NormalizedGreeksRecord> = {};
+const extractGreekValues = (
+  record: Record<string, unknown>,
+): Partial<MutableNormalizedGreeksRecord> => {
+  const values: Partial<MutableNormalizedGreeksRecord> = {};
   let matches = 0;
-  const numericKeys: (keyof NormalizedGreeksRecord)[] = [
-    'impliedVolatility',
-    'delta',
-    'gamma',
-    'theta',
-    'vega',
-    'rho',
-    'phi',
-    'psi',
-  ];
-  for (const key of numericKeys) {
+  for (const key of NUMERIC_GREEK_KEYS) {
     const aliases = GREEK_VALUE_ALIASES[key];
     const value = pickNumberField(record, aliases);
     if (value !== undefined) {

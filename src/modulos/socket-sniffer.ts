@@ -908,22 +908,22 @@ async function exposeLogger(
     const day = resolveUtcDateFromTimestamp(startTs);
     const { rawDir } = ensureOrderTelemetryDir(day);
     const rawFilePath = path.join(rawDir, `wss_connect_${startTs}.txt`);
-    const requestHeaders = request.headersArray();
-    const requestLookup = toHeaderLookup(requestHeaders);
-    const requestBlock = [
-      `REQUEST ${request.method()} ${url}`,
-      formatHeadersBlock(requestHeaders, { omitAuthorization: true }),
-    ]
-      .filter(Boolean)
-      .join('\n');
     const topics = collectOrderTopics(url);
-    const userAgent = requestLookup.get('user-agent');
-    const origin = requestLookup.get('origin') ?? ORDER_DEFAULT_ORIGIN;
 
     void (async () => {
       try {
+        const requestHeaders = await request.headersArray();
+        const requestLookup = toHeaderLookup(requestHeaders);
+        const userAgent = requestLookup.get('user-agent');
+        const origin = requestLookup.get('origin') ?? ORDER_DEFAULT_ORIGIN;
+        const requestBlock = [
+          `REQUEST ${request.method()} ${url}`,
+          formatHeadersBlock(requestHeaders, { omitAuthorization: true }),
+        ]
+          .filter(Boolean)
+          .join('\n');
         const response = await request.response().catch(() => null);
-        const responseHeaders = response ? response.headersArray() : [];
+        const responseHeaders = response ? await response.headersArray() : [];
         const responseLine = response
           ? `RESPONSE ${response.status()} ${response.statusText()}`
           : 'RESPONSE <unavailable>';
@@ -958,10 +958,10 @@ async function exposeLogger(
     }
     const timestampMs = Date.now();
     const method = request.method();
-    const headers = request.headersArray();
 
     void (async () => {
       try {
+        const headers = await request.headersArray();
         const response = await request.response().catch(() => null);
         await onLegendOpen({
           url,
@@ -973,7 +973,7 @@ async function exposeLogger(
             ? {
                 status: response.status(),
                 statusText: response.statusText(),
-                headers: response.headersArray(),
+                headers: await response.headersArray(),
               }
             : undefined,
         });
