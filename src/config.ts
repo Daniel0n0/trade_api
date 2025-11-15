@@ -313,8 +313,9 @@ export const MODULE_ALIASES: Readonly<Record<string, string>> = Object.freeze(
   Object.fromEntries(STOCK_DAILY_ALIAS_ENTRIES) as Record<string, string>,
 );
 
-export const canonicalizeModuleName = (name: string): string =>
-  MODULE_ALIASES[name] ?? name;
+export function canonicalizeModuleName(name: string): string {
+  return MODULE_ALIASES[name] ?? name;
+}
 
 const STOCK_DAILY_PAGE_MODULES: readonly ModuleDefinition[] = STOCK_DAILY_MODULE_SPECS.map(
   ({ name, pageDescription }) =>
