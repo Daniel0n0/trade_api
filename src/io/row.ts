@@ -1,6 +1,6 @@
 import type { Bar } from '../modulos/timebar.js';
 import type { BaseEvent } from './schemas.js';
-import { BARS_HEADER, CANDLE_HEADER, QUOTE_HEADER, STATS_HEADER } from './csvHeaders.js';
+import type { BarsHeader, CandleHeader, QuoteHeader, StatsHeader } from './csvHeaders.js';
 
 export { CSV_HEADERS, CSV_HEADER_TEXT } from './csvHeaders.js';
 
@@ -313,7 +313,7 @@ export type StatsCounts = {
   total: number;
 };
 
-export type StatsCsvRow = CsvRow<typeof STATS_HEADER>;
+export type StatsCsvRow = CsvRow<StatsHeader>;
 
 export type StatsSnapshotInput = {
   readonly ts: number;
@@ -342,7 +342,7 @@ export function buildStatsCsvRow(input: StatsSnapshotInput): StatsCsvRow {
   };
 }
 
-export type CandleCsvRow = CsvRow<typeof CANDLE_HEADER>;
+export type CandleCsvRow = CsvRow<CandleHeader>;
 
 export function buildCandleCsvRow(event: BaseEvent): CandleCsvRow | null {
   const timestamp = toMsUtc(event.time ?? event.eventTime ?? null);
@@ -364,7 +364,7 @@ export function buildCandleCsvRow(event: BaseEvent): CandleCsvRow | null {
   };
 }
 
-export type QuoteCsvRow = CsvRow<typeof QUOTE_HEADER>;
+export type QuoteCsvRow = CsvRow<QuoteHeader>;
 
 export function buildQuoteCsvRow(event: BaseEvent): QuoteCsvRow | null {
   const timestamp =
@@ -539,7 +539,7 @@ export function buildQuoteAggregationRow(event: BaseEvent): QuoteAggregationRow 
   return { ts, bidPrice: bid, askPrice: ask, ...(symbol ? { symbol } : {}) };
 }
 
-export function buildBarCsvRow(bar: Bar): CsvRow<typeof BARS_HEADER> {
+export function buildBarCsvRow(bar: Bar): CsvRow<BarsHeader> {
   return {
     t: bar.t,
     open: bar.open,

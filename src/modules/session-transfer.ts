@@ -370,7 +370,7 @@ export async function hydrateModulePage(context: BrowserContext, page: Page): Pr
                   for (const storeSeed of databaseSeed.objectStores) {
                     const hasStore = db.objectStoreNames.contains(storeSeed.name);
                     // Convert readonly keyPath to mutable array if necessary
-                    let options = storeSeed.options ? { ...storeSeed.options } : undefined;
+                    const options = storeSeed.options ? { ...storeSeed.options } : undefined;
                     if (options && Array.isArray(options.keyPath)) {
                       // Always convert to mutable array (string[])
                       options.keyPath = Array.from(options.keyPath);
