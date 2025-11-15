@@ -768,12 +768,15 @@ function normaliseSymbols(input: readonly string[]): readonly string[] {
 async function exposeLogger(
   page: Page,
   logPath: string,
-  symbols: readonly string[] = [],
+  normalizedSymbols: readonly string[],
+  fallbackSymbol: string,
   meta: { start?: string; end?: string } = {},
   assetClassHint?: string,
 ): Promise<() => void> {
   const baseDir = path.dirname(logPath);
   const baseName = path.basename(logPath, '.jsonl');
+  const effectiveSymbols = normalizedSymbols.length > 0 ? normalizedSymbols : ['GENERAL'];
+  const defaultSymbol = fallbackSymbol || effectiveSymbols[0] || 'GENERAL';
 
   const generalWriter = new RotatingWriter(path.join(baseDir, `${baseName}.jsonl`), ROTATE_POLICY);
   const statsWriter = new RotatingWriter(
@@ -963,8 +966,8 @@ async function exposeLogger(
         await onLegendOpen({
           url,
           timestampMs,
-          symbols: normalizedSymbols,
-          assetClassHint: legendAssetClassHint,
+          symbols: effectiveSymbols,
+          assetClassHint: resolvedAssetClassHint,
           request: { method, headers },
           response: response
             ? {
@@ -1227,7 +1230,7 @@ async function exposeLogger(
     return sanitized || undefined;
   };
 
-  const resolveSymbolKey = (candidate?: string | null): string => normalizeSymbolKey(candidate) ?? fallbackSymbol;
+  const resolveSymbolKey = (candidate?: string | null): string => normalizeSymbolKey(candidate) ?? defaultSymbol;
 
   const normalizeAssetClassHint = (hint: string | undefined): string | undefined => {
     if (!hint) {
@@ -1257,7 +1260,7 @@ async function exposeLogger(
   };
 
   const assetClassOverride = normalizeAssetClassHint(assetClassHint);
-  legendAssetClassHint = assetClassOverride ?? 'stock';
+  const resolvedAssetClassHint = assetClassOverride ?? 'stock';
   const resolveAssetClassForSymbol = (symbol: string): string => {
     if (assetClassOverride) {
       return assetClassOverride;
@@ -1787,8 +1790,8 @@ async function exposeLogger(
               url: entry.url,
               timestampMs: Date.now(),
               payload: entry.parsed,
-              symbols: normalizedSymbols,
-              assetClassHint: legendAssetClassHint,
+              symbols: effectiveSymbols,
+              assetClassHint: resolvedAssetClassHint,
             });
           } catch (error) {
             console.warn('[socket-sniffer] Legend recorder failed:', error);
@@ -1937,10 +1940,14 @@ export async function runSocketSniffer(
 
   ensureDirectoryForFileSync(logFile);
 
+  const normalizedSymbols = symbols.length > 0 ? symbols : ['GENERAL'];
+  const fallbackSymbol = normalizedSymbols[0] ?? 'GENERAL';
+
   const closeLogger = await exposeLogger(
     page,
     logFile,
-    symbols,
+    normalizedSymbols,
+    fallbackSymbol,
     {
       start: options.start,
       end: options.end,
@@ -1953,10 +1960,6 @@ export async function runSocketSniffer(
     maxTextLength: MAX_WS_ENTRY_TEXT_LENGTH,
     hookGuardFlag: HOOK_GUARD_FLAG,
   });
-
-  const normalizedSymbols = symbols.length > 0 ? symbols : ['GENERAL'];
-  const fallbackSymbol = normalizedSymbols[0] ?? 'GENERAL';
-  let legendAssetClassHint: string = 'stock';
 
   try {
     await page.context().addInitScript({ content: hookScriptString });

@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import { Command } from 'commander';
+import type { Command } from 'commander';
 
 import { loadRunConfig } from '../../orchestrator/config.js';
 import type { ModuleArgsInput } from '../schema.js';
@@ -11,8 +11,8 @@ import {
   normalizeModuleArgs,
   parseSymbols,
 } from '../normalize.js';
-import type { ModuleArgs } from '../../orchestrator/messages.js';
-import { CommandContext, resolveEnv } from './shared.js';
+import { resolveEnv } from './shared.js';
+import type { CommandContext } from './shared.js';
 
 const ENV_MAPPING: Partial<Record<keyof ModuleArgsInput, string | readonly string[]>> = {
   module: ['TRADE_API_MODULE', 'ORCHESTRATOR_MODULE'],
