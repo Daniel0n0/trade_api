@@ -35,7 +35,7 @@ describe('discovery items recorder', () => {
     const listId = '609ddf55-2da1-4d85-8f23-501ccbdf76eb';
     const ownerType = 'robinhood';
     const symbol = 'SPY';
-    const snapshotId = '1705312200000-1';
+    const snapshotId = '1705312200000';
     const payload = {
       results: [
         { id: 'abc', type: 'instrument', symbol: 'NVDA', name: 'NVIDIA', item_data: [] },
@@ -102,6 +102,7 @@ describe('discovery items recorder', () => {
     assert.match(requestMeta, /status_code: 200/);
     assert.match(requestMeta, new RegExp(`timestamp_ms: ${timestampMs}`));
     assert.match(requestMeta, /querystring: owner_type=robinhood/);
+    assert.match(requestMeta, /snapshot_id: 1705312200000/);
     assert.match(requestMeta, /user-agent: Playwright/);
     assert.match(requestMeta, /accept: application\/json/);
     assert.doesNotMatch(requestMeta, /authorization/i);
@@ -115,7 +116,7 @@ describe('discovery items recorder', () => {
     const listId = 'list-invalid';
     const ownerType = 'robinhood';
     const symbol = 'SPY';
-    const snapshotId = '1717200000000-1';
+    const snapshotId = '1717200000000';
     const baseParams = {
       rawText: '{invalid',
       listId,
@@ -166,8 +167,10 @@ describe('discovery items recorder', () => {
       listId,
     );
 
-    const firstId = createDiscoverySnapshotId();
-    const secondId = createDiscoverySnapshotId();
+    const firstId = createDiscoverySnapshotId(timestampMs);
+    const secondId = createDiscoverySnapshotId(timestampMs);
+    assert.equal(firstId, `${timestampMs}`);
+    assert.equal(secondId, `${timestampMs}_1`);
     await persistDiscoveryItemsRawArtifacts({
       rawText: '{}',
       listId,
