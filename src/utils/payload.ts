@@ -1,6 +1,19 @@
 export const MAX_WS_ENTRY_TEXT_LENGTH = 200_000;
 
-export const LEGEND_WS_PATTERN = /^wss:\/\/api\.robinhood\.com\/marketdata\/streaming\/legend\//i;
+const LEGEND_WS_URL = 'wss://api.robinhood.com/marketdata/streaming/legend/';
+
+export function shouldProcessLegendWS(url?: string | null): boolean {
+  if (typeof url !== 'string') {
+    return false;
+  }
+
+  const normalized = url.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  return normalized === LEGEND_WS_URL;
+}
 
 export function toText(payload: unknown): string {
   if (typeof payload === 'string') {

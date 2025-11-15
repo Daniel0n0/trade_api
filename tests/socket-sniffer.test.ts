@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import { resolveEventTimestamp, isOrderUpdateWs } from '../src/modulos/socket-sniffer.js';
 import { BaseEvent } from '../src/io/schemas.js';
+import { shouldProcessLegendWS } from '../src/utils/payload.js';
 
 test('resolveEventTimestamp converts seconds-based timestamps to milliseconds', () => {
   const now = Date.now();
@@ -54,4 +55,17 @@ test('isOrderUpdateWs validates only the global order websocket', () => {
 
   assert.ok(isOrderUpdateWs(validUrl));
   assert.ok(!isOrderUpdateWs(invalidUrl));
+});
+
+test('shouldProcessLegendWS allows only the canonical Legend websocket URL', () => {
+  const url = 'wss://api.robinhood.com/marketdata/streaming/legend/';
+
+  assert.ok(shouldProcessLegendWS(url));
+  assert.ok(shouldProcessLegendWS('  ' + url.toUpperCase() + '   '));
+});
+
+test('shouldProcessLegendWS rejects Legend websocket URLs with query parameters or extra paths', () => {
+  assert.ok(!shouldProcessLegendWS('wss://api.robinhood.com/marketdata/streaming/legend/?foo=bar'));
+  assert.ok(!shouldProcessLegendWS('wss://api.robinhood.com/marketdata/streaming/legend/extra'));
+  assert.ok(!shouldProcessLegendWS('wss://api.robinhood.com/marketdata/streaming/legend'));
 });
