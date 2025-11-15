@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { createWriteStream, existsSync, statSync, type WriteStream } from 'node:fs';
+import { closeSync, createWriteStream, existsSync, openSync, statSync, type WriteStream } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 
 import { ensureDirectorySync, ensureDirectoryForFileSync } from '../io/dir.js';
@@ -44,15 +44,22 @@ export type LegendFrameParams = {
   readonly payload: unknown;
 };
 
+type LegendOptionsWriterKey = 'trades' | 'quotes' | 'summaries' | 'greeks';
+
+type LegendOptionsSymbolWriters = Partial<Record<LegendOptionsWriterKey, WriteStream>>;
+
 type LegendDateContext = {
   readonly symbol: string;
   readonly date: string;
   readonly assetClass: string;
-  readonly baseDir: string;
+  readonly legendDir: string;
   readonly rawDir: string;
+  readonly optionsBySymbolDir: string;
   readonly keepaliveWriter: WriteStream;
   readonly tradesWriter: WriteStream;
   readonly tradesEthWriter: WriteStream;
+  readonly optionsAggregatedWriters: Record<LegendOptionsWriterKey, WriteStream>;
+  readonly optionsSymbolWriters: Map<string, LegendOptionsSymbolWriters>;
 };
 
 const contextCache = new Map<string, LegendDateContext>();
@@ -145,10 +152,18 @@ const resolveDateSegment = (input: string): string => {
   return formatUtcDate(Date.now());
 };
 
+const LEGEND_OPTIONS_EVENT_TYPE_TO_WRITER: Record<string, LegendOptionsWriterKey> = {
+  TRADE: 'trades',
+  TRADEETH: 'trades',
+  QUOTE: 'quotes',
+  SUMMARY: 'summaries',
+  GREEKS: 'greeks',
+};
+
 const ensureLegendDateContext = (symbol: string, date: string, assetClass: string): LegendDateContext => {
   const symbolKey = sanitizeSymbol(symbol);
   const normalizedDate = resolveDateSegment(date);
-  const cacheKey = `${symbolKey}:${normalizedDate}:${assetClass}`;
+  const cacheKey = `${process.cwd()}:${symbolKey}:${normalizedDate}:${assetClass}`;
   const cached = contextCache.get(cacheKey);
   if (cached) {
     return cached;
@@ -159,24 +174,41 @@ const ensureLegendDateContext = (symbol: string, date: string, assetClass: strin
   ensureDirectorySync(legendDir);
   const rawDir = path.join(legendDir, 'raw');
   ensureDirectorySync(rawDir);
+  const optionsDir = path.join(baseDir, 'options');
+  ensureDirectorySync(optionsDir);
+  const optionsBySymbolDir = path.join(optionsDir, 'by_symbol');
+  ensureDirectorySync(optionsBySymbolDir);
 
   const keepalivePath = path.join(legendDir, 'keepalive.csv');
   const tradesPath = path.join(legendDir, 'trades.jsonl');
   const tradesEthPath = path.join(legendDir, 'trades_eth.jsonl');
+  const optionsTradesPath = path.join(legendDir, 'options_trades.jsonl');
+  const optionsQuotesPath = path.join(legendDir, 'options_quotes.jsonl');
+  const optionsSummariesPath = path.join(legendDir, 'options_summaries.jsonl');
+  const optionsGreeksPath = path.join(legendDir, 'options_greeks.jsonl');
 
   const keepaliveWriter = createAppendStream(keepalivePath, KEEPALIVE_HEADER);
   const tradesWriter = createAppendStream(tradesPath);
   const tradesEthWriter = createAppendStream(tradesEthPath);
+  const optionsAggregatedWriters: Record<LegendOptionsWriterKey, WriteStream> = {
+    trades: createAppendStream(optionsTradesPath),
+    quotes: createAppendStream(optionsQuotesPath),
+    summaries: createAppendStream(optionsSummariesPath),
+    greeks: createAppendStream(optionsGreeksPath),
+  };
 
   const context: LegendDateContext = {
     symbol: symbolKey,
     date: normalizedDate,
     assetClass,
-    baseDir: legendDir,
+    legendDir,
     rawDir,
+    optionsBySymbolDir,
     keepaliveWriter,
     tradesWriter,
     tradesEthWriter,
+    optionsAggregatedWriters,
+    optionsSymbolWriters: new Map<string, LegendOptionsSymbolWriters>(),
   };
   contextCache.set(cacheKey, context);
   return context;
@@ -184,12 +216,47 @@ const ensureLegendDateContext = (symbol: string, date: string, assetClass: strin
 
 const createAppendStream = (filePath: string, header?: string): WriteStream => {
   ensureDirectoryForFileSync(filePath);
-  const needsHeader = header ? !existsSync(filePath) || statSync(filePath).size === 0 : false;
+  const fileExists = existsSync(filePath);
+  const needsHeader = header ? !fileExists || statSync(filePath).size === 0 : false;
+  if (!fileExists) {
+    const handle = openSync(filePath, 'a');
+    closeSync(handle);
+  }
   const stream = createWriteStream(filePath, { flags: 'a' });
   if (needsHeader && header) {
     stream.write(`${header}\n`);
   }
   return stream;
+};
+
+const resolveOptionsWriterKey = (eventType: unknown): LegendOptionsWriterKey | undefined => {
+  if (typeof eventType !== 'string') {
+    return undefined;
+  }
+  const normalized = eventType.trim().toUpperCase();
+  if (!normalized) {
+    return undefined;
+  }
+  return LEGEND_OPTIONS_EVENT_TYPE_TO_WRITER[normalized];
+};
+
+const ensureOptionsSymbolWriter = (
+  context: LegendDateContext,
+  eventSymbol: string,
+  kind: LegendOptionsWriterKey,
+): WriteStream => {
+  const symbolKey = sanitizeSymbol(eventSymbol);
+  const existing = context.optionsSymbolWriters.get(symbolKey) ?? {};
+  if (existing[kind]) {
+    return existing[kind] as WriteStream;
+  }
+  const symbolDir = path.join(context.optionsBySymbolDir, symbolKey);
+  ensureDirectorySync(symbolDir);
+  const filePath = path.join(symbolDir, `options_${kind}.jsonl`);
+  const writer = createAppendStream(filePath);
+  const next = { ...existing, [kind]: writer };
+  context.optionsSymbolWriters.set(symbolKey, next);
+  return writer;
 };
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -331,11 +398,24 @@ export function onLegendFrame(params: LegendFrameParams): void {
       if (!isRecord(entry)) {
         continue;
       }
+      const eventSymbolValue = typeof entry.eventSymbol === 'string' ? entry.eventSymbol.trim() : '';
+      if (eventSymbolValue.startsWith('.')) {
+        const timestampForOptions = resolveNumber(entry.time) ?? params.timestampMs;
+        persistOptionsPayload({
+          assetClass,
+          fallbackSymbol,
+          eventSymbol: eventSymbolValue || fallbackSymbol,
+          entry,
+          eventType: typeof entry.eventType === 'string' ? entry.eventType : undefined,
+          timestampMs: timestampForOptions,
+        });
+        continue;
+      }
       const trade = resolveTradeRecord(entry, channel);
       if (!trade) {
         continue;
       }
-      const targetSymbol = sanitizeSymbol(entry.eventSymbol as string) || fallbackSymbol;
+      const targetSymbol = sanitizeSymbol(eventSymbolValue || fallbackSymbol);
       persistTrade({ trade, symbol: targetSymbol, assetClass });
     }
   }
@@ -367,5 +447,29 @@ const persistTrade = (params: { trade: LegendTradeRecord; symbol: string; assetC
     writer.write(`${payload}\n`);
   } catch (error) {
     console.warn('[legend-advanced-recorder] Failed to write trade payload:', error);
+  }
+};
+
+const persistOptionsPayload = (params: {
+  assetClass: string;
+  fallbackSymbol: string;
+  eventSymbol: string;
+  entry: Record<string, unknown>;
+  eventType: string | undefined;
+  timestampMs: number;
+}): void => {
+  const writerKey = resolveOptionsWriterKey(params.eventType);
+  if (!writerKey) {
+    return;
+  }
+  const dateSegment = formatUtcDate(params.timestampMs);
+  try {
+    const context = ensureLegendDateContext(params.fallbackSymbol, dateSegment, params.assetClass);
+    const payload = JSON.stringify(params.entry);
+    context.optionsAggregatedWriters[writerKey].write(`${payload}\n`);
+    const symbolWriter = ensureOptionsSymbolWriter(context, params.eventSymbol, writerKey);
+    symbolWriter.write(`${payload}\n`);
+  } catch (error) {
+    console.warn('[legend-advanced-recorder] Failed to write options payload:', error);
   }
 };
