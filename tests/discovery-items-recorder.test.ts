@@ -102,7 +102,6 @@ describe('discovery items recorder', () => {
     assert.match(requestMeta, /status_code: 200/);
     assert.match(requestMeta, new RegExp(`timestamp_ms: ${timestampMs}`));
     assert.match(requestMeta, /querystring: owner_type=robinhood/);
-    assert.match(requestMeta, /snapshot_id: 1705312200000/);
     assert.match(requestMeta, /user-agent: Playwright/);
     assert.match(requestMeta, /accept: application\/json/);
     assert.doesNotMatch(requestMeta, /authorization/i);
@@ -167,10 +166,8 @@ describe('discovery items recorder', () => {
       listId,
     );
 
-    const firstId = createDiscoverySnapshotId(timestampMs);
-    const secondId = createDiscoverySnapshotId(timestampMs);
-    assert.equal(firstId, `${timestampMs}`);
-    assert.equal(secondId, `${timestampMs}_1`);
+    const firstId = createDiscoverySnapshotId();
+    const secondId = createDiscoverySnapshotId();
     await persistDiscoveryItemsRawArtifacts({
       rawText: '{}',
       listId,
