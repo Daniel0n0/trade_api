@@ -1,6 +1,5 @@
 import path from 'node:path';
 import { appendFile, writeFile } from 'node:fs/promises';
-import { hrtime } from 'node:process';
 import type { APIResponse, Page, Request, Response } from 'playwright';
 
 import { ensureDirectoryForFileSync, ensureDirectorySync } from '../../io/dir.js';
@@ -71,6 +70,7 @@ const formatRequestMeta = (
     `status_code: ${params.status}`,
     `timestamp_ms: ${params.timestampMs}`,
     `timestamp_utc: ${new Date(params.timestampMs).toISOString()}`,
+    `snapshot_id: ${params.snapshotId}`,
     `querystring: ${params.querystring}`,
     'headers:',
     ...headerLines,
@@ -139,7 +139,20 @@ export const persistDiscoveryItemsPayload = async (
   await writeFile(summaryPath, `${JSON.stringify(summaryPayload, null, SUMMARY_INDENT)}\n`, 'utf8');
 };
 
-export const createDiscoverySnapshotId = (): string => `${Date.now()}-${hrtime.bigint().toString()}`;
+let lastSnapshotTimestamp = 0;
+let snapshotCollisionCounter = 0;
+
+export const createDiscoverySnapshotId = (timestampMs = Date.now()): string => {
+  if (timestampMs === lastSnapshotTimestamp) {
+    snapshotCollisionCounter += 1;
+  } else {
+    lastSnapshotTimestamp = timestampMs;
+    snapshotCollisionCounter = 0;
+  }
+  return snapshotCollisionCounter === 0
+    ? `${timestampMs}`
+    : `${timestampMs}_${snapshotCollisionCounter}`;
+};
 
 const resolveContentType = (headers: Record<string, string>): string | undefined => {
   for (const [name, value] of Object.entries(headers ?? {})) {
@@ -296,7 +309,7 @@ const processResponse = async ({
     return;
   }
   const timestampMs = Date.now();
-  const snapshotId = createDiscoverySnapshotId();
+  const snapshotId = createDiscoverySnapshotId(timestampMs);
   const baseParams: DiscoverySnapshotBaseParams = {
     rawText,
     listId: urlParts.listId,
