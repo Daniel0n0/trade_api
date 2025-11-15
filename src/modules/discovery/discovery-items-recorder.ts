@@ -53,6 +53,8 @@ const sanitizeListIdForPath = (listId: string): string => {
   return trimmed.replace(/[\\/]/g, '_');
 };
 
+const buildResponseId = (timestampMs: number): string => `${timestampMs}-${process.hrtime.bigint()}`;
+
 const formatRequestMeta = (
   params: PersistPayloadParams,
   headers: readonly HeaderEntry[],
@@ -104,7 +106,8 @@ export const persistDiscoveryItemsPayload = async (
   const rawDir = path.join(discoveryDir, 'raw');
   ensureDirectorySync(rawDir);
 
-  const rawPath = path.join(rawDir, `response_${params.timestampMs}.json`);
+  const responseId = buildResponseId(params.timestampMs);
+  const rawPath = path.join(rawDir, `response_${responseId}.json`);
   await writeFile(rawPath, `${params.rawText}\n`, 'utf8');
 
   const itemsPath = path.join(discoveryDir, 'items.jsonl');
@@ -118,7 +121,7 @@ export const persistDiscoveryItemsPayload = async (
   const headers = (params.requestMeta?.headers ?? []).filter(
     (entry) => entry.name.toLowerCase() !== 'authorization',
   );
-  const metaPath = path.join(discoveryDir, `request_meta_${params.timestampMs}.txt`);
+  const metaPath = path.join(discoveryDir, `request_meta_${responseId}.txt`);
   await writeFile(metaPath, formatRequestMeta(params, headers), 'utf8');
 };
 
