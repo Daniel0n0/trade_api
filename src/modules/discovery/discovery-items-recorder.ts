@@ -70,7 +70,6 @@ const formatRequestMeta = (
     `status_code: ${params.status}`,
     `timestamp_ms: ${params.timestampMs}`,
     `timestamp_utc: ${new Date(params.timestampMs).toISOString()}`,
-    `snapshot_id: ${params.snapshotId}`,
     `querystring: ${params.querystring}`,
     'headers:',
     ...headerLines,
@@ -139,20 +138,20 @@ export const persistDiscoveryItemsPayload = async (
   await writeFile(summaryPath, `${JSON.stringify(summaryPayload, null, SUMMARY_INDENT)}\n`, 'utf8');
 };
 
-let lastSnapshotTimestamp = 0;
-let snapshotCollisionCounter = 0;
+let lastSnapshotEpochMs = 0;
 
-export const createDiscoverySnapshotId = (timestampMs = Date.now()): string => {
-  if (timestampMs === lastSnapshotTimestamp) {
-    snapshotCollisionCounter += 1;
-  } else {
-    lastSnapshotTimestamp = timestampMs;
-    snapshotCollisionCounter = 0;
+const ensureUniqueSnapshotEpochMs = (candidateTimestampMs?: number): number => {
+  const now = Number.isFinite(candidateTimestampMs) ? Number(candidateTimestampMs) : Date.now();
+  if (now <= lastSnapshotEpochMs) {
+    lastSnapshotEpochMs += 1;
+    return lastSnapshotEpochMs;
   }
-  return snapshotCollisionCounter === 0
-    ? `${timestampMs}`
-    : `${timestampMs}_${snapshotCollisionCounter}`;
+  lastSnapshotEpochMs = now;
+  return now;
 };
+
+export const createDiscoverySnapshotId = (candidateTimestampMs?: number): string =>
+  `${ensureUniqueSnapshotEpochMs(candidateTimestampMs)}`;
 
 const resolveContentType = (headers: Record<string, string>): string | undefined => {
   for (const [name, value] of Object.entries(headers ?? {})) {
@@ -308,8 +307,8 @@ const processResponse = async ({
     console.warn('[discovery-items] No se pudo leer el cuerpo de la respuesta:', error);
     return;
   }
-  const timestampMs = Date.now();
-  const snapshotId = createDiscoverySnapshotId(timestampMs);
+  const snapshotId = createDiscoverySnapshotId(Date.now());
+  const timestampMs = Number(snapshotId);
   const baseParams: DiscoverySnapshotBaseParams = {
     rawText,
     listId: urlParts.listId,

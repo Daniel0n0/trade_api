@@ -31,11 +31,7 @@ import {
 } from './legend-advanced-recorder.js';
 import { ensureDirectoryForFileSync, ensureDirectorySync } from '../io/dir.js';
 import { BaseEvent } from '../io/schemas.js';
-import {
-  extractFeed,
-  MAX_WS_ENTRY_TEXT_LENGTH,
-  shouldProcessLegendWS as shouldProcessLegendWSStrict,
-} from '../utils/payload.js';
+import { extractFeed, MAX_WS_ENTRY_TEXT_LENGTH } from '../utils/payload.js';
 import { isHookableFrame } from '../utils/origins.js';
 
 type Serializable = Record<string, unknown>;
