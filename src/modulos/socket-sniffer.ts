@@ -24,6 +24,11 @@ import {
   toMsUtc,
 } from '../io/row.js';
 import { dataPath, ensureSymbolDateDir } from '../io/paths.js';
+import {
+  onLegendFrame,
+  onLegendOpen,
+  shouldProcessLegendWS,
+} from './legend-advanced-recorder.js';
 import { ensureDirectoryForFileSync, ensureDirectorySync } from '../io/dir.js';
 import { BaseEvent } from '../io/schemas.js';
 import { extractFeed, MAX_WS_ENTRY_TEXT_LENGTH } from '../utils/payload.js';
@@ -942,6 +947,41 @@ async function exposeLogger(
     })();
   };
 
+  const handleLegendWsRequest = (request: Request) => {
+    if (request.resourceType() !== 'websocket') {
+      return;
+    }
+    const url = request.url();
+    if (!shouldProcessLegendWS(url)) {
+      return;
+    }
+    const timestampMs = Date.now();
+    const method = request.method();
+    const headers = request.headersArray();
+
+    void (async () => {
+      try {
+        const response = await request.response().catch(() => null);
+        await onLegendOpen({
+          url,
+          timestampMs,
+          symbols: normalizedSymbols,
+          assetClassHint: legendAssetClassHint,
+          request: { method, headers },
+          response: response
+            ? {
+                status: response.status(),
+                statusText: response.statusText(),
+                headers: response.headersArray(),
+              }
+            : undefined,
+        });
+      } catch (error) {
+        console.warn('[socket-sniffer] Failed to persist legend handshake:', error);
+      }
+    })();
+  };
+
   const persistOrderPayload = (params: {
     url: string;
     direction: WsFrameDirection;
@@ -1091,6 +1131,7 @@ async function exposeLogger(
 
   page.on('websocket', handleWebsocket);
   page.on('request', handleOrderWsRequest);
+  page.on('request', handleLegendWsRequest);
 
   const counts: StatsCounts = {
     ch1: 0,
@@ -1175,9 +1216,6 @@ async function exposeLogger(
 
   let closed = false;
 
-  const normalizedSymbols = symbols.length > 0 ? symbols : ['GENERAL'];
-  const fallbackSymbol = normalizedSymbols[0] ?? 'GENERAL';
-
   const normalizeSymbolKey = (input?: string | null): string | undefined => {
     if (!input) {
       return undefined;
@@ -1221,6 +1259,7 @@ async function exposeLogger(
   };
 
   const assetClassOverride = normalizeAssetClassHint(assetClassHint);
+  legendAssetClassHint = assetClassOverride ?? 'stock';
   const resolveAssetClassForSymbol = (symbol: string): string => {
     if (assetClassOverride) {
       return assetClassOverride;
@@ -1744,6 +1783,19 @@ async function exposeLogger(
 
       let legendClassification: LegendClassificationResult | undefined;
       if (isWsMessageEntry(entry)) {
+        if (shouldProcessLegendWS(entry.url)) {
+          try {
+            onLegendFrame({
+              url: entry.url,
+              timestampMs: Date.now(),
+              payload: entry.parsed,
+              symbols: normalizedSymbols,
+              assetClassHint: legendAssetClassHint,
+            });
+          } catch (error) {
+            console.warn('[socket-sniffer] Legend recorder failed:', error);
+          }
+        }
         legendClassification = classifyLegendWsMessage(entry);
         if (shouldIgnoreWsMessage(entry, legendClassification)) {
           return;
@@ -1833,6 +1885,11 @@ async function exposeLogger(
     } catch (error) {
       void error;
     }
+    try {
+      page.off('request', handleLegendWsRequest);
+    } catch (error) {
+      void error;
+    }
     cleanupAllWebSockets();
     closeStreamMap(orderRawStreamsByDay);
     closeStreamMap(heartbeatStreamsByDay);
@@ -1898,6 +1955,10 @@ export async function runSocketSniffer(
     maxTextLength: MAX_WS_ENTRY_TEXT_LENGTH,
     hookGuardFlag: HOOK_GUARD_FLAG,
   });
+
+  const normalizedSymbols = symbols.length > 0 ? symbols : ['GENERAL'];
+  const fallbackSymbol = normalizedSymbols[0] ?? 'GENERAL';
+  let legendAssetClassHint: string = 'stock';
 
   try {
     await page.context().addInitScript({ content: hookScriptString });
