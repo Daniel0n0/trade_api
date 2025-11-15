@@ -68,6 +68,8 @@ data/
 ```
 
 * **`by_symbol`** usa el **literal** de `eventSymbol` (incluido el punto). No se parsea la fecha de expiración ni strike (no asumimos nada).
+* El símbolo base para `legend/` (por ejemplo `trades_spy*.jsonl`) siempre proviene del **subyacente detectado en la conexión**;
+  si no llega ninguno, se usa `process.env.LEGEND_PRIMARY_SYMBOL ?? "SPY"`.
 * La carpeta `<YYYY-MM-DD>` se determina por el tiempo del frame (`time` o `askTime/bidTime`/`ts_ms`) en **UTC**.
 
 ---

@@ -24,6 +24,7 @@ const NORMALIZED_LEGEND_URL = normalizeLegendUrl(LEGEND_WS_URL);
 const KEEPALIVE_HEADER = 'ts_ms,date_utc,ws_url,channel,type';
 const DEFAULT_SYMBOL = 'GENERAL';
 const DEFAULT_ASSET_CLASS = 'stock';
+const LEGEND_PRIMARY_SYMBOL_FALLBACK = process.env.LEGEND_PRIMARY_SYMBOL ?? 'SPY';
 
 export type LegendHeaderEntry = { readonly name: string; readonly value: string };
 
@@ -137,6 +138,14 @@ const resolvePrimarySymbol = (symbols: readonly string[] | undefined): string =>
   return sanitizeSymbol(symbols[0]);
 };
 
+const resolveLegendBaseSymbol = (symbols: readonly string[] | undefined): string => {
+  const resolved = resolvePrimarySymbol(symbols);
+  if (resolved && resolved !== DEFAULT_SYMBOL) {
+    return resolved;
+  }
+  return sanitizeSymbol(LEGEND_PRIMARY_SYMBOL_FALLBACK);
+};
+
 const resolveDateSegment = (input: string): string => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(input)) {
     return input;
@@ -180,8 +189,9 @@ const ensureLegendDateContext = (symbol: string, date: string, assetClass: strin
   ensureDirectorySync(optionsBySymbolDir);
 
   const keepalivePath = path.join(legendDir, 'keepalive.csv');
-  const tradesPath = path.join(legendDir, 'trades.jsonl');
-  const tradesEthPath = path.join(legendDir, 'trades_eth.jsonl');
+  const tradesBaseName = symbolKey.toLowerCase();
+  const tradesPath = path.join(legendDir, `trades_${tradesBaseName}.jsonl`);
+  const tradesEthPath = path.join(legendDir, `trades_${tradesBaseName}_eth.jsonl`);
   const optionsTradesPath = path.join(legendDir, 'options_trades.jsonl');
   const optionsQuotesPath = path.join(legendDir, 'options_quotes.jsonl');
   const optionsSummariesPath = path.join(legendDir, 'options_summaries.jsonl');
@@ -240,6 +250,13 @@ const resolveOptionsWriterKey = (eventType: unknown): LegendOptionsWriterKey | u
   return LEGEND_OPTIONS_EVENT_TYPE_TO_WRITER[normalized];
 };
 
+const OPTIONS_SYMBOL_FILE_NAMES: Record<LegendOptionsWriterKey, string> = {
+  trades: 'trades.jsonl',
+  quotes: 'quotes.jsonl',
+  summaries: 'summaries.jsonl',
+  greeks: 'greeks.jsonl',
+};
+
 const ensureOptionsSymbolWriter = (
   context: LegendDateContext,
   eventSymbol: string,
@@ -252,7 +269,7 @@ const ensureOptionsSymbolWriter = (
   }
   const symbolDir = path.join(context.optionsBySymbolDir, symbolKey);
   ensureDirectorySync(symbolDir);
-  const filePath = path.join(symbolDir, `options_${kind}.jsonl`);
+  const filePath = path.join(symbolDir, OPTIONS_SYMBOL_FILE_NAMES[kind]);
   const writer = createAppendStream(filePath);
   const next = { ...existing, [kind]: writer };
   context.optionsSymbolWriters.set(symbolKey, next);
@@ -341,7 +358,7 @@ export async function onLegendOpen(params: LegendOpenParams): Promise<void> {
   if (!shouldProcessLegendWS(params.url)) {
     return;
   }
-  const primarySymbol = resolvePrimarySymbol(params.symbols);
+  const primarySymbol = resolveLegendBaseSymbol(params.symbols);
   const assetClass = normalizeAssetClass(params.assetClassHint);
   const dateSegment = formatUtcDate(params.timestampMs);
   const context = ensureLegendDateContext(primarySymbol, dateSegment, assetClass);
@@ -377,7 +394,7 @@ export function onLegendFrame(params: LegendFrameParams): void {
   }
   const typeValue = typeof params.payload.type === 'string' ? params.payload.type.trim().toUpperCase() : '';
   const assetClass = normalizeAssetClass(params.assetClassHint);
-  const fallbackSymbol = resolvePrimarySymbol(params.symbols);
+  const fallbackSymbol = resolveLegendBaseSymbol(params.symbols);
 
   if (typeValue === 'KEEPALIVE') {
     persistKeepalive({
@@ -415,8 +432,12 @@ export function onLegendFrame(params: LegendFrameParams): void {
       if (!trade) {
         continue;
       }
-      const targetSymbol = sanitizeSymbol(eventSymbolValue || fallbackSymbol);
-      persistTrade({ trade, symbol: targetSymbol, assetClass });
+      const normalizedEventSymbol = sanitizeSymbol(eventSymbolValue);
+      const normalizedFallback = sanitizeSymbol(fallbackSymbol);
+      if (normalizedEventSymbol !== normalizedFallback) {
+        continue;
+      }
+      persistTrade({ trade, symbol: normalizedFallback, assetClass });
     }
   }
 }
