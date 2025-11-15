@@ -31,7 +31,11 @@ import {
 } from './legend-advanced-recorder.js';
 import { ensureDirectoryForFileSync, ensureDirectorySync } from '../io/dir.js';
 import { BaseEvent } from '../io/schemas.js';
-import { extractFeed, MAX_WS_ENTRY_TEXT_LENGTH, shouldProcessLegendWS } from '../utils/payload.js';
+import {
+  extractFeed,
+  MAX_WS_ENTRY_TEXT_LENGTH,
+  shouldProcessLegendWS as shouldProcessLegendWSStrict,
+} from '../utils/payload.js';
 import { isHookableFrame } from '../utils/origins.js';
 
 type Serializable = Record<string, unknown>;
@@ -701,7 +705,7 @@ const resolveDeepestLegendPayload = (root: Record<string, unknown>): Record<stri
 };
 
 const classifyLegendWsMessage = (entry: WsMessageEntry): LegendClassificationResult => {
-  if (!shouldProcessLegendWS(entry.url)) {
+  if (!shouldProcessLegendWSStrict(entry.url)) {
     return { matched: false };
   }
 
@@ -2198,6 +2202,6 @@ ${HOOK_POLYFILL}
 }
 
 function isLegend(sourceUrl: string): boolean {
-  return shouldProcessLegendWS(sourceUrl);
+  return shouldProcessLegendWSStrict(sourceUrl);
 }
 
