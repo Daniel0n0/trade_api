@@ -18,155 +18,164 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 8:
-¡Voy! ORDEN DEL MOMENTO — **Módulo “opciones avanzadas (SPY)”** · **Petición: discovery lists (items)**
+PUNTO 9:
+¡Hecho! ORDEN DEL MOMENTO — **Módulo “opciones avanzadas (SPY)”** · **Petición: marketdata token**
 
-Solo uso lo que enviaste. Esta petición devuelve **una lista de instrumentos** con campos exactos:
-`id, type, symbol, name, item_data (array)`, más `returned_all_items` a nivel raíz.
+Solo documento lo que enviaste, sin suposiciones.
 
 ---
 
 # 1) Dónde guardarlo (directorios)
 
-Para mantenerlo dentro del módulo de SPY sin mezclar con velas/legend:
+Este endpoint **no es de velas ni de opciones**, es un **token de acceso para `legend`**. Guárdalo separado, pero accesible al módulo:
 
 ```
 data/
-└─ stocks/
-   └─ SPY/
-      └─ <YYYY-MM-DD>/
-         └─ discovery/
-            └─ lists/
-               └─ 609ddf55-2da1-4d85-8f23-501ccbdf76eb/
-                  ├─ raw/
-                  │  └─ response_<epoch_ms>.json
-                  ├─ request_meta_<epoch_ms>.txt
-                  ├─ items.jsonl
-                  └─ summary.json
+└─ integrations/
+   └─ robinhood/
+      └─ marketdata_token/
+         └─ session_id=ad5a3053-173d-4e76-a693-7cf1419e1ae7/
+            ├─ raw/
+            │  └─ response_<epoch_ms>.json           # respuesta completa (ver redacción)
+            ├─ request_meta_<epoch_ms>.txt           # auditoría del request (sin Authorization)
+            ├─ token_record.json                     # registro estructurado vigente
+            └─ rotation_log.jsonl                    # historial de rotaciones
 ```
 
-* `<YYYY-MM-DD>` se toma en **UTC** del momento en que recibes la respuesta.
-* El subdirectorio se nombra con el **list_id** literal del URL.
-* `raw/` almacena la respuesta sin alterar (ver redacción de credenciales abajo).
+> El módulo de **opciones avanzadas (SPY)** debe **leer** desde `token_record.json` para abrir su `wss`.
 
 ---
 
-# 2) Cómo recibir y procesar (paso a paso, sin suposiciones)
+# 2) Cómo recibir y procesar
 
-**Filtro de URL exacto**
-Procesa solo si la URL es:
+**URL exacta aceptada**
 
 ```
-https://api.robinhood.com/discovery/lists/v2/<LIST_ID>/items/?owner_type=robinhood
+https://api.robinhood.com/marketdata/token/v1/?session_id=<UUID>&session_type=blackwidow
 ```
 
-**Metadatos de request**
-Guarda en `request_meta_<epoch_ms>.txt`:
+**Metadatos del request → `request_meta_<epoch_ms>.txt`**
 
 * `url` completa
 * `method`
 * `status_code`
-* encabezados **con `authorization` REMOVIDO**
-* `querystring` literal (`owner_type=robinhood`)
-* timestamp UTC
+* encabezados **con `authorization` eliminado**
+* querystring literal (`session_id`, `session_type`)
+* `timestamp_utc` (ISO 8601)
 
-**Respuesta**
+**Respuesta (parsing estricto)**
 
-* Escribe la **respuesta completa** en `raw/response_<epoch_ms>.json`.
-* Parsea el JSON. Si **falla**, no sigas (log y termina).
+* Esperado (según tu payload):
 
-**Estructurado (append-only)**
-
-* Recorre `results` (array). Por **cada elemento**, escribe **una línea** en `items.jsonl` con SOLO los campos recibidos (sin añadir ni renombrar claves):
-
-  ```json
-  {"id":"...","type":"instrument","symbol":"NVDA","name":"NVIDIA","item_data":[]}
   ```
-* Crea/actualiza `summary.json` con:
-
-  ```json
   {
-    "list_id": "609ddf55-2da1-4d85-8f23-501ccbdf76eb",
-    "owner_type": "robinhood",
-    "returned_all_items": true
+    "status":"SUCCESS",
+    "data":{
+      "status":"SUCCESS",
+      "data":{
+        "token": "<string>",
+        "wss_url": "wss://api.robinhood.com/marketdata/streaming/legend/",
+        "expiration": "<ISO8601>Z",
+        "dxfeed_id": "<string>"
+      }
+    }
   }
   ```
+* Si `status` o `data.status` ≠ `"SUCCESS"`, **no** persistir nada (solo log en `rotation_log.jsonl` con el error).
 
-  > Si el campo no existe en la respuesta, **no lo inventes** y no lo escribas.
-
-**Paginación**
-
-* Si la respuesta incluyera **`next`** NO nulo (no está en tu payload), realiza **otra petición** a esa URL y **append** en el mismo `items.jsonl`.
-* Si no hay `next`, termina. No asumas páginas adicionales.
-
-**Redacción de credenciales**
-
-* En cualquier archivo de metadatos, elimina **`authorization`** y cualquier token.
-
----
-
-# 3) Esquemas y tipado de archivos
-
-## `items.jsonl` (JSON Lines)
-
-* **Una línea por elemento de `results`**.
-* Claves exactas del payload. Ejemplo literal de tus datos:
+**Persistencia estructurada → `token_record.json`**
+Guardar **solo** los campos recibidos + contexto mínimo del request:
 
 ```json
-{"id":"a4ecd608-e7b4-4ff3-afa5-f77ae7632dfb","type":"instrument","symbol":"NVDA","name":"NVIDIA","item_data":[]}
-{"id":"e39ed23a-7bd1-4587-b060-71988d9ef483","type":"instrument","symbol":"TSLA","name":"Tesla","item_data":[]}
-...
+{
+  "session_id": "ad5a3053-173d-4e76-a693-7cf1419e1ae7",
+  "session_type": "blackwidow",
+  "token": "<string>",
+  "wss_url": "wss://api.robinhood.com/marketdata/streaming/legend/",
+  "expiration": "2025-11-12T06:15:07.391053253Z",
+  "dxfeed_id": "R28Gz5kMDCh6QWK8M1fo3kgPmNEJDvef",
+  "obtained_at_utc": "<ISO now>",
+  "ttl_seconds": <int>   // expiration - obtained_at_utc (en segundos, truncado >=0)
+}
 ```
 
-> `item_data` se guarda tal cual como arreglo (vacío en tu ejemplo).
+**Historial → `rotation_log.jsonl` (append-only)**
+Una línea por respuesta **válida o inválida**:
 
-## `summary.json` (JSON)
+```json
+{"ts":"<ISO now>","session_id":"...","status":"SUCCESS","expiration":"..."}
+```
 
-Campos permitidos si existen en la respuesta o del contexto inmediato del request:
+**Copia cruda → `raw/response_<epoch_ms>.json`**
 
-* `list_id` (extraído del path literal)
-* `owner_type` (del query `owner_type=robinhood`)
-* `returned_all_items` (si viene en el JSON raíz)
-
-## `raw/response_<epoch_ms>.json` (JSON)
-
-Respuesta completa sin mutar.
-
-## `request_meta_<epoch_ms>.txt` (texto)
-
-Campos de auditoría indicados arriba (sin `authorization`).
+* Respuesta completa **pero con el valor de `"token"` parcialmente enmascarado** al escribir el archivo crudo (ej.: mantener los últimos 6 caracteres y reemplazar el resto por `"***"`).
+* Razón: el archivo crudo suele usarse para depuración; evita exponer el secreto en claro.
 
 ---
 
-# 4) Reglas de guardado
+# 3) ¿Se debe guardar? ¿Cómo?
 
-* `items.jsonl` es **append-only**.
-* `raw/` es inmutable por respuesta (un archivo por request).
-* **No** se generan archivos derivados (por ejemplo, índices por símbolo) porque **no lo enviaste**; se evita asumir usos.
+* **Sí, temporalmente.** Es necesario para abrir/renovar el **WebSocket `legend`** que usan tus módulos (incluido “opciones avanzadas (SPY)”).
+* **Dónde queda el secreto real:** en `token_record.json` (archivo de trabajo).
+
+  * Permisos del archivo/carpeta: **solo lectura/escritura del proceso** (p. ej., `chmod 600` equivalente).
+  * **Auto-purge**: al pasar `expiration`, eliminar `token_record.json` y cerrar cualquier WS que lo use.
+* **Nunca** almacenar `Authorization` del request ni volcar el `token` en logs de consola.
+
+---
+
+# 4) Tipado y formato de archivos
+
+* `token_record.json` → **JSON** (un único objeto; sobrescritura en cada rotación).
+* `rotation_log.jsonl` → **JSON Lines** (una línea por evento).
+* `request_meta_*.txt` → **texto plano**.
+* `raw/response_*.json` → **JSON** (con `token` enmascarado como se indicó).
 
 ---
 
 # 5) Funciones (qué hacen y qué devuelven)
 
-* `isDiscoveryItemsUrl(url: string): boolean`
-  → `true` solo si coincide exactamente el patrón mostrado.
+* `isMarketdataTokenUrl(url: string): boolean`
+  → `true` solo si coincide la ruta `/marketdata/token/v1/` y existen `session_id` y `session_type=blackwidow`.
 
-* `extractListId(url: string): string`
-  → Devuelve `609ddf55-2da1-4d85-8f23-501ccbdf76eb` para tu URL.
+* `parseTokenResponse(body: object): { token: string, wss_url: string, expiration: string, dxfeed_id: string } | Error`
+  → Extrae exactamente los campos mostrados arriba. Si alguno falta, devuelve Error (no inventar valores).
 
-* `onDiscoveryItemsResponse(body: object, nowMs: number, url: string): void`
-  → Escribe `raw/response_<nowMs>.json`, crea carpeta del `list_id`, agrega líneas en `items.jsonl`, y actualiza `summary.json` con campos existentes.
+* `writeRequestMeta(meta): void`
+  → Escribe `request_meta_<epoch_ms>.txt` (sin `authorization`).
 
-* `writeRequestMeta(meta: RequestMeta, nowMs: number): void`
-  → Escribe `request_meta_<nowMs>.txt` sin `authorization`.
+* `persistTokenRecord(record): void`
+  → Sobrescribe `token_record.json` con el objeto indicado y **permisos restringidos**.
 
-Todas devuelven `void`. En errores de I/O o parseo: log y abortar esa respuesta (no reintenta ni inventa campos).
+* `appendRotationLog(entry): void`
+  → Añade una línea en `rotation_log.jsonl`.
+
+* `maskTokenInRaw(body): object`
+  → Devuelve copia del body con `data.data.token` enmascarado para el `raw/response_*.json`.
+
+* `scheduleExpiryPurge(expirationIso: string): void`
+  → Programa eliminación de `token_record.json` al expirar (si no tienes scheduler, verifica TTL al inicio de cada uso y purga en ese momento).
+
+Todas devuelven `void` salvo `parseTokenResponse` (devuelve objeto o Error).
 
 ---
 
-# 6) Interacciones con otros módulos/archivos
+# 6) Interacciones con otros archivos/módulos
 
-* **Ninguna obligatoria.** No cruzamos con `legend/` ni con `options/` porque esta respuesta solo lista instrumentos generales (tal cual tu payload).
-* Si más adelante envías otra petición que relacione estos símbolos con el módulo, se documenta allí. Por ahora, **solo se almacena**.
+* **WebSocket legend** (los que ya documentaste): deben **leer `wss_url` y `token`** desde `token_record.json` **en tiempo real** antes de conectarse.
+* **No transformar el token**: úsalo tal cual lo entrega el endpoint (tu payload no pide ningún formateo).
+
+---
+
+# 7) Reglas de rotación
+
+* Si solicitas un nuevo token **antes** del vencimiento:
+
+  * Sobrescribe `token_record.json` con el más reciente.
+  * Añade entrada a `rotation_log.jsonl`.
+* Si `expiration` pasó:
+
+  * El WS que lo use debe reconectar **solo después** de obtener y persistir un nuevo token.
+  * Purga el archivo viejo si aún existe.
 
 ---
