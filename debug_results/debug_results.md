@@ -18,155 +18,142 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 8:
-¡Voy! ORDEN DEL MOMENTO — **Módulo “opciones avanzadas (SPY)”** · **Petición: discovery lists (items)**
+PUNTO 12:
+¡Listo! ORDEN DEL MOMENTO — **Módulo “opciones avanzadas (SPY)”** · **Petición: `marketdata/quotes` (bounds=extended, id=8f92e76f-1e0e-4478-8580-16a6ffcfaef5)**
 
-Solo uso lo que enviaste. Esta petición devuelve **una lista de instrumentos** con campos exactos:
-`id, type, symbol, name, item_data (array)`, más `returned_all_items` a nivel raíz.
+Todo **explícito**, sin suposiciones.
 
 ---
 
-# 1) Dónde guardarlo (directorios)
+# 1) Directorios de salida
 
-Para mantenerlo dentro del módulo de SPY sin mezclar con velas/legend:
+Usamos tu estructura de **stocks** y separamos por tipo de “bounds”:
 
 ```
 data/
 └─ stocks/
    └─ SPY/
-      └─ <YYYY-MM-DD>/
-         └─ discovery/
-            └─ lists/
-               └─ 609ddf55-2da1-4d85-8f23-501ccbdf76eb/
-                  ├─ raw/
-                  │  └─ response_<epoch_ms>.json
-                  ├─ request_meta_<epoch_ms>.txt
-                  ├─ items.jsonl
-                  └─ summary.json
+      └─ 2025-11-12/                                   # fecha UTC de ingestión
+         └─ quotes/
+            ├─ raw/
+            │  └─ extended_response_<epoch_ms>.json    # respuesta cruda exacta
+            ├─ extended/
+            │  ├─ latest.json                           # último snapshot normalizado
+            │  └─ history/
+            │     └─ 2025-11-12T01_00_00Z.json          # 1 archivo por `updated_at` (sanitizado)
+            └─ meta/
+               └─ request_extended_<epoch_ms>.txt       # auditoría del request (sin Authorization)
 ```
 
-* `<YYYY-MM-DD>` se toma en **UTC** del momento en que recibes la respuesta.
-* El subdirectorio se nombra con el **list_id** literal del URL.
-* `raw/` almacena la respuesta sin alterar (ver redacción de credenciales abajo).
+> Si llegan otros `bounds` (p. ej., `24_5`), se guardan en carpetas hermanas: `quotes/24_5/...` con el mismo esquema.
 
 ---
 
-# 2) Cómo recibir y procesar (paso a paso, sin suposiciones)
+# 2) Campos EXACTOS que llegaron
 
-**Filtro de URL exacto**
-Procesa solo si la URL es:
+De `results[0]`:
 
-```
-https://api.robinhood.com/discovery/lists/v2/<LIST_ID>/items/?owner_type=robinhood
-```
+* `ask_price` (string numérica)
+* `ask_size` (entero)
+* `venue_ask_time` (ISO-8601)
+* `bid_price` (string numérica)
+* `bid_size` (entero)
+* `venue_bid_time` (ISO-8601)
+* `last_trade_price` (string numérica)
+* `venue_last_trade_time` (ISO-8601)
+* `last_extended_hours_trade_price` (string numérica)
+* `last_non_reg_trade_price` (string numérica)
+* `venue_last_non_reg_trade_time` (ISO-8601)
+* `previous_close` (string numérica)
+* `adjusted_previous_close` (string numérica)
+* `previous_close_date` (YYYY-MM-DD)
+* `symbol` = `"SPY"`
+* `trading_halted` (boolean)
+* `has_traded` (boolean)
+* `last_trade_price_source` (string) = `"nls"`
+* `last_non_reg_trade_price_source` (string) = `"consolidated"`
+* `updated_at` (ISO-8601)
+* `instrument` (URL)
+* `instrument_id` = `"8f92e76f-1e0e-4478-8580-16a6ffcfaef5"`
+* `state` (string) = `"active"`
 
-**Metadatos de request**
-Guarda en `request_meta_<epoch_ms>.txt`:
+**No se usan otros campos. No se inventa nada.**
+
+---
+
+# 3) Normalización (precisa y declarada)
+
+En `quotes/extended/latest.json` (y en cada `history/<timestamp>.json`) guardar un objeto con **solo**:
+
+* `symbol` (string)
+* `instrument_id` (string)
+* `bounds` = `"extended"` (string, fijo por esta petición)
+* `updated_at` (ISO-8601, igual al de origen)
+* `bid_price` (número) = parseFloat del string
+* `bid_size` (entero)
+* `ask_price` (número)
+* `ask_size` (entero)
+* `last_trade_price` (número)
+* `venue_last_trade_time` (ISO-8601)
+* `last_extended_hours_trade_price` (número)
+* `last_non_reg_trade_price` (número)
+* `venue_last_non_reg_trade_time` (ISO-8601)
+* `previous_close` (número)
+* `adjusted_previous_close` (número)
+* `previous_close_date` (YYYY-MM-DD)
+* `trading_halted` (boolean)
+* `has_traded` (boolean)
+* `last_trade_price_source` (string)
+* `last_non_reg_trade_price_source` (string)
+* `state` (string)
+
+**Campos derivados (definidos explícitamente, sin “adivinar”):**
+
+* `mid_price` (número) = `(bid_price + ask_price) / 2`
+* `spread` (número) = `ask_price - bid_price`
+* `spread_bps` (número) = `spread / mid_price * 10000`
+  (Si `mid_price == 0`, entonces `spread_bps = null`).
+
+> ÚNICAMENTE estas fórmulas; no se aplican otras transformaciones.
+
+---
+
+# 4) Versionado / historial
+
+* `latest.json` se **sobrescribe** cada vez (último snapshot).
+* En `history/`, crear un archivo por `updated_at` (reemplazando `: .` por `_` para el nombre).
+  Si llega otra muestra con el **mismo** `updated_at`, se **sobrescribe** ese archivo.
+
+---
+
+# 5) Auditoría del request
+
+Crear `quotes/meta/request_extended_<epoch_ms>.txt` con:
 
 * `url` completa
-* `method`
-* `status_code`
-* encabezados **con `authorization` REMOVIDO**
-* `querystring` literal (`owner_type=robinhood`)
-* timestamp UTC
+* `method` (`GET`)
+* `status_code` (esperado: `200`)
+* `timestamp_utc` (ISO)
+* `headers_sin_auth`: lista de headers recibidos **excluyendo** `authorization`
+* `query_params` **exactos**:
+  `bounds=extended` · `ids=8f92e76f-1e0e-4478-8580-16a6ffcfaef5` · `include_inactive=true`
 
-**Respuesta**
-
-* Escribe la **respuesta completa** en `raw/response_<epoch_ms>.json`.
-* Parsea el JSON. Si **falla**, no sigas (log y termina).
-
-**Estructurado (append-only)**
-
-* Recorre `results` (array). Por **cada elemento**, escribe **una línea** en `items.jsonl` con SOLO los campos recibidos (sin añadir ni renombrar claves):
-
-  ```json
-  {"id":"...","type":"instrument","symbol":"NVDA","name":"NVIDIA","item_data":[]}
-  ```
-* Crea/actualiza `summary.json` con:
-
-  ```json
-  {
-    "list_id": "609ddf55-2da1-4d85-8f23-501ccbdf76eb",
-    "owner_type": "robinhood",
-    "returned_all_items": true
-  }
-  ```
-
-  > Si el campo no existe en la respuesta, **no lo inventes** y no lo escribas.
-
-**Paginación**
-
-* Si la respuesta incluyera **`next`** NO nulo (no está en tu payload), realiza **otra petición** a esa URL y **append** en el mismo `items.jsonl`.
-* Si no hay `next`, termina. No asumas páginas adicionales.
-
-**Redacción de credenciales**
-
-* En cualquier archivo de metadatos, elimina **`authorization`** y cualquier token.
+La **respuesta cruda** completa se guarda en `quotes/raw/extended_response_<epoch_ms>.json`.
 
 ---
 
-# 3) Esquemas y tipado de archivos
+# 6) Validaciones estrictas
 
-## `items.jsonl` (JSON Lines)
-
-* **Una línea por elemento de `results`**.
-* Claves exactas del payload. Ejemplo literal de tus datos:
-
-```json
-{"id":"a4ecd608-e7b4-4ff3-afa5-f77ae7632dfb","type":"instrument","symbol":"NVDA","name":"NVIDIA","item_data":[]}
-{"id":"e39ed23a-7bd1-4587-b060-71988d9ef483","type":"instrument","symbol":"TSLA","name":"Tesla","item_data":[]}
-...
-```
-
-> `item_data` se guarda tal cual como arreglo (vacío en tu ejemplo).
-
-## `summary.json` (JSON)
-
-Campos permitidos si existen en la respuesta o del contexto inmediato del request:
-
-* `list_id` (extraído del path literal)
-* `owner_type` (del query `owner_type=robinhood`)
-* `returned_all_items` (si viene en el JSON raíz)
-
-## `raw/response_<epoch_ms>.json` (JSON)
-
-Respuesta completa sin mutar.
-
-## `request_meta_<epoch_ms>.txt` (texto)
-
-Campos de auditoría indicados arriba (sin `authorization`).
+* `results` debe ser array con **1** elemento. Si no, error y se persiste igual en `raw/` + `request_extended_*.txt`; no se genera `latest.json`.
+* Verificar `symbol === "SPY"` y `instrument_id === "8f92e76f-1e0e-4478-8580-16a6ffcfaef5"`.
+  Si no coincide, marcar `mismatch: true` en el objeto normalizado y **aún así** persistir el snapshot (no se descarta).
+* Parseo numérico: si algún precio viene no numérico, ese campo se escribe como `null` y `parse_error_fields` lista sus nombres.
 
 ---
 
-# 4) Reglas de guardado
+# 7) Integración con otros módulos
 
-* `items.jsonl` es **append-only**.
-* `raw/` es inmutable por respuesta (un archivo por request).
-* **No** se generan archivos derivados (por ejemplo, índices por símbolo) porque **no lo enviaste**; se evita asumir usos.
-
----
-
-# 5) Funciones (qué hacen y qué devuelven)
-
-* `isDiscoveryItemsUrl(url: string): boolean`
-  → `true` solo si coincide exactamente el patrón mostrado.
-
-* `extractListId(url: string): string`
-  → Devuelve `609ddf55-2da1-4d85-8f23-501ccbdf76eb` para tu URL.
-
-* `onDiscoveryItemsResponse(body: object, nowMs: number, url: string): void`
-  → Escribe `raw/response_<nowMs>.json`, crea carpeta del `list_id`, agrega líneas en `items.jsonl`, y actualiza `summary.json` con campos existentes.
-
-* `writeRequestMeta(meta: RequestMeta, nowMs: number): void`
-  → Escribe `request_meta_<nowMs>.txt` sin `authorization`.
-
-Todas devuelven `void`. En errores de I/O o parseo: log y abortar esa respuesta (no reintenta ni inventa campos).
-
----
-
-# 6) Interacciones con otros módulos/archivos
-
-* **Ninguna obligatoria.** No cruzamos con `legend/` ni con `options/` porque esta respuesta solo lista instrumentos generales (tal cual tu payload).
-* Si más adelante envías otra petición que relacione estos símbolos con el módulo, se documenta allí. Por ahora, **solo se almacena**.
+* El `instrument_id` coincide con el usado en **chains** (SPY). Se puede cruzar sin mapear nada extra.
+* Para streams (WS “legend”), este snapshot sirve como **referencia de último quote** fuera de horario regular.
 
 ---
