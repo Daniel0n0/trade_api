@@ -18,8 +18,9 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 12:
-¡Listo! ORDEN DEL MOMENTO — **Módulo “opciones avanzadas (SPY)”** · **Petición: `marketdata/quotes` (bounds=extended, id=8f92e76f-1e0e-4478-8580-16a6ffcfaef5)**
+PUNTO 13:
+
+¡Recibido! ORDEN DEL MOMENTO — **Módulo “opciones avanzadas (SPY)”** · **Petición: `options/instruments` (chain_id=SPY, expiration=2025-11-12, state=active, page_size=2000)**
 
 Todo **explícito**, sin suposiciones.
 
@@ -27,133 +28,138 @@ Todo **explícito**, sin suposiciones.
 
 # 1) Directorios de salida
 
-Usamos tu estructura de **stocks** y separamos por tipo de “bounds”:
-
 ```
 data/
-└─ stocks/
+└─ options/
    └─ SPY/
-      └─ 2025-11-12/                                   # fecha UTC de ingestión
-         └─ quotes/
-            ├─ raw/
-            │  └─ extended_response_<epoch_ms>.json    # respuesta cruda exacta
-            ├─ extended/
-            │  ├─ latest.json                           # último snapshot normalizado
-            │  └─ history/
-            │     └─ 2025-11-12T01_00_00Z.json          # 1 archivo por `updated_at` (sanitizado)
-            └─ meta/
-               └─ request_extended_<epoch_ms>.txt       # auditoría del request (sin Authorization)
+      └─ chains/
+         └─ c277b118-58d9-4060-8dc5-a3b5898955cb/
+            └─ 2025-11-12/
+               ├─ raw/
+               │  └─ instruments_response_<epoch_ms>.json     # respuesta cruda exacta
+               ├─ normalized/
+               │  ├─ instruments_latest.json                  # lista normalizada completa (último snapshot)
+               │  └─ history/
+               │     └─ instruments_<epoch_ms>.json           # copia por lote recibido
+               └─ meta/
+                  └─ request_instruments_<epoch_ms>.txt       # auditoría del request (sin Authorization)
 ```
 
-> Si llegan otros `bounds` (p. ej., `24_5`), se guardan en carpetas hermanas: `quotes/24_5/...` con el mismo esquema.
+---
+
+# 2) Campos EXACTOS relevantes por instrumento
+
+De cada elemento en `results` guardamos **tal cual** (strings/fechas/números según vienen):
+
+* `id` (UUID del instrumento de opción)
+* `chain_id`
+* `chain_symbol` (esperado: `"SPY"`)
+* `type` (`"call"`/`"put"`)
+* `strike_price` (string numérica, ej. `"690.0000"`)
+* `expiration_date` (YYYY-MM-DD)
+* `issue_date`
+* `state` (ej. `"active"`)
+* `tradability`, `rhs_tradability`
+* `sellout_datetime` (ISO con zona)
+* `min_ticks` (objeto con `above_tick`, `below_tick`, `cutoff_price`)
+* `underlying_type` (ej. `"equity"`)
+* `url` (endpoint del instrumento)
+* `created_at`, `updated_at`
+
+**No añadimos ni inventamos más campos en la capa “raw”.**
 
 ---
 
-# 2) Campos EXACTOS que llegaron
+# 3) Normalización (lista de instrumentos)
 
-De `results[0]`:
+En `normalized/instruments_latest.json` y en cada `history/instruments_<epoch_ms>.json` escribimos un **array** de objetos con esta forma (tipos explícitos):
 
-* `ask_price` (string numérica)
-* `ask_size` (entero)
-* `venue_ask_time` (ISO-8601)
-* `bid_price` (string numérica)
-* `bid_size` (entero)
-* `venue_bid_time` (ISO-8601)
-* `last_trade_price` (string numérica)
-* `venue_last_trade_time` (ISO-8601)
-* `last_extended_hours_trade_price` (string numérica)
-* `last_non_reg_trade_price` (string numérica)
-* `venue_last_non_reg_trade_time` (ISO-8601)
-* `previous_close` (string numérica)
-* `adjusted_previous_close` (string numérica)
-* `previous_close_date` (YYYY-MM-DD)
-* `symbol` = `"SPY"`
-* `trading_halted` (boolean)
-* `has_traded` (boolean)
-* `last_trade_price_source` (string) = `"nls"`
-* `last_non_reg_trade_price_source` (string) = `"consolidated"`
-* `updated_at` (ISO-8601)
-* `instrument` (URL)
-* `instrument_id` = `"8f92e76f-1e0e-4478-8580-16a6ffcfaef5"`
-* `state` (string) = `"active"`
+```json
+{
+  "id": "UUID",
+  "symbol": "SPY",
+  "chain_id": "c277b118-58d9-4060-8dc5-a3b5898955cb",
+  "type": "call",
+  "strike_price": 690.0,
+  "expiration_date": "2025-11-12",
+  "issue_date": "2025-10-29",
+  "state": "active",
+  "tradability": "tradable",
+  "rhs_tradability": "tradable",
+  "sellout_datetime": "2025-11-12T20:45:00+00:00",
+  "min_ticks": { "above_tick": 0.01, "below_tick": 0.01, "cutoff_price": 0.0 },
+  "underlying_type": "equity",
+  "api_url": "https://api.robinhood.com/options/instruments/<id>/",
+  "created_at": "2025-10-29T01:07:46.776188Z",
+  "updated_at": "2025-10-29T01:07:46.776191Z"
+}
+```
 
-**No se usan otros campos. No se inventa nada.**
+Reglas de normalización (declaradas):
 
----
-
-# 3) Normalización (precisa y declarada)
-
-En `quotes/extended/latest.json` (y en cada `history/<timestamp>.json`) guardar un objeto con **solo**:
-
-* `symbol` (string)
-* `instrument_id` (string)
-* `bounds` = `"extended"` (string, fijo por esta petición)
-* `updated_at` (ISO-8601, igual al de origen)
-* `bid_price` (número) = parseFloat del string
-* `bid_size` (entero)
-* `ask_price` (número)
-* `ask_size` (entero)
-* `last_trade_price` (número)
-* `venue_last_trade_time` (ISO-8601)
-* `last_extended_hours_trade_price` (número)
-* `last_non_reg_trade_price` (número)
-* `venue_last_non_reg_trade_time` (ISO-8601)
-* `previous_close` (número)
-* `adjusted_previous_close` (número)
-* `previous_close_date` (YYYY-MM-DD)
-* `trading_halted` (boolean)
-* `has_traded` (boolean)
-* `last_trade_price_source` (string)
-* `last_non_reg_trade_price_source` (string)
-* `state` (string)
-
-**Campos derivados (definidos explícitamente, sin “adivinar”):**
-
-* `mid_price` (número) = `(bid_price + ask_price) / 2`
-* `spread` (número) = `ask_price - bid_price`
-* `spread_bps` (número) = `spread / mid_price * 10000`
-  (Si `mid_price == 0`, entonces `spread_bps = null`).
-
-> ÚNICAMENTE estas fórmulas; no se aplican otras transformaciones.
+* `symbol` se fija al `chain_symbol` recibido por cada item (no se deduce).
+* `strike_price` → `number` vía `parseFloat`; si falla, `null` y se agrega `parse_error_fields:["strike_price"]` en ese objeto.
+* `min_ticks.*` → `number` vía `parseFloat`.
+* No se crean códigos OCC ni “eventSymbol”; **no** hay mapeo implícito.
 
 ---
 
-# 4) Versionado / historial
+# 4) Índices y orden
 
-* `latest.json` se **sobrescribe** cada vez (último snapshot).
-* En `history/`, crear un archivo por `updated_at` (reemplazando `: .` por `_` para el nombre).
-  Si llega otra muestra con el **mismo** `updated_at`, se **sobrescribe** ese archivo.
+Además del array, generamos **dos índices** (archivos JSON) para acceso rápido:
+
+* `normalized/index_by_id.json`
+  `{ "<instrument_id>": { "i": <posición_en_array> } }`
+
+* `normalized/index_by_key.json`
+  Clave compuesta **explícita**: `"<type>|<expiration_date>|<strike_price>"`
+  Ej.: `"call|2025-11-12|690"` → `<instrument_id>`
+
+Estos índices **no** duplican el objeto; apuntan a la posición o al id.
 
 ---
 
-# 5) Auditoría del request
+# 5) Paginación y consistencia
 
-Crear `quotes/meta/request_extended_<epoch_ms>.txt` con:
+* Si `next` trae URL, **concatenamos** todos los `results` en un solo lote antes de escribir `instruments_latest.json`.
+* En este caso, `next=null`, así que el lote es único.
+* Si en una nueva corrida se recibe un conjunto distinto (altas/bajas), `instruments_latest.json` se **sobrescribe completo** y siempre se añade una copia a `history/`.
+
+---
+
+# 6) Auditoría del request (sin secretos)
+
+`meta/request_instruments_<epoch_ms>.txt` contendrá:
 
 * `url` completa
-* `method` (`GET`)
-* `status_code` (esperado: `200`)
+* `method: GET`
+* `status_code` (recibido)
 * `timestamp_utc` (ISO)
-* `headers_sin_auth`: lista de headers recibidos **excluyendo** `authorization`
+* `headers_sin_auth` (todos excepto `authorization`)
 * `query_params` **exactos**:
-  `bounds=extended` · `ids=8f92e76f-1e0e-4478-8580-16a6ffcfaef5` · `include_inactive=true`
 
-La **respuesta cruda** completa se guarda en `quotes/raw/extended_response_<epoch_ms>.json`.
+  * `chain_id=c277b118-58d9-4060-8dc5-a3b5898955cb`
+  * `expiration_dates=2025-11-12`
+  * `page_size=2000`
+  * `state=active`
 
----
-
-# 6) Validaciones estrictas
-
-* `results` debe ser array con **1** elemento. Si no, error y se persiste igual en `raw/` + `request_extended_*.txt`; no se genera `latest.json`.
-* Verificar `symbol === "SPY"` y `instrument_id === "8f92e76f-1e0e-4478-8580-16a6ffcfaef5"`.
-  Si no coincide, marcar `mismatch: true` en el objeto normalizado y **aún así** persistir el snapshot (no se descarta).
-* Parseo numérico: si algún precio viene no numérico, ese campo se escribe como `null` y `parse_error_fields` lista sus nombres.
+La **respuesta cruda** exacta va a `raw/instruments_response_<epoch_ms>.json`.
 
 ---
 
-# 7) Integración con otros módulos
+# 7) Validaciones estrictas
 
-* El `instrument_id` coincide con el usado en **chains** (SPY). Se puede cruzar sin mapear nada extra.
-* Para streams (WS “legend”), este snapshot sirve como **referencia de último quote** fuera de horario regular.
+* Verificar que cada item tenga `chain_symbol === "SPY"` y `expiration_date === "2025-11-12"`.
+  Si no, incluir `mismatch: true` en ese objeto (pero no descartarlo).
+* Duplicados por `id`: si aparecen, se mantiene **el último** encontrado (se pisa el anterior).
+* Campos obligatorios por objeto: `id`, `type`, `strike_price`, `expiration_date`, `state`.
+  Si falta alguno, marcar `invalid: true` y listar `missing_fields`.
+
+---
+
+# 8) Enlaces con otros módulos (solo vínculos, sin inferir)
+
+* El `id` aquí coincide con el usado por órdenes/posiciones/quotes de opción en otros endpoints de Robinhood.
+* **No** generamos `eventSymbol` (feed de dxFeed) ni símbolos OCC; cuando necesitemos ese mapeo, se hará con la fuente correspondiente y quedará documentado en su propia sección.
 
 ---
