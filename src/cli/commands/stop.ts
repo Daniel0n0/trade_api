@@ -1,8 +1,8 @@
 import process from 'node:process';
 
-import { Command } from 'commander';
+import type { Command } from 'commander';
 
-import { CommandContext } from './shared.js';
+import type { CommandContext } from './shared.js';
 
 type StopOptions = { ctx?: string };
 
