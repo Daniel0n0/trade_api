@@ -18,164 +18,161 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 10:
-¡Va! ORDEN DEL MOMENTO — **Módulo “opciones avanzadas (SPY)”** · **Petición: marketdata/quotes**
+PUNTO 11:
+¡Hecho! ORDEN DEL MOMENTO — **Módulo “opciones avanzadas (SPY)”** · **Petición: `options/chains` (ids=c277b118-58d9-4060-8dc5-a3b5898955cb)**
 
-Solo documento lo que enviaste, sin suposiciones externas.
+Sin suposiciones: solo reglas explícitas y exactamente lo que trajiste.
 
 ---
 
 # 1) Dónde guardarlo (directorios)
 
-Como el `payload` **incluye `symbol: "SPY"` y `instrument_id`**, guarda el snapshot bajo **stocks/SPY** y referencia también el `instrument_id`.
+Conforme a tu árbol para **stocks** y **options**:
 
 ```
 data/
 └─ stocks/
    └─ SPY/
-      └─ 2025-11-12/                                 # usar fecha UTC de `updated_at` (“2025-11-12” del payload)
-         └─ quotes/
+      └─ 2025-11-12/                           # fecha UTC del momento de ingestión (timestamp del sistema)
+         └─ options/
             ├─ raw/
-            │  └─ response_<epoch_ms>.json           # respuesta cruda exacta
-            ├─ latest.json                            # último quote normalizado válido
-            ├─ timeseries.jsonl                       # historial (una línea por `updated_at`)
-            └─ by_instrument/
-               └─ 8f92e76f-1e0e-4478-8580-16a6ffcfaef5/
-                  └─ snapshots/
-                     └─ quote_<updated_at>.json       # 1 archivo por `updated_at` (normalizado)
+            │  └─ chains_response_<epoch_ms>.json            # respuesta cruda exacta (tal cual)
+            ├─ chains/
+            │  └─ c277b118-58d9-4060-8dc5-a3b5898955cb/
+            │     ├─ chain.json                               # objeto normalizado (único)
+            │     ├─ expirations.json                         # lista de expiraciones (array plano)
+            │     └─ by_expiration/
+            │        ├─ 2025-11-12.json
+            │        ├─ 2025-11-13.json
+            │        ├─ …                                     # 1 archivo por fecha en `expiration_dates`
+            │        └─ 2028-01-21.json
+            └─ options/
+               └─ in_the_future/
+                  ├─ 2025-11-12/                              # solo expiraciones ≤ 14 días desde la ingestión
+                  │  └─ chain_c277b118-58d9-4060-8dc5-a3b5898955cb.json
+                  ├─ 2025-11-13/
+                  │  └─ chain_c277b118-58d9-4060-8dc5-a3b5898955cb.json
+                  └─ … (hasta cubrir 14 días exactamente)
 ```
 
-> **No** mezclar credenciales/headers sensibles aquí. El `Authorization` **no se guarda** en ningún archivo.
+> **Nota**: “in_the_future/<fecha>/” se **pobla únicamente** si `expiration_date` ∈ [T_ingesta, T_ingesta+14 días], con T_ingesta = instante UTC en que procesas esta respuesta. No se duplica nada fuera de esa ventana.
 
 ---
 
-# 2) Cómo recibir y procesar
+# 2) Qué llegó (campos exactos)
 
-**URL exacta aceptada**
+Del `results[0]` (cadena SPY):
 
-```
-https://api.robinhood.com/marketdata/quotes/?bounds=24_5&ids=8f92e76f-1e0e-4478-8580-16a6ffcfaef5&include_inactive=true
-```
+* `id` = `"c277b118-58d9-4060-8dc5-a3b5898955cb"`
+* `symbol` = `"SPY"`
+* `can_open_position` = `true`
+* `cash_component` = `null`
+* `expiration_dates` = **array** de fechas ISO (todas listadas en tu payload)
+* `trade_value_multiplier` = `"100.0000"`
+* `underlying_instruments` = `[ { "id": "...", "instrument": "https://api.robinhood.com/instruments/8f92e76f-1e0e-4478-8580-16a6ffcfaef5/", "quantity": 100 } ]`
+* `min_ticks` = `{ "above_tick": "0.01", "below_tick": "0.01", "cutoff_price": "0.00" }`
+* `min_ticks_multileg` = `{ "above_tick": "0.01", "below_tick": "0.01", "cutoff_price": "0.00" }`
+* `late_close_state` = `"enabled"`
+* `extended_hours_state` = `"disabled"`
+* `underlyings` = `[ { "type": "equity", "id": "8f92e76f-1e0e-4478-8580-16a6ffcfaef5", "quantity": 100, "symbol": "SPY" } ]`
+* `settle_on_open` = `false`
+* `sellout_time_to_expiration` = `2700`
 
-**Metadatos del request (auditoría, sin secretos)**
-
-* Guardar en `data/stocks/SPY/2025-11-12/quotes/request_meta_<epoch_ms>.txt`
-* Contenido:
-
-  * `url` completa (querystring tal como llegó)
-  * `method`
-  * `status_code`
-  * **headers sin** `authorization`
-  * `timestamp_utc` (ISO 8601)
-
-**Respuesta (parsing estricto del objeto dentro de `results[0]`)**
-
-Campos **exactos** del payload recibido:
-
-* `ask_price` (string numérica)
-* `ask_size` (entero)
-* `venue_ask_time` (ISO)
-* `bid_price` (string numérica)
-* `bid_size` (entero)
-* `venue_bid_time` (ISO)
-* `last_trade_price` (string numérica)
-* `venue_last_trade_time` (ISO con nanos)
-* `last_extended_hours_trade_price` (string numérica)
-* `last_non_reg_trade_price` (string numérica)
-* `venue_last_non_reg_trade_time` (ISO)
-* `previous_close` (string numérica)
-* `adjusted_previous_close` (string numérica)
-* `previous_close_date` (YYYY-MM-DD)
-* `symbol` (string) → **“SPY”**
-* `trading_halted` (boolean)
-* `has_traded` (boolean)
-* `last_trade_price_source` (string)
-* `last_non_reg_trade_price_source` (string)
-* `updated_at` (ISO)
-* `instrument` (URL)
-* `instrument_id` (UUID) → **“8f92e76f-…”**
-* `state` (string) → **“active”**
-
-**Normalización (archivo de trabajo)**
-
-* Mantén **dos representaciones**:
-
-  1. **Cruda**: `raw/response_<epoch_ms>.json` → copiar tal cual.
-  2. **Normalizada**: convertir solo los **numéricos** a número:
-
-     * `ask_price`, `bid_price`, `last_trade_price`, `last_extended_hours_trade_price`,
-       `last_non_reg_trade_price`, `previous_close`, `adjusted_previous_close`.
-     * El resto queda como viene (fechas ISO en string).
-* `latest.json` → igual al objeto normalizado más reciente (por `updated_at`).
-
-**Historial**
-
-* `timeseries.jsonl` (append-only). **Clave de idempotencia: `updated_at`**.
-
-  * Si llega un quote con el **mismo `updated_at`**, no duplicar línea.
-* Copia por `updated_at`: `by_instrument/<instrument_id>/snapshots/quote_<updated_at>.json`.
+**No se inventan** campos; solo se usan los anteriores.
 
 ---
 
-# 3) ¿Se debe guardar? ¿Cómo?
+# 3) Normalización (sin perder fidelidad)
 
-* **Sí.**
+En `chains/c277b.../chain.json` guardar **objeto normalizado** con estas reglas **explícitas**:
 
-  * **Snapshot crudo** (auditoría) y **normalizado** (uso interno).
-  * **Histórico** para backtesting y reconciliación.
-* **Deduplicación por `updated_at`** en `timeseries.jsonl`.
-* Permisos de archivos/carpeta: lectura/escritura del proceso únicamente.
+* Mantener **strings** como vienen (ids, URLs, estados).
+* Convertir a **número**:
 
----
+  * `trade_value_multiplier` → número (100.0)
+  * `underlying_instruments[].quantity` → número
+  * `underlyings[].quantity` → número
+  * `sellout_time_to_expiration` → número (segundos)
+* `expiration_dates`: array de strings ISO **sin modificar**.
+* Copiar el objeto **completo** tras la conversión numérica indicada (nada más).
 
-# 4) Tipado y formato de archivos
+Además:
 
-* `raw/response_*.json` → **JSON** (sin modificar).
-* `latest.json` → **JSON** (objeto normalizado único).
-* `timeseries.jsonl` → **JSON Lines** (una línea = un quote normalizado por `updated_at`).
-* `snapshots/quote_<updated_at>.json` → **JSON** (objeto normalizado).
+* `expirations.json`: solo el array de `expiration_dates` (strings).
+* En `by_expiration/<YYYY-MM-DD>.json`: un JSON con:
 
----
+  ```json
+  {
+    "chain_id": "c277b118-58d9-4060-8dc5-a3b5898955cb",
+    "symbol": "SPY",
+    "expiration_date": "YYYY-MM-DD",
+    "trade_value_multiplier": 100.0,
+    "min_ticks": {"above_tick":"0.01","below_tick":"0.01","cutoff_price":"0.00"},
+    "min_ticks_multileg": {"above_tick":"0.01","below_tick":"0.01","cutoff_price":"0.00"}
+  }
+  ```
 
-# 5) Funciones — qué hacen y qué devuelven
-
-* `isQuotesUrl(url: string): boolean`
-  → `true` solo si la ruta es `/marketdata/quotes/` y existen los query params `bounds`, `ids`, `include_inactive`.
-
-* `parseQuote(body: object): Quote | Error`
-  → Valida y extrae **exactamente** los campos listados arriba.
-  → Convierte a número los campos numéricos (solo los citados).
-  → Devuelve `Error` si falta **cualquiera** de esos campos.
-
-* `writeRequestMeta(meta): void`
-  → Escribe `request_meta_<epoch_ms>.txt` sin `authorization`.
-
-* `persistRaw(body): void`
-  → Escribe `raw/response_<epoch_ms>.json`.
-
-* `persistLatest(quote: Quote): void`
-  → Sobrescribe `latest.json`.
-
-* `appendTimeseries(quote: Quote): void`
-  → Añade línea a `timeseries.jsonl` **si no existe** ya ese `updated_at`.
-
-* `writeSnapshotByUpdatedAt(quote: Quote): void`
-  → `by_instrument/<instrument_id>/snapshots/quote_<updated_at>.json`.
-
-Todas devuelven `void` salvo `parseQuote` (devuelve `Quote` o `Error`).
+  (Solo metadatos necesarios por expiración; nada de más.)
 
 ---
 
-# 6) Interacciones con otros archivos/módulos
+# 4) Relleno de `options/in_the_future/`
 
-* **Módulo de websockets `legend`** (que ya documentaste) **puede usar `latest.json`** como respaldo cuando no haya stream.
-* **Opciones avanzadas (SPY)** puede leer `latest.json` y/o `timeseries.jsonl` para cálculos de P&L/greeks propios; esta petición **no** incluye griegas ni velas, solo **quote**.
+Regla **clara** (sin inferencias ocultas):
+
+* Tomar `T_ingesta_utc` = timestamp UTC del sistema **en el instante de procesar** esta respuesta.
+* Para cada `expiration_date`:
+
+  * Si `0 ≤ expiration_date - T_ingesta_utc ≤ 14 días`, crear:
+
+    ```
+    data/stocks/SPY/<fecha_ingesta>/options/in_the_future/<expiration_date>/chain_c277b118-... .json
+    ```
+
+    Contenido: mismo objeto que en `by_expiration/<expiration_date>.json` (puedes referenciarlo o duplicarlo; define una sola de las dos prácticas y sé consistente).
+  * Si **no** cae dentro de 14 días, **no** crear carpeta en `in_the_future`.
 
 ---
 
-# 7) Reglas de actualización
+# 5) Auditoría del request (sin secretos)
 
-* Si `updated_at` **cambia** → actualizar `latest.json`, agregar línea en `timeseries.jsonl`, escribir snapshot.
-* Si `updated_at` **no cambia** → no hacer nada (salvo guardar crudo y meta si necesitas auditoría completa de llamadas).
+Escribir `request_meta_<epoch_ms>.txt` en `options/raw/` con:
+
+* `url` completa
+* `method`
+* `status_code`
+* `timestamp_utc` (ISO)
+* Headers **excluyendo** `authorization`
+
+La respuesta cruda completa va a `options/raw/chains_response_<epoch_ms>.json`.
+
+---
+
+# 6) Funciones y comportamiento
+
+* `isChainsUrl(url): boolean`
+  Verdadero solo si path es `/options/chains/` y existe query `ids`.
+
+* `parseChain(body): Chain | Error`
+  Valida presencia exacta de los campos listados en **(2)**. Convierte únicamente los numéricos indicados en **(3)**.
+
+* `persistRaw(body): void` → guarda JSON crudo.
+
+* `writeRequestMeta(meta): void` → guarda auditoría sin token.
+
+* `persistChain(chain: Chain): void` → escribe `chain.json` y `expirations.json`.
+
+* `writeByExpiration(chain: Chain): void` → crea un archivo por fecha en `by_expiration/`.
+
+* `populateInTheFuture(chain: Chain, t_ingesta_utc: Instant): void` → aplica regla de 14 días exactos y crea los archivos bajo `in_the_future/`.
+
+Todas devuelven `void` salvo `parseChain`.
+
+---
+
+# 7) Relaciones con otros módulos
+
+* **Quotes SPY**: el `instrument_id` (`8f92e76f-...`) coincide con el usado en quotes; sirve para cruzar subyacente.
+* **WS legend (Greeks/Trades/Quotes de opciones)**: usará `expirations.json` y `by_expiration/*` para saber qué fechas vigilar.
 
 ---
