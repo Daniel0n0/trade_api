@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import path from 'node:path';
-import { readdir, readFile, rm } from 'node:fs/promises';
+import { readFile, readdir, rm } from 'node:fs/promises';
 
 import {
+  createDiscoverySnapshotId,
   extractListId,
   isDiscoveryItemsUrl,
   persistDiscoveryItemsPayload,
+  persistDiscoveryItemsRawArtifacts,
 } from '../src/modules/discovery/discovery-items-recorder.js';
 
 describe('discovery items recorder', () => {
@@ -33,6 +35,7 @@ describe('discovery items recorder', () => {
     const listId = '609ddf55-2da1-4d85-8f23-501ccbdf76eb';
     const ownerType = 'robinhood';
     const symbol = 'SPY';
+    const snapshotId = '1705312200000-1';
     const payload = {
       results: [
         { id: 'abc', type: 'instrument', symbol: 'NVDA', name: 'NVIDIA', item_data: [] },
@@ -40,8 +43,7 @@ describe('discovery items recorder', () => {
       ],
       returned_all_items: true,
     };
-    await persistDiscoveryItemsPayload({
-      payload,
+    const baseParams = {
       rawText: JSON.stringify(payload),
       listId,
       ownerType,
@@ -50,6 +52,7 @@ describe('discovery items recorder', () => {
       status: 200,
       url: `https://api.robinhood.com/discovery/lists/v2/${listId}/items/?owner_type=${ownerType}`,
       querystring: `owner_type=${ownerType}`,
+      snapshotId,
       requestMeta: {
         method: 'GET',
         headers: [
@@ -58,7 +61,9 @@ describe('discovery items recorder', () => {
           { name: 'accept', value: 'application/json' },
         ],
       },
-    });
+    };
+    await persistDiscoveryItemsRawArtifacts(baseParams);
+    await persistDiscoveryItemsPayload({ ...baseParams, payload });
 
     const baseDir = path.join(
       process.cwd(),
@@ -72,16 +77,8 @@ describe('discovery items recorder', () => {
     );
     const itemsPath = path.join(baseDir, 'items.jsonl');
     const summaryPath = path.join(baseDir, 'summary.json');
-    const baseEntries = await readdir(baseDir);
-    const metaFile = baseEntries.find((entry) => entry.startsWith('request_meta_') && entry.endsWith('.txt'));
-    assert.ok(metaFile, 'request_meta file should exist');
-    const metaPath = path.join(baseDir, metaFile);
-
-    const rawDir = path.join(baseDir, 'raw');
-    const rawEntries = await readdir(rawDir);
-    const rawFile = rawEntries.find((entry) => entry.startsWith('response_') && entry.endsWith('.json'));
-    assert.ok(rawFile, 'raw response file should exist');
-    const rawPath = path.join(rawDir, rawFile);
+    const metaPath = path.join(baseDir, `request_meta_${snapshotId}.txt`);
+    const rawPath = path.join(baseDir, 'raw', `response_${snapshotId}.json`);
 
     const itemsContent = await readFile(itemsPath, 'utf8');
     const lines = itemsContent
@@ -113,15 +110,14 @@ describe('discovery items recorder', () => {
     assert.equal(rawContent.trim(), JSON.stringify(payload));
   });
 
-  it('genera sufijos únicos cuando se persisten dos respuestas en el mismo milisegundo', async () => {
-    const timestampMs = Date.UTC(2024, 0, 15, 12, 45, 0);
-    const listId = '609ddf55-2da1-4d85-8f23-501ccbdf76eb';
+  it('crea raw/request_meta incluso si el JSON es inválido', async () => {
+    const timestampMs = Date.UTC(2024, 5, 1, 0, 0, 0);
+    const listId = 'list-invalid';
     const ownerType = 'robinhood';
     const symbol = 'SPY';
-    const payload = { results: [{ id: 'abc' }] };
+    const snapshotId = '1717200000000-1';
     const baseParams = {
-      payload,
-      rawText: JSON.stringify(payload),
+      rawText: '{invalid',
       listId,
       ownerType,
       symbol,
@@ -129,34 +125,76 @@ describe('discovery items recorder', () => {
       status: 200,
       url: `https://api.robinhood.com/discovery/lists/v2/${listId}/items/?owner_type=${ownerType}`,
       querystring: `owner_type=${ownerType}`,
+      snapshotId,
       requestMeta: { method: 'GET', headers: [] },
-    } as const;
-
-    await persistDiscoveryItemsPayload(baseParams);
-    await persistDiscoveryItemsPayload(baseParams);
+    };
+    await persistDiscoveryItemsRawArtifacts(baseParams);
 
     const baseDir = path.join(
       process.cwd(),
       'data',
       'stocks',
       symbol,
-      '2024-01-15',
+      '2024-06-01',
+      'discovery',
+      'lists',
+      listId,
+    );
+    const rawPath = path.join(baseDir, 'raw', `response_${snapshotId}.json`);
+    const metaPath = path.join(baseDir, `request_meta_${snapshotId}.txt`);
+    const summaryPath = path.join(baseDir, 'summary.json');
+
+    const rawContent = await readFile(rawPath, 'utf8');
+    assert.equal(rawContent.trim(), '{invalid');
+    await readFile(metaPath, 'utf8');
+    await assert.rejects(() => readFile(summaryPath, 'utf8'));
+  });
+
+  it('genera IDs únicos por snapshot', async () => {
+    const timestampMs = Date.UTC(2024, 3, 1, 12, 0, 0);
+    const listId = 'list-unique';
+    const ownerType = 'robinhood';
+    const symbol = 'SPY';
+    const baseDir = path.join(
+      process.cwd(),
+      'data',
+      'stocks',
+      symbol,
+      '2024-04-01',
       'discovery',
       'lists',
       listId,
     );
 
-    const metaFiles = (await readdir(baseDir)).filter(
-      (entry) => entry.startsWith('request_meta_') && entry.endsWith('.txt'),
-    );
-    assert.equal(metaFiles.length, 2);
-    assert.equal(new Set(metaFiles).size, 2);
+    const firstId = createDiscoverySnapshotId();
+    const secondId = createDiscoverySnapshotId();
+    await persistDiscoveryItemsRawArtifacts({
+      rawText: '{}',
+      listId,
+      ownerType,
+      symbol,
+      timestampMs,
+      status: 200,
+      url: `https://api.robinhood.com/discovery/lists/v2/${listId}/items/?owner_type=${ownerType}`,
+      querystring: `owner_type=${ownerType}`,
+      snapshotId: firstId,
+      requestMeta: { method: 'GET', headers: [] },
+    });
+    await persistDiscoveryItemsRawArtifacts({
+      rawText: '{}',
+      listId,
+      ownerType,
+      symbol,
+      timestampMs,
+      status: 200,
+      url: `https://api.robinhood.com/discovery/lists/v2/${listId}/items/?owner_type=${ownerType}`,
+      querystring: `owner_type=${ownerType}`,
+      snapshotId: secondId,
+      requestMeta: { method: 'GET', headers: [] },
+    });
 
-    const rawDir = path.join(baseDir, 'raw');
-    const rawFiles = (await readdir(rawDir)).filter(
-      (entry) => entry.startsWith('response_') && entry.endsWith('.json'),
-    );
+    const rawFiles = await readdir(path.join(baseDir, 'raw'));
     assert.equal(rawFiles.length, 2);
-    assert.equal(new Set(rawFiles).size, 2);
+    assert.notEqual(rawFiles[0], rawFiles[1]);
   });
 });

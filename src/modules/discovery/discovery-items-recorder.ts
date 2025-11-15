@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { appendFile, writeFile } from 'node:fs/promises';
+import { hrtime } from 'node:process';
 import type { APIResponse, Page, Request, Response } from 'playwright';
 
 import { ensureDirectoryForFileSync, ensureDirectorySync } from '../../io/dir.js';
@@ -30,8 +31,7 @@ type RequestMetaInput = {
   readonly headers: readonly HeaderEntry[];
 };
 
-type PersistPayloadParams = {
-  readonly payload: DiscoveryItemsPayload;
+type DiscoverySnapshotBaseParams = {
   readonly rawText: string;
   readonly listId: string;
   readonly ownerType: string | null;
@@ -40,8 +40,15 @@ type PersistPayloadParams = {
   readonly status: number;
   readonly url: string;
   readonly querystring: string;
-  readonly requestMeta?: RequestMetaInput;
+  readonly snapshotId: string;
+  readonly requestMeta: RequestMetaInput;
 };
+
+type PersistPayloadParams = DiscoverySnapshotBaseParams & {
+  readonly payload: DiscoveryItemsPayload;
+};
+
+type PersistRawParams = DiscoverySnapshotBaseParams;
 
 const toUtcDate = (timestampMs: number): string => new Date(timestampMs).toISOString().slice(0, 10);
 
@@ -53,10 +60,8 @@ const sanitizeListIdForPath = (listId: string): string => {
   return trimmed.replace(/[\\/]/g, '_');
 };
 
-const buildResponseId = (timestampMs: number): string => `${timestampMs}-${process.hrtime.bigint()}`;
-
 const formatRequestMeta = (
-  params: PersistPayloadParams,
+  params: DiscoverySnapshotBaseParams,
   headers: readonly HeaderEntry[],
 ): string => {
   const headerLines = headers.map((entry) => `${entry.name}: ${entry.value}`);
@@ -96,19 +101,34 @@ const buildSummaryPayload = (
   return summary;
 };
 
-export const persistDiscoveryItemsPayload = async (
-  params: PersistPayloadParams,
-): Promise<void> => {
+const resolveDiscoveryDir = (params: PersistPayloadParams | PersistRawParams): string => {
   const dateSegment = toUtcDate(params.timestampMs);
   const baseDir = ensureSymbolDateDir({ assetClass: 'stocks', symbol: params.symbol, date: dateSegment });
   const discoveryDir = path.join(baseDir, 'discovery', 'lists', sanitizeListIdForPath(params.listId));
   ensureDirectorySync(discoveryDir);
+  return discoveryDir;
+};
+
+export const persistDiscoveryItemsRawArtifacts = async (
+  params: PersistRawParams,
+): Promise<void> => {
+  const discoveryDir = resolveDiscoveryDir(params);
   const rawDir = path.join(discoveryDir, 'raw');
   ensureDirectorySync(rawDir);
-
-  const responseId = buildResponseId(params.timestampMs);
-  const rawPath = path.join(rawDir, `response_${responseId}.json`);
+  const rawPath = path.join(rawDir, `response_${params.snapshotId}.json`);
   await writeFile(rawPath, `${params.rawText}\n`, 'utf8');
+
+  const headers = (params.requestMeta?.headers ?? []).filter(
+    (entry) => entry.name.toLowerCase() !== 'authorization',
+  );
+  const metaPath = path.join(discoveryDir, `request_meta_${params.snapshotId}.txt`);
+  await writeFile(metaPath, formatRequestMeta(params, headers), 'utf8');
+};
+
+export const persistDiscoveryItemsPayload = async (
+  params: PersistPayloadParams,
+): Promise<void> => {
+  const discoveryDir = resolveDiscoveryDir(params);
 
   const itemsPath = path.join(discoveryDir, 'items.jsonl');
   ensureDirectoryForFileSync(itemsPath);
@@ -117,13 +137,9 @@ export const persistDiscoveryItemsPayload = async (
   const summaryPayload = buildSummaryPayload(params.listId, params.ownerType, params.payload);
   const summaryPath = path.join(discoveryDir, 'summary.json');
   await writeFile(summaryPath, `${JSON.stringify(summaryPayload, null, SUMMARY_INDENT)}\n`, 'utf8');
-
-  const headers = (params.requestMeta?.headers ?? []).filter(
-    (entry) => entry.name.toLowerCase() !== 'authorization',
-  );
-  const metaPath = path.join(discoveryDir, `request_meta_${responseId}.txt`);
-  await writeFile(metaPath, formatRequestMeta(params, headers), 'utf8');
 };
+
+export const createDiscoverySnapshotId = (): string => `${Date.now()}-${hrtime.bigint().toString()}`;
 
 const resolveContentType = (headers: Record<string, string>): string | undefined => {
   for (const [name, value] of Object.entries(headers ?? {})) {
@@ -279,16 +295,9 @@ const processResponse = async ({
     console.warn('[discovery-items] No se pudo leer el cuerpo de la respuesta:', error);
     return;
   }
-  let payload: DiscoveryItemsPayload;
-  try {
-    payload = JSON.parse(rawText) as DiscoveryItemsPayload;
-  } catch (error) {
-    console.warn('[discovery-items] No se pudo parsear el cuerpo JSON:', error);
-    return;
-  }
   const timestampMs = Date.now();
-  await persistDiscoveryItemsPayload({
-    payload,
+  const snapshotId = createDiscoverySnapshotId();
+  const baseParams: DiscoverySnapshotBaseParams = {
     rawText,
     listId: urlParts.listId,
     ownerType: urlParts.ownerType,
@@ -297,7 +306,23 @@ const processResponse = async ({
     status,
     url,
     querystring: urlParts.querystring,
+    snapshotId,
     requestMeta: ensureRequestMeta(requestMeta),
+  };
+
+  await persistDiscoveryItemsRawArtifacts(baseParams);
+
+  let payload: DiscoveryItemsPayload;
+  try {
+    payload = JSON.parse(rawText) as DiscoveryItemsPayload;
+  } catch (error) {
+    console.warn('[discovery-items] No se pudo parsear el cuerpo JSON:', error);
+    return;
+  }
+
+  await persistDiscoveryItemsPayload({
+    ...baseParams,
+    payload,
   });
 
   const nextUrl = normalizeNextUrl(payload?.next, url);
