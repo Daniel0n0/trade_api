@@ -18,155 +18,59 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 8:
-¡Voy! ORDEN DEL MOMENTO — **Módulo “opciones avanzadas (SPY)”** · **Petición: discovery lists (items)**
+PUNTO 15:
+¡Recibido! **Petición `marketdata/options` (otro lote de 20 IDs)**
 
-Solo uso lo que enviaste. Esta petición devuelve **una lista de instrumentos** con campos exactos:
-`id, type, symbol, name, item_data (array)`, más `returned_all_items` a nivel raíz.
+La integro igual que el lote anterior y **upserto** en el mismo “snapshot” de opciones.
 
----
+### Qué hago con este request
 
-# 1) Dónde guardarlo (directorios)
+1. **Guardar crudo**
 
-Para mantenerlo dentro del módulo de SPY sin mezclar con velas/legend:
+* `data/options/SPY/marketdata/raw/md_options_response_<epoch_ms>.json`
 
-```
-data/
-└─ stocks/
-   └─ SPY/
-      └─ <YYYY-MM-DD>/
-         └─ discovery/
-            └─ lists/
-               └─ 609ddf55-2da1-4d85-8f23-501ccbdf76eb/
-                  ├─ raw/
-                  │  └─ response_<epoch_ms>.json
-                  ├─ request_meta_<epoch_ms>.txt
-                  ├─ items.jsonl
-                  └─ summary.json
-```
+2. **Auditoría del request** (sin el `authorization`)
 
-* `<YYYY-MM-DD>` se toma en **UTC** del momento en que recibes la respuesta.
-* El subdirectorio se nombra con el **list_id** literal del URL.
-* `raw/` almacena la respuesta sin alterar (ver redacción de credenciales abajo).
+* `data/options/SPY/marketdata/meta/request_md_options_<epoch_ms>.txt`
+  Incluye URL completa (los 20 IDs), método, `status=200`, `timestamp_utc`, headers útiles y `x-robinhood-md-num-instruments: 20`.
 
----
+3. **Normalizar y upsert**
 
-# 2) Cómo recibir y procesar (paso a paso, sin suposiciones)
+* Parseo los 20 `results` con el **mismo esquema** de la tanda anterior (precios/greeks numéricos; fechas string ISO).
+* Actualizo `data/options/SPY/marketdata/normalized/options_md_latest.json`:
 
-**Filtro de URL exacto**
-Procesa solo si la URL es:
+  * Si `instrument_id` **existe**, **reemplazo** el ítem completo (preferencia por el más reciente según `updated_at`; si falta, uso el orden de llegada).
+  * Si **no existe**, lo **agrego** al array.
+* Actualizo índices:
 
-```
-https://api.robinhood.com/discovery/lists/v2/<LIST_ID>/items/?owner_type=robinhood
-```
+  * `index_by_instrument_id.json` → posición en el array
+  * `index_by_occ.json` → `occ_symbol` → `instrument_id`
+* Copia histórica del snapshot:
+  `normalized/history/options_md_<epoch_ms>.json`
 
-**Metadatos de request**
-Guarda en `request_meta_<epoch_ms>.txt`:
+4. **Derivados opcionales**
 
-* `url` completa
-* `method`
-* `status_code`
-* encabezados **con `authorization` REMOVIDO**
-* `querystring` literal (`owner_type=robinhood`)
-* timestamp UTC
+* Si tengo último **spot** de SPY y strikes (vía `options/instruments`), refresco `normalized/derived_latest.json` con `mid`, `spread`, `relative_spread`, `moneyness` (sin tocar el snapshot base).
 
-**Respuesta**
+5. **Validaciones & flags**
 
-* Escribe la **respuesta completa** en `raw/response_<epoch_ms>.json`.
-* Parsea el JSON. Si **falla**, no sigas (log y termina).
+* `symbol` debe ser `"SPY"`; si no, `mismatch_symbol:true`.
+* Numéricos inválidos/`NaN` → guardo `null` y anoto `parse_error_fields:[...]`.
+* Marcas típicas de datos “borde”:
 
-**Estructurado (append-only)**
+  * **IV sentinela** `0.000075` en puts prof. ITM → lo registro en `sentinel_iv:true`.
+  * `chance_of_profit_long ∈ {0,1}` en puts muy ITM u OTM → `cop_is_extreme:true`.
+  * `bid=0` y `ask>0` → `one_sided_market:true`.
 
-* Recorre `results` (array). Por **cada elemento**, escribe **una línea** en `items.jsonl` con SOLO los campos recibidos (sin añadir ni renombrar claves):
+6. **Consistencia con instruments**
 
-  ```json
-  {"id":"...","type":"instrument","symbol":"NVDA","name":"NVIDIA","item_data":[]}
-  ```
-* Crea/actualiza `summary.json` con:
+* Si alguno de estos 20 `instrument_id` aún **no** está en nuestro cache de `options/instruments`, marco `needs_instrument_join:true` (para forzar el join al próximo ciclo) y no calculo `moneyness` para ese ítem.
 
-  ```json
-  {
-    "list_id": "609ddf55-2da1-4d85-8f23-501ccbdf76eb",
-    "owner_type": "robinhood",
-    "returned_all_items": true
-  }
-  ```
+7. **Errores y casos raros**
 
-  > Si el campo no existe en la respuesta, **no lo inventes** y no lo escribas.
+* Si la respuesta hubiese venido vacía/parcial:
 
-**Paginación**
-
-* Si la respuesta incluyera **`next`** NO nulo (no está en tu payload), realiza **otra petición** a esa URL y **append** en el mismo `items.jsonl`.
-* Si no hay `next`, termina. No asumas páginas adicionales.
-
-**Redacción de credenciales**
-
-* En cualquier archivo de metadatos, elimina **`authorization`** y cualquier token.
-
----
-
-# 3) Esquemas y tipado de archivos
-
-## `items.jsonl` (JSON Lines)
-
-* **Una línea por elemento de `results`**.
-* Claves exactas del payload. Ejemplo literal de tus datos:
-
-```json
-{"id":"a4ecd608-e7b4-4ff3-afa5-f77ae7632dfb","type":"instrument","symbol":"NVDA","name":"NVIDIA","item_data":[]}
-{"id":"e39ed23a-7bd1-4587-b060-71988d9ef483","type":"instrument","symbol":"TSLA","name":"Tesla","item_data":[]}
-...
-```
-
-> `item_data` se guarda tal cual como arreglo (vacío en tu ejemplo).
-
-## `summary.json` (JSON)
-
-Campos permitidos si existen en la respuesta o del contexto inmediato del request:
-
-* `list_id` (extraído del path literal)
-* `owner_type` (del query `owner_type=robinhood`)
-* `returned_all_items` (si viene en el JSON raíz)
-
-## `raw/response_<epoch_ms>.json` (JSON)
-
-Respuesta completa sin mutar.
-
-## `request_meta_<epoch_ms>.txt` (texto)
-
-Campos de auditoría indicados arriba (sin `authorization`).
-
----
-
-# 4) Reglas de guardado
-
-* `items.jsonl` es **append-only**.
-* `raw/` es inmutable por respuesta (un archivo por request).
-* **No** se generan archivos derivados (por ejemplo, índices por símbolo) porque **no lo enviaste**; se evita asumir usos.
-
----
-
-# 5) Funciones (qué hacen y qué devuelven)
-
-* `isDiscoveryItemsUrl(url: string): boolean`
-  → `true` solo si coincide exactamente el patrón mostrado.
-
-* `extractListId(url: string): string`
-  → Devuelve `609ddf55-2da1-4d85-8f23-501ccbdf76eb` para tu URL.
-
-* `onDiscoveryItemsResponse(body: object, nowMs: number, url: string): void`
-  → Escribe `raw/response_<nowMs>.json`, crea carpeta del `list_id`, agrega líneas en `items.jsonl`, y actualiza `summary.json` con campos existentes.
-
-* `writeRequestMeta(meta: RequestMeta, nowMs: number): void`
-  → Escribe `request_meta_<nowMs>.txt` sin `authorization`.
-
-Todas devuelven `void`. En errores de I/O o parseo: log y abortar esa respuesta (no reintenta ni inventa campos).
-
----
-
-# 6) Interacciones con otros módulos/archivos
-
-* **Ninguna obligatoria.** No cruzamos con `legend/` ni con `options/` porque esta respuesta solo lista instrumentos generales (tal cual tu payload).
-* Si más adelante envías otra petición que relacione estos símbolos con el módulo, se documenta allí. Por ahora, **solo se almacena**.
+  * Registro `md_options_warning` en el meta con el recuento devuelto vs. `x-robinhood-md-num-instruments: 20`.
+* Rate limit o 5xx: creo `meta/request_md_options_<epoch_ms>_error.txt` con el cuerpo y **no** toco `options_md_latest.json`.
 
 ---
