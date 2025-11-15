@@ -189,9 +189,8 @@ const ensureLegendDateContext = (symbol: string, date: string, assetClass: strin
   ensureDirectorySync(optionsBySymbolDir);
 
   const keepalivePath = path.join(legendDir, 'keepalive.csv');
-  const tradesBaseName = symbolKey.toLowerCase();
-  const tradesPath = path.join(legendDir, `trades_${tradesBaseName}.jsonl`);
-  const tradesEthPath = path.join(legendDir, `trades_${tradesBaseName}_eth.jsonl`);
+  const tradesPath = path.join(legendDir, 'trades.jsonl');
+  const tradesEthPath = path.join(legendDir, 'trades_eth.jsonl');
   const optionsTradesPath = path.join(legendDir, 'options_trades.jsonl');
   const optionsQuotesPath = path.join(legendDir, 'options_quotes.jsonl');
   const optionsSummariesPath = path.join(legendDir, 'options_summaries.jsonl');
@@ -251,10 +250,10 @@ const resolveOptionsWriterKey = (eventType: unknown): LegendOptionsWriterKey | u
 };
 
 const OPTIONS_SYMBOL_FILE_NAMES: Record<LegendOptionsWriterKey, string> = {
-  trades: 'trades.jsonl',
-  quotes: 'quotes.jsonl',
-  summaries: 'summaries.jsonl',
-  greeks: 'greeks.jsonl',
+  trades: 'options_trades.jsonl',
+  quotes: 'options_quotes.jsonl',
+  summaries: 'options_summaries.jsonl',
+  greeks: 'options_greeks.jsonl',
 };
 
 const ensureOptionsSymbolWriter = (
