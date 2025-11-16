@@ -59,11 +59,28 @@ const sanitizeListIdForPath = (listId: string): string => {
   return trimmed.replace(/[\\/]/g, '_');
 };
 
+const SENSITIVE_HEADER_NAMES = ['authorization'];
+const SENSITIVE_HEADER_SUBSTRINGS = ['token', 'cookie'];
+
+const sanitizeHeadersForMeta = (headers: readonly HeaderEntry[]): HeaderEntry[] => {
+  if (!headers.length) {
+    return [];
+  }
+  return headers.filter((entry) => {
+    const lowered = entry.name.toLowerCase();
+    if (SENSITIVE_HEADER_NAMES.includes(lowered)) {
+      return false;
+    }
+    return !SENSITIVE_HEADER_SUBSTRINGS.some((substring) => lowered.includes(substring));
+  });
+};
+
 const formatRequestMeta = (
   params: DiscoverySnapshotBaseParams,
   headers: readonly HeaderEntry[],
 ): string => {
-  const headerLines = headers.map((entry) => `${entry.name}: ${entry.value}`);
+  const sanitizedHeaders = sanitizeHeadersForMeta(headers);
+  const headerLines = sanitizedHeaders.map((entry) => `${entry.name}: ${entry.value}`);
   const lines = [
     `url: ${params.url}`,
     `method: ${params.requestMeta?.method ?? 'GET'}`,
@@ -117,9 +134,7 @@ export const persistDiscoveryItemsRawArtifacts = async (
   const rawPath = path.join(rawDir, `response_${params.snapshotId}.json`);
   await writeFile(rawPath, `${params.rawText}\n`, 'utf8');
 
-  const headers = (params.requestMeta?.headers ?? []).filter(
-    (entry) => entry.name.toLowerCase() !== 'authorization',
-  );
+  const headers = params.requestMeta?.headers ?? [];
   const metaPath = path.join(discoveryDir, `request_meta_${params.snapshotId}.txt`);
   await writeFile(metaPath, formatRequestMeta(params, headers), 'utf8');
 };
