@@ -56,7 +56,10 @@ class FakeResponse {
   }
 }
 
-test('stock daily news runner escribe artículos de Dora sin duplicados', async () => {
+test(
+  'stock daily news runner escribe artículos de Dora sin duplicados',
+  { concurrency: false },
+  async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'trade-api-runner-news-'));
   const previousCwd = process.cwd();
   process.chdir(workspace);
@@ -107,4 +110,5 @@ test('stock daily news runner escribe artículos de Dora sin duplicados', async 
   } finally {
     process.chdir(previousCwd);
   }
-});
+  },
+);

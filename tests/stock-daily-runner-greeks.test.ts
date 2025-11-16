@@ -89,7 +89,7 @@ class FakeWebSocket {
   }
 }
 
-test('stock daily greeks runner writes HTTP and WS events to disk', async () => {
+test('stock daily greeks runner writes HTTP and WS events to disk', { concurrency: false }, async () => {
   const workspace = mkdtempSync(path.join(tmpdir(), 'trade-api-runner-greeks-'));
   const previousCwd = process.cwd();
   process.chdir(workspace);
