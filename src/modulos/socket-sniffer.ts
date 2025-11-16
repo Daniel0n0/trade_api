@@ -701,7 +701,7 @@ const resolveDeepestLegendPayload = (root: Record<string, unknown>): Record<stri
 };
 
 const classifyLegendWsMessage = (entry: WsMessageEntry): LegendClassificationResult => {
-  if (!shouldProcessLegendWS(entry.url)) {
+  if (!shouldProcessLegendWSStrict(entry.url)) {
     return { matched: false };
   }
 
@@ -2201,6 +2201,6 @@ ${HOOK_POLYFILL}
 }
 
 function isLegend(sourceUrl: string): boolean {
-  return shouldProcessLegendWS(sourceUrl);
+  return shouldProcessLegendWSStrict(sourceUrl);
 }
 
