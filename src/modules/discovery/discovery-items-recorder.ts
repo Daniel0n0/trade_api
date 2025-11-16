@@ -96,6 +96,7 @@ const formatRequestMeta = (
 
 const appendItems = async (filePath: string, payload: DiscoveryItemsPayload): Promise<void> => {
   if (!Array.isArray(payload.results) || payload.results.length === 0) {
+    await appendFile(filePath, '', 'utf8');
     return;
   }
   const content = payload.results.map((entry) => JSON.stringify(entry)).join('\n');
@@ -111,8 +112,11 @@ const buildSummaryPayload = (
   if (ownerType) {
     summary.owner_type = ownerType;
   }
-  if (typeof payload.returned_all_items === 'boolean') {
-    summary.returned_all_items = payload.returned_all_items;
+  if (Object.prototype.hasOwnProperty.call(payload, 'returned_all_items')) {
+    const value = (payload as { returned_all_items?: unknown }).returned_all_items;
+    if (value !== undefined) {
+      summary.returned_all_items = value;
+    }
   }
   return summary;
 };
