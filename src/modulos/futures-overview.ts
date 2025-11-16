@@ -1,6 +1,7 @@
 import { registerCloser } from '../bootstrap/signals.js';
 import type { ModuleRunner } from '../orchestrator/types.js';
 import { installFuturesRecorder } from '../modules/futures/interceptor.js';
+import { syncMarketHoursXase } from '../modules/market-hours/xase.js';
 import {
   createContractUpdater,
   getFuturesContractCachePath,
@@ -27,6 +28,9 @@ const normalizeSymbols = (symbols?: readonly string[]): readonly string[] | unde
 export const runFuturesOverviewModule: ModuleRunner = async (args, { page }) => {
   const normalizedSymbols = normalizeSymbols(args.symbols);
   const updateContracts = createContractUpdater('futures-overview');
+  const marketHoursTask = syncMarketHoursXase({ date: args.start }).catch((error) => {
+    console.warn('[futures-overview] No se pudo sincronizar market hours XASE:', error);
+  });
 
   if (normalizedSymbols) {
     await updateContracts(normalizedSymbols);
@@ -53,5 +57,6 @@ export const runFuturesOverviewModule: ModuleRunner = async (args, { page }) => 
     console.warn('[futures-overview] No se detectaron respuestas de futuros durante la ventana de espera.');
   }
 
+  await marketHoursTask;
   return getFuturesContractCachePath();
 };
