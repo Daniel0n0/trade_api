@@ -18,129 +18,195 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 26:
-¡Perfecto, Amo! Vamos a integrar este **módulo de horarios de mercado** (XASE) en tu canal “vista general de futuros”.
+PUNTO 27:
+¡Vamos, Amo! Integramos el **módulo de “crypto holdings” (Nummus)** para tu vista general y tus pipelines.
 
 ---
 
 # 1) Clasificación rápida
 
 * **Origen/Transporte**: `http` (JSON)
-* **Dominio**: `market_hours`
-* **Exchange**: `XASE`
-* **Granularidad**: **diaria** (una fecha por payload)
-* **Uso**: sincronizar ventanas de trading, filtrar barras/quotes por “mercado abierto”, detectar **feriados**, **early/late close** y **extended hours**.
+* **Dominio**: `crypto_holdings`
+* **Endpoint**: `GET https://nummus.robinhood.com/holdings/`
+* **Paginación**: `next`, `previous`
+* **Cardinalidad**: lista de posiciones (una por **moneda** y **account_id**)
 
 ---
 
-# 2) Esquema de la data
-
-### A. Raw (como llega)
+# 2) Esquema de la data (raw → tipos)
 
 ```ts
-type MarketHoursRaw = {
-  date: string;                       // '2025-11-11' (día local del exchange)
-  is_open: boolean;                   // true/false para sesión regular
-  opens_at: string;                   // ISO UTC '2025-11-11T14:30:00Z'
-  closes_at: string;                  // ISO UTC '2025-11-11T21:00:00Z'
+type HoldingRaw = {
+  id: string;                         // holding row id
+  account_id: string;                 // cuenta de cripto
+  currency_pair_id: string;           // par base (p.ej. BTC-USD interno)
+  created_at: string;                 // ISO con offset, zona local
+  updated_at: string;                 // ISO con offset, zona local
 
-  extended_opens_at: string | null;   // premarket start (UTC)
-  extended_closes_at: string | null;  // after-hours end (UTC)
+  // cantidades (strings decimales)
+  quantity: string;
+  quantity_available: string;
+  quantity_held: string;
+  quantity_held_for_buy: string;
+  quantity_held_for_sell: string;
+  quantity_staked: string;
+  quantity_transferable: string;
 
-  late_option_closes_at?: string | null;
-  index_option_0dte_closes_at?: string | null;
-  index_option_non_0dte_closes_at?: string | null;
+  // moneda base (no el par)
+  currency: {
+    id: string;
+    code: string;                     // 'BTC','SOL','MOODENG', etc.
+    name: string;
+    type: 'cryptocurrency';
+    crypto_type: 'BASE_ASSET';
+    increment: string;                // tick size decimal (p.ej. '0.00000001')
+    brand_color?: string;
+    display_only: boolean;
+  };
 
-  index_options_extended_hours?: {
-    curb_opens_at: string | null;     // “curb” (post 4:15pm ET) p/índices
-    curb_closes_at: string | null;
-  } | null;
+  // cost basis agregados por categoría
+  cost_bases: Array<{
+    id: string;
+    currency_id: string;              // parece USD interno
+    direct_cost_basis: string;        // compras
+    direct_quantity: string;
+    direct_reward_cost_basis: string; // rewards, staking
+    direct_reward_quantity: string;
+    direct_transfer_cost_basis: string;
+    direct_transfer_quantity: string;
+    intraday_cost_basis: string;
+    intraday_quantity: string;
+    marked_cost_basis: string;
+    marked_quantity: string;
+  }>;
 
-  all_day_opens_at?: string | null;   // ventana agregada “todo el día” (UTC)
-  all_day_closes_at?: string | null;
+  // lotes (para clearing/valor en libros)
+  tax_lot_cost_bases: Array<{
+    id: string;
+    clearing_book_cost_basis: string;                  // en moneda de liquidación
+    clearing_running_quantity: string;
+    clearing_running_quantity_without_cost_basis: string;
+    intraday_cost_basis: string;
+    intraday_quantity: string;
+    intraday_quantity_without_cost_basis: string;
+  }>;
+};
 
-  fx_opens_at?: string | null;
-  fx_closes_at?: string | null;
-  fx_is_open?: boolean | null;
-  fx_next_open_hours?: string | null; // ISO/UTC cuando vuelve a abrir FX
-
-  previous_open_hours?: string;       // URL Robinhood del día anterior
-  next_open_hours?: string;           // URL Robinhood del día siguiente
+type HoldingsResponseRaw = {
+  next: string | null;
+  previous: string | null;
+  results: HoldingRaw[];
 }
 ```
 
-### B. Registro normalizado (Vista **diaria**)
+---
 
-*(una fila por exchange/fecha)*
+# 3) Normalización (schemas de salida)
+
+### A) **Snapshot actual por activo** (una fila por `account_id` + `currency.code`)
+
+**Archivo**: `holdings_current`
 
 ```ts
-type MarketHoursDay = {
+type HoldingCurrent = {
   ts: number;                         // epoch ms de ingestión
-  exchange: string;                   // 'XASE'
-  date_local: string;                 // '2025-11-11' (America/New_York)
-  tz_exchange: 'America/New_York';
-
-  // Regular session
-  is_open: 0 | 1;
-  open_utc: string | null;
-  close_utc: string | null;
-  open_et: string | null;             // ISO con TZ 'ET'
-  close_et: string | null;
-  reg_minutes: number | null;         // duración en minutos (si aplica)
-
-  // Extended
-  ext_open_utc: string | null;
-  ext_close_utc: string | null;
-  ext_open_et: string | null;
-  ext_close_et: string | null;
-  ext_minutes: number | null;
-
-  // Opciones (índices, late close)
-  late_opt_close_utc: string | null;
-  idx_opt_0dte_close_utc: string | null;
-  idx_opt_non0dte_close_utc: string | null;
-  curb_open_utc: string | null;
-  curb_close_utc: string | null;
-
-  // All-day window (si viene)
-  all_day_open_utc: string | null;
-  all_day_close_utc: string | null;
-
-  // FX window
-  fx_is_open: 0 | 1 | null;
-  fx_open_utc: string | null;
-  fx_close_utc: string | null;
-  fx_next_open_utc: string | null;
-
   source_url: string;
+
+  // claves
+  account_id: string;
+  holding_id: string;                 // raw id
+  currency_id: string;
+  currency_code: string;              // 'BTC'
+  currency_name: string;
+  currency_pair_id: string;
+
+  // granularidad/tokenomics
+  increment: string;                  // '0.00000001'
+  precision: number;                  // derivado de increment
+  is_display_only: 0 | 1;
+
+  // cantidades (como string decimal, sin pérdida)
+  qty: string;
+  qty_available: string;
+  qty_held: string;
+  qty_held_for_buy: string;
+  qty_held_for_sell: string;
+  qty_staked: string;
+  qty_transferable: string;
+
+  // agregados de cost basis (suma por categoría si hay múltiples cost_bases)
+  cb_direct_qty: string;
+  cb_direct_cost: string;
+  cb_reward_qty: string;
+  cb_reward_cost: string;
+  cb_transfer_qty: string;
+  cb_transfer_cost: string;
+  cb_intraday_qty: string;
+  cb_intraday_cost: string;
+  cb_marked_qty: string;
+  cb_marked_cost: string;
+
+  // meta
+  lots_count: number;                 // tax_lot_cost_bases.length
+  created_at_iso: string;
+  updated_at_iso: string;
+
+  // flags
+  has_position: 0 | 1;                // qty > 0 ?
 };
 ```
 
-### C. Registro normalizado (Vista **sesiones**)
+### B) **Detalle de cost_bases** (explode)
 
-*(una fila por **tramo**: PRE, REG, POST, LATE_OPT, IDX_CURB, etc.)*
+**Archivo**: `holdings_cost_bases`
 
 ```ts
-type MarketHoursSession = {
+type HoldingCostBasis = {
   ts: number;
-  exchange: string;                   // 'XASE'
-  date_local: string;                 // día base del exchange
-  session_type: 'PRE' | 'REG' | 'POST' | 'LATE_OPT' | 'IDX_0DTE' | 'IDX_NON0DTE' | 'IDX_CURB' | 'ALL_DAY' | 'FX';
-  start_utc: string | null;
-  end_utc: string | null;
-  start_et: string | null;
-  end_et: string | null;
-  minutes: number | null;
-  is_open_flag: 0 | 1 | null;         // si aplica
   source_url: string;
+  account_id: string;
+  holding_id: string;
+  cost_basis_id: string;
+  currency_id: string;                // (suele ser USD interno)
+  direct_qty: string; direct_cost: string;
+  reward_qty: string; reward_cost: string;
+  transfer_qty: string; transfer_cost: string;
+  intraday_qty: string; intraday_cost: string;
+  marked_qty: string; marked_cost: string;
 };
 ```
+
+### C) **Detalle de tax lots** (explode)
+
+**Archivo**: `holdings_tax_lots`
+
+```ts
+type HoldingTaxLot = {
+  ts: number;
+  source_url: string;
+  account_id: string;
+  holding_id: string;
+  tax_lot_id: string;
+  clearing_book_cost_basis: string;
+  clearing_running_qty: string;
+  clearing_running_qty_wo_cb: string;
+  intraday_cb: string;
+  intraday_qty: string;
+  intraday_qty_wo_cb: string;
+};
+```
+
+> **Notas de valores**: todos los importes/cantidades quedan como **string decimal**. Para cálculos usa `Decimal`/`BigNumber`. Puedes derivar un **entero escalado** opcional (`qty_atoms = qty / increment`) si lo necesitas para diffs exactos.
 
 ---
 
-# 3) Cómo recibirla
+# 4) ¿Cómo recibirla?
 
-* **Handler**: HTTP (pull programado diario + en apertura D-1 por cambios de feriado o DST).
+* **Handler**: HTTP periódico.
+
+  * **On login & cada 1–5 min** durante mercado abierto (para detectar fills/entradas).
+  * **Siempre** al cierre (snapshot EOD).
+* **Paginación**: seguir `next` hasta `null`.
 * **Parsing**: `response.text()` → `safeJsonParse`.
 * **Envelope**:
 
@@ -148,241 +214,229 @@ type MarketHoursSession = {
 const env: Envelope = {
   ts: Date.now(),
   transport: 'http',
-  source: 'https://api.robinhood.com/markets/XASE/hours/2025-11-11/',
-  topic: 'market_hours',
+  source: 'https://nummus.robinhood.com/holdings/',
+  topic: 'crypto_holdings',
   payload: json
 };
 ```
 
 ---
 
-# 4) Procesamiento (normalización y validaciones)
+# 5) Procesamiento (validaciones, derivados, join)
 
-### A. Validaciones
+**Validaciones**
 
-* `date` no vacío y formateable.
-* Si `is_open===true` ⇒ `opens_at` y `closes_at` deben existir y `opens_at < closes_at`.
-* Timestamps ISO válidos (UTC, terminados en `Z`).
-* Permitir `null` en campos opcionales (extended, fx, curb, etc.).
+* `account_id`, `holding.id`, `currency.code` no vacíos.
+* `increment` válido → `precision = decimals(increment)`.
+* Cantidades y costos: strings decimales válidas, **no NaN**, **no negativas** (excepto que RH permita negativos en préstamos; si apareciera, log/warn).
+* `updated_at >= created_at` (si no, log).
 
-### B. Conversiones y derivados
+**Derivados inmediatos**
 
-* **Zona horaria**: convierte cada `*_utc` a **ET** (`America/New_York`) → `*_et`.
-* **Duraciones** en minutos: `(end - start)/60_000`, `null` si no aplica.
-* **Sesiones**:
+* `has_position = qty > 0 ? 1:0`.
+* Sumas de cost basis por categoría (si existen múltiples objetos en `cost_bases`).
+* `lots_count`.
 
-  * **PRE**: `extended_opens_at` → `opens_at` (si premarket antecede a la regular; en XASE: `extended_opens_at=12:00Z` ⇒ 7:00 ET).
-  * **REG**: `opens_at` → `closes_at`.
-  * **POST**: `closes_at` → `extended_closes_at`.
-  * **LATE_OPT**: `late_option_closes_at` (solo `end`; usa `closes_at` como `start`).
-  * **IDX_0DTE** / **IDX_NON0DTE**: ventanas de cierre diferenciado; start = `closes_at`, end = el respectivo `close`.
-  * **IDX_CURB**: `index_options_extended_hours.curb_opens_at` → `curb_closes_at`.
-  * **ALL_DAY**: si viene `all_day_*`.
-  * **FX**: `fx_opens_at` → `fx_closes_at` (si existen).
-* **Consistencia**: cualquier ventana con `start>=end` ⇒ descarta o marca `minutes=0` y log de advertencia.
+**Valuación (opcional pero recomendada para dashboard)**
 
-### C. Salidas
+* **NO** viene el precio aquí; **join** con tu feed de **quotes** de cripto (el de Robinhood/marketdata).
 
-* **Vista diaria** (1 fila) y **vista sesiones** (N filas por tramos detectados).
-* **Idempotencia**: clave `(exchange, date_local, session_type, start_utc)`.
+  * `mark_px_usd` por `currency_code`.
+  * `mtm_value = Decimal(qty) * mark_px_usd`.
+  * Guarda estas valuaciones solo en **snapshots** (ver #7).
 
 ---
 
-# 5) ¿Se guarda? Sí
+# 6) ¿Se guarda?
 
-### A. Diario (estado/ventanas del día)
+Sí, con dos vistas:
 
-```
-data/calendars/market_hours/<EXCHANGE>/<YYYY>/<MM>.csv
-```
-
-* **Archivo mensual** por exchange; **append**/upsert por `date_local`.
-* **Columnas** = `MarketHoursDay` en orden:
+### (a) **Snapshot intradía/EOD** (recomendado)
 
 ```
-ts,exchange,date_local,tz_exchange,is_open,open_utc,close_utc,open_et,close_et,reg_minutes,
-ext_open_utc,ext_close_utc,ext_open_et,ext_close_et,ext_minutes,
-late_opt_close_utc,idx_opt_0dte_close_utc,idx_opt_non0dte_close_utc,
-curb_open_utc,curb_close_utc,all_day_open_utc,all_day_close_utc,
-fx_is_open,fx_open_utc,fx_close_utc,fx_next_open_utc,source_url
+data/portfolio/holdings/crypto/<ACCOUNT_ID>/<YYYY-MM-DD>/holdings_current.csv
 ```
 
-### B. Sesiones (una fila por tramo)
+Columnas (en orden = `HoldingCurrent`):
 
 ```
-data/calendars/market_hours_sessions/<EXCHANGE>/<YYYY>/<MM>/<YYYY-MM-DD>.csv
+ts,source_url,account_id,holding_id,currency_id,currency_code,currency_name,currency_pair_id,increment,precision,is_display_only,
+qty,qty_available,qty_held,qty_held_for_buy,qty_held_for_sell,qty_staked,qty_transferable,
+cb_direct_qty,cb_direct_cost,cb_reward_qty,cb_reward_cost,cb_transfer_qty,cb_transfer_cost,cb_intraday_qty,cb_intraday_cost,cb_marked_qty,cb_marked_cost,
+lots_count,created_at_iso,updated_at_iso,has_position
 ```
 
-* **Columnas** = `MarketHoursSession`.
-
-### C. Crudo opcional (auditoría)
+> **Tip**: además, genera un archivo **rolling**:
 
 ```
-data/_raw/market_hours/XASE/2025-11/2025-11-11.json
+data/portfolio/holdings/crypto/<ACCOUNT_ID>/current.csv  // se sobreescribe
+```
+
+### (b) **Detalles** (opcional, si auditas bases y lotes)
+
+```
+data/portfolio/holdings/crypto/<ACCOUNT_ID>/<YYYY-MM-DD>/holdings_cost_bases.csv
+data/portfolio/holdings/crypto/<ACCOUNT_ID>/<YYYY-MM-DD>/holdings_tax_lots.csv
+```
+
+### (c) **Crudo (auditoría)**
+
+```
+data/_raw/crypto_holdings/<ACCOUNT_ID>/<YYYY-MM>/<YYYY-MM-DDThhmmssZ>.json
+```
+
+### (d) **Snapshots valuados** (si haces join con quotes)
+
+```
+data/portfolio/valuations/crypto/<ACCOUNT_ID>/<YYYY-MM-DD>/valued_holdings.csv
+```
+
+Columnas extra:
+
+```
+mark_px_usd,mtm_value_usd          // strings decimales o cents enteros
 ```
 
 ---
 
-# 6) Pseudocódigo (TypeScript)
+# 7) Lógica de escritura / idempotencia
+
+* **Crear** con encabezado si no existe; **append** por corrida.
+* Clave natural para *deduplicar*: `(ts_bucket_1m, account_id, currency_code)` o usa `holding_id`.
+* Si haces **EOD canonical**, escribe/actualiza **una sola** fila final por `(account_id,currency_code)`.
+
+---
+
+# 8) Diferenciales y eventos (opcional, útil)
+
+Construye un pequeño detector de **eventos** comparando snapshots consecutivos:
+
+* `Δqty = qty_now - qty_prev`
+
+  * `Δqty > 0` y `cb_direct_cost>0` ⇒ **BUY**
+  * `Δqty < 0` ⇒ **SELL/TRANSFER_OUT**
+  * `Δqty > 0` y `cb_reward_qty>0` ⇒ **REWARD/STAKE`
+* Guarda eventos en:
+
+```
+data/portfolio/events/crypto/<ACCOUNT_ID>/<YYYY-MM-DD>/events.csv
+```
+
+```
+ts,account_id,currency_code,event,delta_qty,reason,cb_cost_contrib
+```
+
+---
+
+# 9) Pseudocódigo (TypeScript)
 
 ```ts
-function toET(isoUtc: string | null): string | null {
-  if (!isoUtc) return null;
-  // usar lib de TZ (luxon/dayjs-tz) para formatear a ET ISO
-  return toTimeZoneIso(isoUtc, 'America/New_York');
+function dec(s: string | null | undefined): Decimal {
+  return new Decimal(s ?? '0');
+}
+function precisionFromIncrement(incr: string): number {
+  const i = incr.indexOf('.');
+  return i < 0 ? 0 : (incr.length - i - 1);
 }
 
-function minutesBetween(aIso: string | null, bIso: string | null): number | null {
-  if (!aIso || !bIso) return null;
-  return Math.max(0, (Date.parse(bIso) - Date.parse(aIso)) / 60000);
-}
+function normaliseHoldings(env: Envelope) {
+  const raw = env.payload as HoldingsResponseRaw;
 
-function normaliseMarketHoursXASE(env: Envelope): {
-  day: MarketHoursDay,
-  sessions: MarketHoursSession[]
-} {
-  const r = env.payload as MarketHoursRaw;
-  const ex = 'XASE';
-  const day: MarketHoursDay = {
-    ts: env.ts,
-    exchange: ex,
-    date_local: r.date,
-    tz_exchange: 'America/New_York',
-    is_open: r.is_open ? 1 : 0,
+  const outCurrent: HoldingCurrent[] = [];
+  const outCB: HoldingCostBasis[] = [];
+  const outLots: HoldingTaxLot[] = [];
 
-    open_utc: r.opens_at ?? null,
-    close_utc: r.closes_at ?? null,
-    open_et: toET(r.opens_at ?? null),
-    close_et: toET(r.closes_at ?? null),
-    reg_minutes: minutesBetween(r.opens_at ?? null, r.closes_at ?? null),
+  for (const h of raw.results) {
+    const precision = precisionFromIncrement(h.currency.increment ?? '0');
+    // aggregate cost_bases
+    const agg = h.cost_bases?.reduce((a, cb) => ({
+      direct_qty: a.direct_qty.plus(dec(cb.direct_quantity)),
+      direct_cost: a.direct_cost.plus(dec(cb.direct_cost_basis)),
+      reward_qty: a.reward_qty.plus(dec(cb.direct_reward_quantity)),
+      reward_cost: a.reward_cost.plus(dec(cb.direct_reward_cost_basis)),
+      transfer_qty: a.transfer_qty.plus(dec(cb.direct_transfer_quantity)),
+      transfer_cost: a.transfer_cost.plus(dec(cb.direct_transfer_cost_basis)),
+      intraday_qty: a.intraday_qty.plus(dec(cb.intraday_quantity)),
+      intraday_cost: a.intraday_cost.plus(dec(cb.intraday_cost_basis)),
+      marked_qty: a.marked_qty.plus(dec(cb.marked_quantity)),
+      marked_cost: a.marked_cost.plus(dec(cb.marked_cost_basis))
+    }), {
+      direct_qty: new Decimal(0), direct_cost: new Decimal(0),
+      reward_qty: new Decimal(0), reward_cost: new Decimal(0),
+      transfer_qty: new Decimal(0), transfer_cost: new Decimal(0),
+      intraday_qty: new Decimal(0), intraday_cost: new Decimal(0),
+      marked_qty: new Decimal(0), marked_cost: new Decimal(0)
+    });
 
-    ext_open_utc: r.extended_opens_at ?? null,
-    ext_close_utc: r.extended_closes_at ?? null,
-    ext_open_et: toET(r.extended_opens_at ?? null),
-    ext_close_et: toET(r.extended_closes_at ?? null),
-    ext_minutes: minutesBetween(r.extended_opens_at ?? null, r.extended_closes_at ?? null),
+    outCurrent.push({
+      ts: env.ts, source_url: env.source,
+      account_id: h.account_id, holding_id: h.id,
+      currency_id: h.currency.id, currency_code: h.currency.code,
+      currency_name: h.currency.name, currency_pair_id: h.currency_pair_id,
+      increment: h.currency.increment, precision,
+      is_display_only: h.currency.display_only ? 1 : 0,
 
-    late_opt_close_utc: r.late_option_closes_at ?? null,
-    idx_opt_0dte_close_utc: r.index_option_0dte_closes_at ?? null,
-    idx_opt_non0dte_close_utc: r.index_option_non_0dte_closes_at ?? null,
+      qty: h.quantity, qty_available: h.quantity_available,
+      qty_held: h.quantity_held, qty_held_for_buy: h.quantity_held_for_buy,
+      qty_held_for_sell: h.quantity_held_for_sell, qty_staked: h.quantity_staked,
+      qty_transferable: h.quantity_transferable,
 
-    curb_open_utc: r.index_options_extended_hours?.curb_opens_at ?? null,
-    curb_close_utc: r.index_options_extended_hours?.curb_closes_at ?? null,
+      cb_direct_qty: agg.direct_qty.toString(),
+      cb_direct_cost: agg.direct_cost.toString(),
+      cb_reward_qty: agg.reward_qty.toString(),
+      cb_reward_cost: agg.reward_cost.toString(),
+      cb_transfer_qty: agg.transfer_qty.toString(),
+      cb_transfer_cost: agg.transfer_cost.toString(),
+      cb_intraday_qty: agg.intraday_qty.toString(),
+      cb_intraday_cost: agg.intraday_cost.toString(),
+      cb_marked_qty: agg.marked_qty.toString(),
+      cb_marked_cost: agg.marked_cost.toString(),
 
-    all_day_open_utc: r.all_day_opens_at ?? null,
-    all_day_close_utc: r.all_day_closes_at ?? null,
+      lots_count: h.tax_lot_cost_bases?.length ?? 0,
+      created_at_iso: h.created_at, updated_at_iso: h.updated_at,
+      has_position: (new Decimal(h.quantity).greaterThan(0)) ? 1 : 0
+    });
 
-    fx_is_open: r.fx_is_open == null ? null : (r.fx_is_open ? 1 : 0),
-    fx_open_utc: r.fx_opens_at ?? null,
-    fx_close_utc: r.fx_closes_at ?? null,
-    fx_next_open_utc: r.fx_next_open_hours ?? null,
-
-    source_url: env.source
-  };
-
-  const S: MarketHoursSession[] = [];
-
-  // PRE
-  if (r.extended_opens_at && r.opens_at) S.push({
-    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'PRE',
-    start_utc: r.extended_opens_at, end_utc: r.opens_at,
-    start_et: toET(r.extended_opens_at), end_et: toET(r.opens_at),
-    minutes: minutesBetween(r.extended_opens_at, r.opens_at),
-    is_open_flag: 1, source_url: env.source
-  });
-
-  // REG
-  if (r.opens_at && r.closes_at) S.push({
-    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'REG',
-    start_utc: r.opens_at, end_utc: r.closes_at,
-    start_et: toET(r.opens_at), end_et: toET(r.closes_at),
-    minutes: minutesBetween(r.opens_at, r.closes_at),
-    is_open_flag: r.is_open ? 1 : 0, source_url: env.source
-  });
-
-  // POST
-  if (r.closes_at && r.extended_closes_at) S.push({
-    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'POST',
-    start_utc: r.closes_at, end_utc: r.extended_closes_at,
-    start_et: toET(r.closes_at), end_et: toET(r.extended_closes_at),
-    minutes: minutesBetween(r.closes_at, r.extended_closes_at),
-    is_open_flag: 1, source_url: env.source
-  });
-
-  // LATE_OPT
-  if (r.late_option_closes_at && r.closes_at) S.push({
-    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'LATE_OPT',
-    start_utc: r.closes_at, end_utc: r.late_option_closes_at,
-    start_et: toET(r.closes_at), end_et: toET(r.late_option_closes_at),
-    minutes: minutesBetween(r.closes_at, r.late_option_closes_at),
-    is_open_flag: 1, source_url: env.source
-  });
-
-  // IDX close windows
-  if (r.index_option_0dte_closes_at && r.closes_at) S.push({
-    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'IDX_0DTE',
-    start_utc: r.closes_at, end_utc: r.index_option_0dte_closes_at,
-    start_et: toET(r.closes_at), end_et: toET(r.index_option_0dte_closes_at),
-    minutes: minutesBetween(r.closes_at, r.index_option_0dte_closes_at),
-    is_open_flag: 1, source_url: env.source
-  });
-  if (r.index_option_non_0dte_closes_at && r.closes_at) S.push({
-    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'IDX_NON0DTE',
-    start_utc: r.closes_at, end_utc: r.index_option_non_0dte_closes_at,
-    start_et: toET(r.closes_at), end_et: toET(r.index_option_non_0dte_closes_at),
-    minutes: minutesBetween(r.closes_at, r.index_option_non_0dte_closes_at),
-    is_open_flag: 1, source_url: env.source
-  });
-
-  // IDX_CURB
-  if (r.index_options_extended_hours?.curb_opens_at && r.index_options_extended_hours?.curb_closes_at) S.push({
-    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'IDX_CURB',
-    start_utc: r.index_options_extended_hours.curb_opens_at,
-    end_utc: r.index_options_extended_hours.curb_closes_at,
-    start_et: toET(r.index_options_extended_hours.curb_opens_at),
-    end_et: toET(r.index_options_extended_hours.curb_closes_at),
-    minutes: minutesBetween(r.index_options_extended_hours.curb_opens_at, r.index_options_extended_hours.curb_closes_at),
-    is_open_flag: 1, source_url: env.source
-  });
-
-  // ALL_DAY
-  if (r.all_day_opens_at && r.all_day_closes_at) S.push({
-    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'ALL_DAY',
-    start_utc: r.all_day_opens_at, end_utc: r.all_day_closes_at,
-    start_et: toET(r.all_day_opens_at), end_et: toET(r.all_day_closes_at),
-    minutes: minutesBetween(r.all_day_opens_at, r.all_day_closes_at),
-    is_open_flag: 1, source_url: env.source
-  });
-
-  // FX
-  if (r.fx_opens_at && r.fx_closes_at) S.push({
-    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'FX',
-    start_utc: r.fx_opens_at, end_utc: r.fx_closes_at,
-    start_et: toET(r.fx_opens_at), end_et: toET(r.fx_closes_at),
-    minutes: minutesBetween(r.fx_opens_at, r.fx_closes_at),
-    is_open_flag: r.fx_is_open == null ? null : (r.fx_is_open ? 1 : 0),
-    source_url: env.source
-  });
-
-  return { day, sessions: S };
+    for (const cb of h.cost_bases ?? []) {
+      outCB.push({
+        ts: env.ts, source_url: env.source,
+        account_id: h.account_id, holding_id: h.id, cost_basis_id: cb.id,
+        currency_id: cb.currency_id,
+        direct_qty: cb.direct_quantity, direct_cost: cb.direct_cost_basis,
+        reward_qty: cb.direct_reward_quantity, reward_cost: cb.direct_reward_cost_basis,
+        transfer_qty: cb.direct_transfer_quantity, transfer_cost: cb.direct_transfer_cost_basis,
+        intraday_qty: cb.intraday_quantity, intraday_cost: cb.intraday_cost_basis,
+        marked_qty: cb.marked_quantity, marked_cost: cb.marked_cost_basis
+      });
+    }
+    for (const tl of h.tax_lot_cost_bases ?? []) {
+      outLots.push({
+        ts: env.ts, source_url: env.source,
+        account_id: h.account_id, holding_id: h.id, tax_lot_id: tl.id,
+        clearing_book_cost_basis: tl.clearing_book_cost_basis,
+        clearing_running_qty: tl.clearing_running_quantity,
+        clearing_running_qty_wo_cb: tl.clearing_running_quantity_without_cost_basis,
+        intraday_cb: tl.intraday_cost_basis,
+        intraday_qty: tl.intraday_quantity,
+        intraday_qty_wo_cb: tl.intraday_quantity_without_cost_basis
+      });
+    }
+  }
+  return { current: outCurrent, cost_bases: outCB, tax_lots: outLots };
 }
 ```
 
 ---
 
-# 7) Reglas de escritura
+# 10) Reglas prácticas
 
-* **Crear** si no existe con encabezado; **append/upsert** por `date_local`.
-* **CSV UTF-8**, sin compresión (para lecturas rápidas).
-* **Tiempos**: conservar **UTC** y **ET**; ET facilita dashboards humanos.
-* **Reproceso**: si la hora cambia por *holiday update* o *DST patch*, sobrescribe la fila del día (o upsert por clave).
+* **Tipos decimales**: usa `decimal.js` o `big.js`. Evita `Number`.
+* **Unidades**: todo en **moneda de liquidación** (cost basis) y **cantidad de base** (qty).
+* **Seguridad**: no persistir cabeceras sensibles; **solo** `source_url` pública.
+* **Health**: si `results.length===0`, **guardar** snapshot vacío igualmente (útil para históricos sin posición).
+* **Frecuencia**:
 
----
-
-# 8) Por qué guardar
-
-* Controlas **aperturas/cierres** y **ventanas especiales** (late/curb/extended).
-* Te permite **filtrar** barras/quotes en cálculos intradía y sincronizar **alertas** (no operar fuera de ventanas permitidas).
-* Maneja **anomalías** (early close/feriados) sin hardcode.
+  * Intradía: cada 1–5 min si estás operando.
+  * EOD: snapshot final + valued snapshot (con join de precios).
 
 ---
