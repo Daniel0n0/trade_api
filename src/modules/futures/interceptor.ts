@@ -1,6 +1,7 @@
 import type { WriteStream } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import type { Page, Response } from 'playwright';
+import { DateTime } from 'luxon';
 
 import { getCsvWriter } from '../../io/csvWriter.js';
 import { dataPath } from '../../io/paths.js';
@@ -111,27 +112,49 @@ export const FUTURES_CONTRACTS_HEADER = [
 
 export type FuturesContractsHeader = typeof FUTURES_CONTRACTS_HEADER;
 
-export const FUTURES_TRADING_SESSIONS_HEADER = [
-  'symbol',
-  'instrumentId',
-  'productId',
-  'sessionScope',
-  'tradingDate',
-  'sessionType',
-  'isTrading',
-  'startsAt',
-  'endsAt',
-  'timezone',
-  'market',
-  'createdAt',
-  'updatedAt',
-  'dayDate',
-  'dayStartsAt',
-  'dayEndsAt',
-  'dayIsHoliday',
+export const FUTURES_TRADING_SESSIONS_DETAIL_HEADER = [
+  'ts',
+  'ref_date',
+  'contract_id',
+  'trading_date',
+  'is_trading',
+  'session_type',
+  'start_ts',
+  'end_ts',
+  'duration_min',
+  'start_local',
+  'end_local',
+  'source_url',
 ] as const;
 
-export type FuturesTradingSessionsHeader = typeof FUTURES_TRADING_SESSIONS_HEADER;
+export const FUTURES_TRADING_SESSIONS_SUMMARY_HEADER = [
+  'ts',
+  'ref_date',
+  'contract_id',
+  'is_holiday',
+  'day_start_ts',
+  'day_end_ts',
+  'total_trading_min',
+  'total_break_min',
+  'has_regular',
+  'regular_start_ts',
+  'regular_end_ts',
+  'current_start_ts',
+  'current_end_ts',
+  'current_is_trading',
+  'previous_end_ts',
+  'next_start_ts',
+  'source_url',
+] as const;
+
+export type FuturesTradingSessionsDetailHeader = typeof FUTURES_TRADING_SESSIONS_DETAIL_HEADER;
+export type FuturesTradingSessionsSummaryHeader = typeof FUTURES_TRADING_SESSIONS_SUMMARY_HEADER;
+
+export type NormalizedFuturesTradingSessionsGroup = {
+  readonly symbol?: string;
+  readonly detailRows: FuturesCsvRow<FuturesTradingSessionsDetailHeader>[];
+  readonly summaryRows: FuturesCsvRow<FuturesTradingSessionsSummaryHeader>[];
+};
 
 export const FUTURES_MARKET_HOURS_HEADER = [
   'symbol',
@@ -236,6 +259,139 @@ const toIsoString = (value: unknown): string | undefined => {
     return trimmed;
   }
   return undefined;
+};
+
+const toBoolean = (value: unknown): boolean | undefined => {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) {
+      return undefined;
+    }
+    return value !== 0;
+  }
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) {
+      return undefined;
+    }
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
+      return true;
+    }
+    if (normalized === 'false' || normalized === '0' || normalized === 'no') {
+      return false;
+    }
+  }
+  return undefined;
+};
+
+const toEpochMilliseconds = (iso: string | undefined): number | undefined => {
+  if (!iso) {
+    return undefined;
+  }
+  const timestamp = Date.parse(iso);
+  return Number.isNaN(timestamp) ? undefined : timestamp;
+};
+
+const formatDateOnly = (iso: string | undefined): string | undefined => {
+  if (!iso) {
+    return undefined;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    return iso;
+  }
+  const parsed = new Date(iso);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10);
+  }
+  if (iso.length >= 10) {
+    return iso.slice(0, 10);
+  }
+  return undefined;
+};
+
+const toNyLocalString = (iso: string | undefined): string | undefined => {
+  if (!iso) {
+    return undefined;
+  }
+  try {
+    const utcDate = DateTime.fromISO(iso, { zone: 'utc' });
+    if (!utcDate.isValid) {
+      return undefined;
+    }
+    return utcDate.setZone('America/New_York').toFormat('yyyy-LL-dd HH:mm:ss');
+  } catch {
+    return undefined;
+  }
+};
+
+const mapSessionType = (value: unknown): 'REGULAR' | 'NO_TRADING' | 'OTHER' => {
+  const normalized = toStringValue(value)?.toUpperCase();
+  if (!normalized) {
+    return 'OTHER';
+  }
+  if (normalized === 'SESSION_TYPE_REGULAR' || normalized === 'REGULAR') {
+    return 'REGULAR';
+  }
+  if (normalized === 'SESSION_TYPE_NO_TRADING' || normalized === 'NO_TRADING') {
+    return 'NO_TRADING';
+  }
+  return 'OTHER';
+};
+
+const booleanToString = (value: boolean | undefined | null): string | undefined => {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  return value ? 'true' : 'false';
+};
+
+const pickBoolean = (record: Record<string, unknown>, keys: readonly string[]): boolean | undefined => {
+  return pickFromRecord(record, keys, toBoolean);
+};
+
+const calculateDurationMinutes = (startTs: number | undefined, endTs: number | undefined): number | undefined => {
+  if (typeof startTs !== 'number' || typeof endTs !== 'number') {
+    return undefined;
+  }
+  const delta = endTs - startTs;
+  if (!Number.isFinite(delta) || delta < 0) {
+    return undefined;
+  }
+  return Math.round(delta / 60_000);
+};
+
+const collectSessionEntries = (value: unknown): readonly Record<string, unknown>[] => {
+  return unwrapEntry(value).filter((entry): entry is Record<string, unknown> =>
+    Boolean(entry && typeof entry === 'object'),
+  );
+};
+
+type EdgeSessionInfo = {
+  readonly startTs?: number;
+  readonly endTs?: number;
+  readonly isTrading?: boolean;
+};
+
+const normalizeEdgeSession = (value: unknown): EdgeSessionInfo | undefined => {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const startIso =
+    pickIsoDate(record, ['start_time', 'startTime', 'starts_at', 'startsAt', 'start_at', 'startAt']) ??
+    pickIsoDate(record, ['begin_time', 'beginTime']);
+  const endIso =
+    pickIsoDate(record, ['end_time', 'endTime', 'ends_at', 'endsAt', 'end_at', 'endAt']) ??
+    pickIsoDate(record, ['finish_time', 'finishTime']);
+  const startTs = toEpochMilliseconds(startIso);
+  const endTs = toEpochMilliseconds(endIso);
+  const isTrading = pickBoolean(record, ['is_trading', 'isTrading', 'trading']);
+  if (startTs === undefined && endTs === undefined && isTrading === undefined) {
+    return undefined;
+  }
+  return { startTs, endTs, isTrading };
 };
 
 const normaliseSymbol = (value: unknown): string | undefined => {
@@ -934,21 +1090,38 @@ export function normalizeFuturesContracts(
 export function normalizeFuturesTradingSessions(
   payload: unknown,
   context: NormalizeContext,
-): FuturesCsvRow<typeof FUTURES_TRADING_SESSIONS_HEADER>[] {
+): NormalizedFuturesTradingSessionsGroup[] {
   const fallbackSymbol = normaliseSymbol(context.fallbackSymbol);
   const payloadSymbol = extractSymbol(payload, fallbackSymbol);
   const query = extractQueryParams(context.url);
   const queryInstrumentId = normaliseSymbol(query.get('ids') ?? undefined);
   const instrumentFromUrl = parseInstrumentFromUrl(context.url);
+  const ingestionTs = Date.now();
+  const sourceUrl = context.url;
 
-  const out: FuturesCsvRow<typeof FUTURES_TRADING_SESSIONS_HEADER>[] = [];
+  const out: NormalizedFuturesTradingSessionsGroup[] = [];
   for (const entry of ensureArray(payload)) {
     if (!entry || typeof entry !== 'object') {
       continue;
     }
 
     const record = entry as Record<string, unknown>;
-    let rowSymbol = extractSymbol(record, payloadSymbol ?? fallbackSymbol) ?? fallbackSymbol;
+    const looksLikeRootRecord =
+      'sessions' in record ||
+      'currentSession' in record ||
+      'previousSession' in record ||
+      'nextSession' in record ||
+      'futures_contract_id' in record ||
+      'futuresContractId' in record ||
+      'instrument_id' in record ||
+      'instrumentId' in record ||
+      'contract_id' in record ||
+      'contractId' in record ||
+      'date' in record;
+    if (!looksLikeRootRecord) {
+      continue;
+    }
+    const symbol = extractSymbol(record, payloadSymbol ?? fallbackSymbol) ?? fallbackSymbol;
     const instrumentCandidate =
       pickString(record, [
         'instrument_id',
@@ -956,129 +1129,140 @@ export function normalizeFuturesTradingSessions(
         'instrument',
         'futures_contract_id',
         'futuresContractId',
+        'contract_id',
+        'contractId',
       ]) ??
       queryInstrumentId ??
       instrumentFromUrl ??
-      rowSymbol ??
+      symbol ??
       fallbackSymbol;
-    const normalizedInstrument =
-      instrumentCandidate ? normaliseSymbol(instrumentCandidate) ?? instrumentCandidate : undefined;
-    if (rowSymbol && normalizedInstrument && rowSymbol === normalizedInstrument && fallbackSymbol) {
-      rowSymbol = fallbackSymbol;
-    }
-    const productId =
-      pickString(record, ['product_id', 'productId', 'product_code', 'productCode', 'product']) ?? undefined;
-    const defaultTimezone = pickString(record, ['timezone', 'time_zone']);
-    const defaultMarket = pickString(record, ['market', 'exchange']);
-    const defaultCreatedAt = pickIsoDate(record, ['created_at', 'createdAt']);
-    const defaultUpdatedAt = pickIsoDate(record, ['updated_at', 'updatedAt']);
+    const contractId = instrumentCandidate ? normaliseSymbol(instrumentCandidate) ?? instrumentCandidate : undefined;
     const dayDate = pickIsoDate(record, ['date', 'trading_date', 'tradingDate']);
+    const refDate = formatDateOnly(dayDate);
     const dayStartsAt = pickIsoDate(record, ['start_time', 'startTime']);
     const dayEndsAt = pickIsoDate(record, ['end_time', 'endTime']);
-    const dayIsHoliday = pickString(record, ['is_holiday', 'isHoliday']);
+    const isHoliday = pickBoolean(record, ['is_holiday', 'isHoliday']);
 
-    const groups: Array<[string, readonly unknown[]]> = [
-      ['sessions', unwrapEntry((record as Record<string, unknown>).sessions)],
-      ['currentSession', unwrapEntry((record as Record<string, unknown>).currentSession)],
-      ['previousSession', unwrapEntry((record as Record<string, unknown>).previousSession)],
-      ['nextSession', unwrapEntry((record as Record<string, unknown>).nextSession)],
-    ];
+    const detailRows: FuturesCsvRow<FuturesTradingSessionsDetailHeader>[] = [];
+    const sessionMeta: {
+      readonly tradingDate?: string;
+      readonly isTrading: boolean;
+      readonly sessionType: 'REGULAR' | 'NO_TRADING' | 'OTHER';
+      readonly startTs: number;
+      readonly endTs: number;
+      readonly duration: number;
+    }[] = [];
 
-    const hasSessionGroupData = groups.some(([, entries]) => entries.length > 0);
-    const looksLikeRootRecord =
-      hasSessionGroupData ||
-      'futures_contract_id' in record ||
-      'futuresContractId' in record ||
-      'instrument_id' in record ||
-      'instrumentId' in record ||
-      'product_id' in record ||
-      'productId' in record;
+    const sessions = collectSessionEntries((record as Record<string, unknown>).sessions);
+    const normalizedSessions = sessions
+      .map((sessionRecord) => {
+        const tradingDateIso = pickIsoDate(sessionRecord, ['trading_date', 'tradingDate', 'date']);
+        const tradingDate = formatDateOnly(tradingDateIso);
+        const startIso =
+          pickIsoDate(sessionRecord, ['start_time', 'startTime', 'starts_at', 'startsAt', 'start_at', 'startAt']) ??
+          pickIsoDate(sessionRecord, ['begin_time', 'beginTime']);
+        const endIso =
+          pickIsoDate(sessionRecord, ['end_time', 'endTime', 'ends_at', 'endsAt', 'end_at', 'endAt']) ??
+          pickIsoDate(sessionRecord, ['finish_time', 'finishTime']);
+        const startTs = toEpochMilliseconds(startIso);
+        const endTs = toEpochMilliseconds(endIso);
+        const duration = calculateDurationMinutes(startTs, endTs);
+        if (duration === undefined || startTs === undefined || endTs === undefined) {
+          return undefined;
+        }
+        const isTrading = pickBoolean(sessionRecord, ['is_trading', 'isTrading', 'trading']) ?? false;
+        const sessionType = mapSessionType(pickString(sessionRecord, ['session_type', 'sessionType', 'type']));
+        return {
+          tradingDate,
+          startIso,
+          endIso,
+          startTs,
+          endTs,
+          duration,
+          isTrading,
+          sessionType,
+        };
+      })
+      .filter((session): session is {
+        tradingDate?: string;
+        startIso: string;
+        endIso: string;
+        startTs: number;
+        endTs: number;
+        duration: number;
+        isTrading: boolean;
+        sessionType: 'REGULAR' | 'NO_TRADING' | 'OTHER';
+      } => Boolean(session));
 
-    if (looksLikeRootRecord && (dayDate || dayStartsAt || dayEndsAt || dayIsHoliday)) {
-      const summaryRow: FuturesCsvRow<typeof FUTURES_TRADING_SESSIONS_HEADER> = {
-        symbol: rowSymbol ?? fallbackSymbol,
-        instrumentId: normalizedInstrument,
-        productId,
-        sessionScope: 'summary',
-        tradingDate: dayDate,
-        startsAt: dayStartsAt,
-        endsAt: dayEndsAt,
-        timezone: defaultTimezone,
-        market: defaultMarket,
-        createdAt: defaultCreatedAt,
-        updatedAt: defaultUpdatedAt,
-        dayDate,
-        dayStartsAt,
-        dayEndsAt,
-        dayIsHoliday,
-      };
+    normalizedSessions.sort((a, b) => a.startTs - b.startTs);
 
-      if (!summaryRow.symbol) {
-        summaryRow.symbol = fallbackSymbol;
-      }
-
-      if (summaryRow.symbol || summaryRow.instrumentId || summaryRow.productId) {
-        out.push(summaryRow);
-      }
+    for (const session of normalizedSessions) {
+      const rowRefDate = refDate ?? session.tradingDate;
+      detailRows.push({
+        ts: ingestionTs,
+        ref_date: rowRefDate,
+        contract_id: contractId,
+        trading_date: session.tradingDate,
+        is_trading: booleanToString(session.isTrading),
+        session_type: session.sessionType,
+        start_ts: session.startTs,
+        end_ts: session.endTs,
+        duration_min: session.duration,
+        start_local: toNyLocalString(session.startIso),
+        end_local: toNyLocalString(session.endIso),
+        source_url: sourceUrl,
+      });
+      sessionMeta.push({
+        tradingDate: session.tradingDate,
+        isTrading: session.isTrading,
+        sessionType: session.sessionType,
+        startTs: session.startTs,
+        endTs: session.endTs,
+        duration: session.duration,
+      });
     }
 
-    for (const [scope, entries] of groups) {
-      for (const sessionEntry of entries) {
-        if (!sessionEntry || typeof sessionEntry !== 'object') {
-          continue;
-        }
+    const summaryRows: FuturesCsvRow<FuturesTradingSessionsSummaryHeader>[] = [];
+    const summaryRefDate = refDate ?? sessionMeta[0]?.tradingDate;
+    if (summaryRefDate || contractId || dayStartsAt || dayEndsAt || sessionMeta.length > 0 || isHoliday !== undefined) {
+      const totalTradingMin = sessionMeta
+        .filter((session) => session.isTrading)
+        .reduce((acc, session) => acc + session.duration, 0);
+      const totalBreakMin = sessionMeta
+        .filter((session) => !session.isTrading)
+        .reduce((acc, session) => acc + session.duration, 0);
+      const regularSessions = sessionMeta.filter((session) => session.sessionType === 'REGULAR');
+      const regularStartTs = regularSessions.length > 0 ? regularSessions[0]?.startTs : undefined;
+      const regularEndTs = regularSessions.length > 0 ? regularSessions[regularSessions.length - 1]?.endTs : undefined;
+      const currentSession = normalizeEdgeSession(collectSessionEntries((record as Record<string, unknown>).currentSession)[0]);
+      const previousSession = normalizeEdgeSession(
+        collectSessionEntries((record as Record<string, unknown>).previousSession)[0],
+      );
+      const nextSession = normalizeEdgeSession(collectSessionEntries((record as Record<string, unknown>).nextSession)[0]);
 
-        const sessionRecord = sessionEntry as Record<string, unknown>;
-        const tradingDate = pickIsoDate(sessionRecord, ['trading_date', 'tradingDate', 'date']);
-        const sessionType = pickString(sessionRecord, ['session_type', 'sessionType', 'session']);
-        const isTrading = pickString(sessionRecord, ['is_trading', 'isTrading', 'trading']);
-        const startsAt = pickIsoDate(sessionRecord, [
-          'starts_at',
-          'start_time',
-          'start_at',
-          'startsAt',
-          'startTime',
-        ]) ??
-          pickIsoDate(record, ['start_time', 'startTime']);
-        const endsAt = pickIsoDate(sessionRecord, [
-          'ends_at',
-          'end_time',
-          'end_at',
-          'endsAt',
-          'endTime',
-        ]) ??
-          pickIsoDate(record, ['end_time', 'endTime']);
-        const timezone = pickString(sessionRecord, ['timezone', 'time_zone']) ?? defaultTimezone;
-        const market = pickString(sessionRecord, ['market', 'exchange']) ?? defaultMarket;
-        const createdAt = pickIsoDate(sessionRecord, ['created_at', 'createdAt']) ?? defaultCreatedAt;
-        const updatedAt = pickIsoDate(sessionRecord, ['updated_at', 'updatedAt']) ?? defaultUpdatedAt;
+      summaryRows.push({
+        ts: ingestionTs,
+        ref_date: summaryRefDate,
+        contract_id: contractId,
+        is_holiday: booleanToString(isHoliday),
+        day_start_ts: toEpochMilliseconds(dayStartsAt),
+        day_end_ts: toEpochMilliseconds(dayEndsAt),
+        total_trading_min: totalTradingMin,
+        total_break_min: totalBreakMin,
+        has_regular: booleanToString(regularSessions.length > 0),
+        regular_start_ts: regularStartTs,
+        regular_end_ts: regularEndTs,
+        current_start_ts: currentSession?.startTs,
+        current_end_ts: currentSession?.endTs,
+        current_is_trading: booleanToString(currentSession?.isTrading ?? undefined),
+        previous_end_ts: previousSession?.endTs,
+        next_start_ts: nextSession?.startTs,
+        source_url: sourceUrl,
+      });
+    }
 
-        const row: FuturesCsvRow<typeof FUTURES_TRADING_SESSIONS_HEADER> = {
-          symbol: rowSymbol ?? fallbackSymbol,
-          instrumentId: normalizedInstrument,
-          productId,
-          sessionScope: scope,
-          tradingDate,
-          sessionType,
-          isTrading,
-          startsAt,
-          endsAt,
-          timezone,
-          market,
-          createdAt,
-          updatedAt,
-        };
-
-        if (!row.symbol) {
-          row.symbol = fallbackSymbol;
-        }
-
-        if (!row.symbol && !row.instrumentId && !row.productId) {
-          continue;
-        }
-
-        out.push(row);
-      }
+    if (detailRows.length > 0 || summaryRows.length > 0) {
+      out.push({ symbol, detailRows, summaryRows });
     }
   }
 
@@ -1363,13 +1547,40 @@ export function installFuturesRecorder(options: FuturesRecorderOptions): Futures
   };
 
   const handleTradingSessions = (payload: unknown, url: string | undefined) => {
-    const rows = normalizeFuturesTradingSessions(payload, { url, fallbackSymbol });
-    for (const row of rows) {
-      const symbol = (row.symbol as string | undefined) ?? fallbackSymbol ?? 'GENERAL';
-      const filePath = dataPath({ assetClass: 'futures', symbol }, 'sessions', 'futures-trading-sessions.csv');
-      getWriter(filePath, FUTURES_TRADING_SESSIONS_HEADER).write(toCsvLine(FUTURES_TRADING_SESSIONS_HEADER, row));
+    const groups = normalizeFuturesTradingSessions(payload, { url, fallbackSymbol });
+    const discovered: string[] = [];
+    for (const group of groups) {
+      const normalizedSymbol = normaliseSymbol(group.symbol ?? fallbackSymbol);
+      if (normalizedSymbol) {
+        discovered.push(normalizedSymbol);
+      }
+      const symbol = normalizedSymbol ?? fallbackSymbol ?? 'GENERAL';
+      if (group.detailRows.length > 0) {
+        const detailPath = dataPath(
+          { assetClass: 'futures', symbol },
+          'sessions',
+          'futures-trading-sessions-detail.csv',
+        );
+        const detailWriter = getWriter(detailPath, FUTURES_TRADING_SESSIONS_DETAIL_HEADER);
+        for (const row of group.detailRows) {
+          detailWriter.write(toCsvLine(FUTURES_TRADING_SESSIONS_DETAIL_HEADER, row));
+        }
+      }
+      if (group.summaryRows.length > 0) {
+        const summaryPath = dataPath(
+          { assetClass: 'futures', symbol },
+          'sessions',
+          'futures-trading-sessions-summary.csv',
+        );
+        const summaryWriter = getWriter(summaryPath, FUTURES_TRADING_SESSIONS_SUMMARY_HEADER);
+        for (const row of group.summaryRows) {
+          summaryWriter.write(toCsvLine(FUTURES_TRADING_SESSIONS_SUMMARY_HEADER, row));
+        }
+      }
     }
-    notifyDiscoveredSymbols(extractSymbolsFromRows(rows));
+    if (discovered.length > 0) {
+      notifyDiscoveredSymbols(discovered);
+    }
   };
 
   const handleMarketHours = (payload: unknown, url: string | undefined) => {
