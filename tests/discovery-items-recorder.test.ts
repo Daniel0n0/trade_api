@@ -59,6 +59,8 @@ describe('discovery items recorder', () => {
           { name: 'user-agent', value: 'Playwright' },
           { name: 'authorization', value: 'Bearer secret' },
           { name: 'accept', value: 'application/json' },
+          { name: 'x-robinhood-device-token', value: 'device-secret' },
+          { name: 'Cookie', value: 'session=secret' },
         ],
       },
     };
@@ -105,6 +107,8 @@ describe('discovery items recorder', () => {
     assert.match(requestMeta, /user-agent: Playwright/);
     assert.match(requestMeta, /accept: application\/json/);
     assert.doesNotMatch(requestMeta, /authorization/i);
+    assert.doesNotMatch(requestMeta, /device-secret/i);
+    assert.doesNotMatch(requestMeta, /cookie/i);
 
     const rawContent = await readFile(rawPath, 'utf8');
     assert.equal(rawContent.trim(), JSON.stringify(payload));
