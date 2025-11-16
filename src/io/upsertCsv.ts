@@ -40,9 +40,10 @@ const parseCsvLine = (line: string): string[] => {
 const buildRowFromValues = <T extends readonly string[]>(header: T, values: string[]): CsvRowInput<T> => {
   const row: CsvRowInput<T> = {};
   header.forEach((key, index) => {
+    const typedKey = key as T[number];
     const value = values[index];
     if (value !== undefined && value !== '') {
-      row[key] = value;
+      row[typedKey] = value;
     }
   });
   return row;

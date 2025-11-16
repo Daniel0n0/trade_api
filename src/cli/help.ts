@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import type { Command } from 'commander';
 
 const INTRO = `CLI del orquestador de Trade API.
 
