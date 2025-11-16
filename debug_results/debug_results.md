@@ -18,119 +18,102 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 24:
-
-¡Perfecto, Amo! Vamos a normalizar **la respuesta de “trading sessions” de futuros** para el contrato `/MESZ25` (id `c4021dc3-bc5c-4252-a5b9-209572a1cb78`) del **endpoint**:
+PUNTO 25:
+¡Voy! Esta **petición** es de **históricos de futuros por contrato** (barras **5-min**):
 
 ```
-GET /arsenal/v1/futures/trading_sessions/{futuresContractId}/{YYYY-MM-DD}
+GET /marketdata/futures/historicals/contracts/v1
+  ?ids=c4021dc3-bc5c-4252-a5b9-209572a1cb78
+  &interval=5minute
+  &start=2025-11-11T05:00:00.000Z
 ```
 
 ---
 
 # 1) Estructura de la data (schema)
 
-### Payload crudo (HTTP JSON)
+### A. Raw (HTTP JSON)
 
 ```ts
-type FuturesTradingSessionsRaw = {
-  date: string;                         // "2025-11-13" (día de referencia)
-  futuresContractId: string;            // "c4021dc3-..." (UUID del contrato)
-  isHoliday: boolean;
-  startTime: string;                    // ISO UTC (inicio de la “jornada” cubierta)
-  endTime: string;                      // ISO UTC (fin de la “jornada” cubierta)
-  sessions: Array<{
-    tradingDate: string;                // fecha de sesión (generalmente = date)
-    isTrading: boolean;                 // si es ventana operable
-    startTime: string;                  // ISO UTC
-    endTime: string;                    // ISO UTC
-    sessionType:                       // enum textual
-      | 'SESSION_TYPE_REGULAR'
-      | 'SESSION_TYPE_NO_TRADING'
-      | string;
-  }>;
-  currentSession?: {
-    tradingDate: string;
-    isTrading: boolean;
-    startTime: string;                  // ISO UTC
-    endTime: string;                    // ISO UTC
-    sessionType: string;
-  };
-  previousSession?: { ... igual a currentSession ... };
-  nextSession?: { ... igual a currentSession ... };
-};
+type FuturesHistoricalsRaw = {
+  status: 'SUCCESS' | string;
+  data: Array<{
+    status: 'SUCCESS' | string;
+    data: {
+      start_time: string;                // ISO UTC (inicio del rango servido)
+      end_time: string;                  // ISO UTC (fin del rango servido)
+      interval: '5minute' | '15minute' | 'hour' | 'day';
+      data_points: Array<{
+        begins_at: string;               // ISO UTC: apertura de la barra
+        open_price: string;              // número en string
+        close_price: string;
+        high_price: string;
+        low_price: string;
+        volume: number;
+        interpolated: boolean;           // true si es barra llenada (p.ej. pausa)
+        is_market_open: boolean;         // abierto según RH
+        contract_id: string;             // UUID del contrato
+      }>;
+      symbol: string;                    // '/MESZ25:XCME'
+      instrument_id: string;            // = contract_id
+    }
+  }>
+}
 ```
 
-### Registro(s) normalizado(s)
-
-Generaremos **dos salidas**:
-
-1. **Detalle por tramo** (una fila por elemento de `sessions[]`)
+### B. Registro normalizado (una fila por barra)
 
 ```ts
-type FuturesSessionRow = {
-  ts: number;                           // epoch ms de ingestión
-  ref_date: string;                     // "2025-11-13" (del parámetro)
-  contract_id: string;                  // "c4021dc3-..."
-  trading_date: string;                 // por fila (sessions[i].tradingDate)
-  is_trading: boolean;
-  session_type: 'REGULAR' | 'NO_TRADING' | 'OTHER';
-  start_ts: number;                     // epoch ms UTC
-  end_ts: number;                       // epoch ms UTC
-  duration_min: number;                 // (end_ts - start_ts)/60_000
-  start_local: string;                  // America/New_York (ISO sin tz)
-  end_local: string;                    // America/New_York (ISO sin tz)
-  source_url: string;                   // endpoint llamado
-};
-```
+type FuturesBar5mRow = {
+  ts: number;                            // epoch ms de ingestión
+  contract_id: string;                   // 'c4021d...'
+  symbol: string;                        // '/MESZ25:XCME'
+  interval: '5m';
 
-2. **Resumen del día** (una sola fila por `date`)
+  // tiempo de la barra
+  t_start_iso: string;                   // begins_at original (UTC)
+  t_start: number;                       // epoch ms (UTC)
+  t_end: number;                         // t_start + 5*60*1000
+  trading_date: string;                  // sesión por horario CME (NY): ver abajo
 
-```ts
-type FuturesDaySummaryRow = {
-  ts: number;
-  ref_date: string;                     // "2025-11-13"
-  contract_id: string;
+  // OHLCV
+  o: number; h: number; l: number; c: number; v: number;
 
-  is_holiday: boolean;
-  day_start_ts: number;                 // de startTime
-  day_end_ts: number;                   // de endTime
-  total_trading_min: number;            // suma de duration_min con is_trading=true
-  total_break_min: number;              // suma de duration_min con is_trading=false
+  // flags
+  interpolated: 0 | 1;
+  is_market_open: 0 | 1;
 
-  has_regular: boolean;
-  regular_start_ts: number | null;      // primer REGULAR del día (si hay)
-  regular_end_ts: number | null;        // último REGULAR del día (si hay)
+  // derivados inmediatos
+  hl2: number;                           // (h + l)/2
+  ohlc4: number;                         // (o+h+l+c)/4
+  change: number;                        // c - o
+  change_pct: number;                    // (c/o - 1)
+  range: number;                         // h - l
 
-  // ventanas “de contexto”
-  current_start_ts: number | null;
-  current_end_ts: number | null;
-  current_is_trading: boolean | null;
-
-  previous_end_ts: number | null;
-  next_start_ts: number | null;
-
+  // housekeeping
   source_url: string;
 };
 ```
 
-> Nota: guardamos **UTC** en `_ts` y también la **hora local NY** en cadenas legibles.
+> **`trading_date` (clave)**: asigna la barra a la **sesión CME** del día **NY**:
+> sesión regular /MES ≈ **23:00–22:00 ET**. Para cada `t_start` en UTC ⇒ convértelo a **America/New_York** y mapea a la fecha de la sesión activa (usa el calendario que ya definimos con el endpoint de *trading_sessions*).
 
 ---
 
 # 2) Cómo recibirla
 
-**Handler**: HTTP (pull por fecha/contrato).
-
-* Haz `GET` con los headers que ya usas (incluye `authorization` y `x-timezone-id: America/New_York`).
-* `response.text()` → `safeJsonParse`.
-* Envuélvelo en tu **Envelope** estándar:
+* **Handler**: HTTP (pull).
+* **Headers**: como los que ya usas (con `authorization`, `x-timezone-id` opcional).
+* **Parsing**: `response.text()` → `safeJsonParse` → valida `status==='SUCCESS'`.
+* **Envelope**:
 
 ```ts
 const env: Envelope = {
   ts: Date.now(),
   transport: 'http',
-  source: 'https://api.robinhood.com/arsenal/v1/futures/trading_sessions/<CID>/<DATE>',
+  source: '.../marketdata/futures/historicals/contracts/v1?...',
+  topic: 'futures.historicals',
+  symbol: '/MESZ25:XCME',
   payload: json
 };
 ```
@@ -139,181 +122,165 @@ const env: Envelope = {
 
 # 3) Cómo procesarla
 
-### Validaciones
+### A. Validaciones
 
-* `date` no vacío y **coincide** con la fecha solicitada en la URL.
-* `futuresContractId` presente.
-* `sessions` es array y **ordenable** por `startTime`.
-* Todos los `startTime/endTime` son ISO válidos y `start < end`.
+* `data[].data.interval === '5minute'`.
+* `symbol` y `instrument_id` presentes y consistentes con el `ids` solicitado.
+* `data_points` no vacío.
+* Para cada barra: `open<=high`, `low<=high`, `low<=open/close`, numéricos finitos.
+* Si `interpolated===true` ⇒ normalmente `volume===0` y `is_market_open===false` (permite excepciones pero márcalo).
 
-### Normalización
+### B. Normalización
 
-* Convierte **todas** las fechas ISO a **epoch ms (UTC)**.
-* Deriva `duration_min = (end - start)/60_000`.
-* `session_type` → mapea a `REGULAR` | `NO_TRADING` | `OTHER`.
-* Calcula agregados diarios:
+* Convierte **precios** a `number` (float) y **tiempos** a `epoch ms` (UTC).
+* Calcula `t_end = t_start + 5min`.
+* Derivados: `hl2`, `ohlc4`, `change`, `change_pct`, `range`.
+* **Trading date**:
 
-  * `total_trading_min` = suma de `duration_min` con `is_trading=true`.
-  * `total_break_min` = suma con `is_trading=false`.
-  * `has_regular` = existe algún tramo `REGULAR`.
-  * `regular_start_ts` = inicio del **primer** `REGULAR`.
-  * `regular_end_ts` = fin del **último** `REGULAR`.
-* Convierte a **hora local NY** para `start_local` / `end_local` (sin zona):
+  1. Convierte `t_start` a **NY**.
+  2. Usa la tabla de sesiones (que ingieres del otro endpoint) para asignar `trading_date` (la que cubre el tramo `t_start..t_end`).
+  3. Si cae en un bloque `NO_TRADING`, igualmente conserva la fila pero con `interpolated=1` (si vino así) o `is_market_open=0`.
 
-  * Usa tu util de tz (IANA `"America/New_York"`) para imprimir `YYYY-MM-DD HH:mm:ss`.
+### C. Reglas de calidad / filtros
 
-### Derivados útiles adicionales (opcionales)
+* **Mantener** barras `interpolated` para continuidad temporal (facilita indicadores); **marca** `interpolated=1`.
+* Si quieres una vista “operable”: puedes generar un **vista secundaria** filtrando `is_market_open=1 && v>0`.
+* **Deduplicación idempotente** por `(contract_id, t_start)`.
 
-* `is_open_now`: si `now_utc` cae dentro de algún tramo con `is_trading=true`.
-* `overnight_breaks`: cantidad de tramos `NO_TRADING` (útil para ventanas tipo 22:00–23:00).
+### D. Agregados opcionales (útil para analítica)
 
----
+* **VWAP intrasesión** (acumulado por `trading_date`):
 
-# 4) ¿Se guarda? ¿Cómo? (sí)
+  * `cum_pv += c * v`, `cum_v += v`, `vwap = cum_pv / max(1,cum_v)`.
+* **Indicadores livianos** (si te conviene en una salida aparte):
 
-**Sí, guardar** (calendario operativo es clave para: backtests, filtrado de ticks, límites de estrategia, manejo de “greeks de futuros” por sesión).
-
-### Rutas
-
-* **Detalle por tramos (append)**
-  `data/futures/sessions/<CONTRACT_ID>/<YYYY>/<MM>/<YYYY-MM-DD>_sessions.csv`
-* **Resumen diario (append)**
-  `data/futures/sessions/<CONTRACT_ID>/<YYYY>/<MM>/daily_summary.csv`
-* **Crudo opcional**
-  `data/_raw/futures_sessions/<CONTRACT_ID>/<YYYY-MM-DD>.json`
-
-### Columnas
-
-**`*_sessions.csv`**
-
-```
-ts,ref_date,contract_id,trading_date,is_trading,session_type,start_ts,end_ts,duration_min,start_local,end_local,source_url
-```
-
-**`daily_summary.csv`**
-
-```
-ts,ref_date,contract_id,is_holiday,day_start_ts,day_end_ts,total_trading_min,total_break_min,has_regular,regular_start_ts,regular_end_ts,current_start_ts,current_end_ts,current_is_trading,previous_end_ts,next_start_ts,source_url
-```
-
-### Reglas de escritura
-
-* Crear archivo si no existe con encabezado; **append** por corrida.
-* Tiempos en **UTC**. Local solo como ayuda visual.
-* **Idempotencia**: si reingestas el mismo `ref_date+contract_id`, puedes:
-
-  * o bien limpiar filas previas de ese `ref_date` (rewrite-atómico),
-  * o deduplicar por `(ref_date,contract_id,start_ts,end_ts)` antes de append.
+  * `ema_20`, `rsi_14`, `atr_14` (sobre `c` y `h/l`).
+    *Recomiendo calcularlos en un job separado para no mezclar ingestión con cálculo pesado.*
 
 ---
 
-# 5) Ejemplo aplicado (con tu payload)
+# 4) ¿Se guarda? Sí, y en dos vistas
 
-**Detalle** (`sessions[]` → 3 filas):
+### A. **Serie base 5m (todas las barras) – append**
 
-* 22:40–23:00 **NO_TRADING**
-* 23:00–22:00 (día siguiente) **REGULAR**
-* 22:00–22:40 **NO_TRADING**
+```
+data/futures/bars_5m/<CONTRACT_ID>/<YYYY>/<MM>/<TRADING_DATE>.csv
+```
 
-**Resumen**:
+*Una carpeta por `contract_id` para evitar problemas con símbolos con `/` o `:`.*
 
-* `is_holiday = false`
-* `total_trading_min = 23:00→22:00 = 23h = 1380 min`
-* `total_break_min = 20 + 40 = 60 min`
-* `has_regular = true`
-* `regular_start_ts = 2025-11-12T23:00:00Z`
-* `regular_end_ts = 2025-11-13T22:00:00Z`
+**Columnas (`bars_5m`)**
 
-*(No imprimo las filas concretas para no saturarte; tu pipeline las generará con las utilidades de fecha.)*
+```
+ts,contract_id,symbol,interval,t_start_iso,t_start,t_end,trading_date,
+o,h,l,c,v,interpolated,is_market_open,hl2,ohlc4,change,change_pct,range,source_url
+```
+
+### B. **Vista “operable” (solo abierto y con volumen) – append**
+
+```
+data/futures/bars_5m_live/<CONTRACT_ID>/<YYYY>/<MM>/<TRADING_DATE>.csv
+```
+
+**Columnas**: mismas que arriba **sin** `interpolated=1` y `v=0`.
+
+### C. **Crudo opcional** (auditoría)
+
+```
+data/_raw/futures_historicals/<CONTRACT_ID>/<YYYY-MM-DDTHH-mm-ssZ>.json
+```
+
+*(redacta tokens/headers; guarda únicamente cuerpo y URL).*
+
+### D. Reescritura / idempotencia
+
+* Al reingestar el mismo rango, reescribe el archivo de ese `TRADING_DATE` **o** deduplica por `(contract_id,t_start)` antes de `append`.
 
 ---
 
-# 6) Pseudocódigo de normalización (TypeScript)
+# 5) Pseudocódigo de normalización (TypeScript)
 
 ```ts
-function toEpochMs(iso: string): number {
-  return Date.parse(iso); // ISO UTC
+function parseNum(s: string | number): number {
+  const n = typeof s === 'number' ? s : Number(s);
+  return Number.isFinite(n) ? n : NaN;
 }
 
-function toLocalNY(isoUtc: string): string {
-  // usa luxon/dayjs-timezone/IANA:
-  // return DateTime.fromISO(isoUtc, { zone: 'utc' }).setZone('America/New_York').toFormat('yyyy-LL-dd HH:mm:ss');
-  return convertUtcIsoToNyString(isoUtc);
+function toEpoch(iso: string): number { return Date.parse(iso); }
+
+function tradingDateFromUTC(isoUTC: string): string {
+  // 1) a NY; 2) mapear a sesión (23:00–22:00 ET) usando tu tabla de sessions
+  // fallback: si cae 22:00–23:00 ET => asigna al día siguiente
+  return resolveTradingDateBySessions(isoUTC, 'America/New_York');
 }
 
-function mapType(t: string): 'REGULAR'|'NO_TRADING'|'OTHER' {
-  if (t === 'SESSION_TYPE_REGULAR') return 'REGULAR';
-  if (t === 'SESSION_TYPE_NO_TRADING') return 'NO_TRADING';
-  return 'OTHER';
-}
+function normaliseFutures5m(env: Envelope): FuturesBar5mRow[] {
+  const out: FuturesBar5mRow[] = [];
+  const payload = env.payload as FuturesHistoricalsRaw;
+  for (const block of payload.data ?? []) {
+    const d = block.data;
+    const symbol = d.symbol;
+    const contract_id = d.instrument_id;
+    for (const p of d.data_points) {
+      const tStart = toEpoch(p.begins_at);
+      const o = parseNum(p.open_price);
+      const h = parseNum(p.high_price);
+      const l = parseNum(p.low_price);
+      const c = parseNum(p.close_price);
+      const v = p.volume ?? 0;
 
-function normaliseTradingSessions(env: Envelope) {
-  const p = env.payload as FuturesTradingSessionsRaw;
+      if (![o,h,l,c].every(Number.isFinite)) continue; // descarta corruptas
 
-  // Validaciones básicas
-  if (!p.date || !p.futuresContractId || !Array.isArray(p.sessions)) return { rows: [], summary: null };
+      const row: FuturesBar5mRow = {
+        ts: env.ts,
+        contract_id,
+        symbol,
+        interval: '5m',
+        t_start_iso: p.begins_at,
+        t_start: tStart,
+        t_end: tStart + 5 * 60 * 1000,
+        trading_date: tradingDateFromUTC(p.begins_at),
 
-  // Ordena por inicio por seguridad
-  const sessions = [...p.sessions].sort((a,b)=> Date.parse(a.startTime) - Date.parse(b.startTime));
+        o, h, l, c, v,
+        interpolated: p.interpolated ? 1 : 0,
+        is_market_open: p.is_market_open ? 1 : 0,
 
-  // Construye filas detalle
-  const rows = sessions.map(s => {
-    const start_ts = toEpochMs(s.startTime);
-    const end_ts   = toEpochMs(s.endTime);
-    const duration_min = Math.max(0, Math.round((end_ts - start_ts) / 60000));
-    return {
-      ts: env.ts,
-      ref_date: p.date,
-      contract_id: p.futuresContractId,
-      trading_date: s.tradingDate,
-      is_trading: !!s.isTrading,
-      session_type: mapType(s.sessionType),
-      start_ts, end_ts, duration_min,
-      start_local: toLocalNY(s.startTime),
-      end_local: toLocalNY(s.endTime),
-      source_url: env.source
-    };
-  });
+        hl2: (h + l) / 2,
+        ohlc4: (o + h + l + c) / 4,
+        change: c - o,
+        change_pct: o ? (c / o - 1) : 0,
+        range: h - l,
 
-  // Agregados
-  const total_trading_min = rows.filter(r=>r.is_trading).reduce((acc,r)=> acc + r.duration_min, 0);
-  const total_break_min   = rows.filter(r=>!r.is_trading).reduce((acc,r)=> acc + r.duration_min, 0);
-  const has_regular       = rows.some(r=> r.session_type === 'REGULAR');
-
-  const firstRegular = rows.find(r=> r.session_type === 'REGULAR');
-  const lastRegular  = [...rows].reverse().find(r=> r.session_type === 'REGULAR');
-
-  const summary = {
-    ts: env.ts,
-    ref_date: p.date,
-    contract_id: p.futuresContractId,
-    is_holiday: !!p.isHoliday,
-    day_start_ts: toEpochMs(p.startTime),
-    day_end_ts: toEpochMs(p.endTime),
-    total_trading_min,
-    total_break_min,
-    has_regular,
-    regular_start_ts: firstRegular?.start_ts ?? null,
-    regular_end_ts: lastRegular?.end_ts ?? null,
-    current_start_ts: p.currentSession ? toEpochMs(p.currentSession.startTime) : null,
-    current_end_ts:   p.currentSession ? toEpochMs(p.currentSession.endTime)   : null,
-    current_is_trading: p.currentSession?.isTrading ?? null,
-    previous_end_ts:  p.previousSession ? toEpochMs(p.previousSession.endTime) : null,
-    next_start_ts:    p.nextSession ? toEpochMs(p.nextSession.startTime) : null,
-    source_url: env.source
-  };
-
-  return { rows, summary };
+        source_url: env.source
+      };
+      out.push(row);
+    }
+  }
+  // dedup por (contract_id,t_start)
+  return dedupBy(out, r => `${r.contract_id}-${r.t_start}`);
 }
 ```
 
 ---
 
-# 7) Decisiones clave (por qué así)
+# 6) Procesamiento recomendado (pipeline)
 
-* **Persistir**: Sí; el calendario de sesiones afecta backtests, ejecución y control de riesgos (p. ej., ventanas donde **no** hay trading).
-* **Separar detalle y resumen**: el resumen acelera queries frecuentes (¿está abierto?, ¿minutos regulares?, etc.) sin recorrer todos los tramos.
-* **UTC + Local NY**: UTC para cálculo confiable, Local para inspección humana y reportes.
-* **Idempotencia** por `(ref_date, contract_id)`: dedup/overwrite atómico para evitar duplicados si reingestas el mismo día.
+1. **Ingesta HTTP** → Envelope.
+2. **Normalización** → `rows_5m`.
+3. **Split por `trading_date`** (según sesiones NY) y **append** en
+   `bars_5m/<CONTRACT_ID>/<YYYY>/<MM>/<TRADING_DATE>.csv`.
+4. **Genera vista operable** filtrando `is_market_open=1 && v>0`.
+5. (Opcional) **Job de indicadores** por sesión: `vwap`, `ema_20`, `rsi_14`, etc., a
+   `data/futures/indicators_5m/<CONTRACT_ID>/<YYYY>/<MM>/<TRADING_DATE>.csv`.
+6. **Logs**: cuenta de barras totales, interpoladas, y descartadas por validación.
+
+---
+
+# 7) Decisiones clave
+
+* **Guardar siempre** estas barras (base de backtests/scalping y señales).
+* **Conservar “interpolated”** (0 volumen) para continuidad y detección de pausas; usar la **vista operable** para trading real.
+* **Particionar por `contract_id`** (UUID) para evitar problemas con `/` o `:` del símbolo.
+* **`trading_date` session-aware** (coincidirá con los horarios que ya definiste con el endpoint de *trading_sessions*).
 
 ---
