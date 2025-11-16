@@ -311,6 +311,14 @@ const formatDateOnly = (iso: string | undefined): string | undefined => {
   return undefined;
 };
 
+const resolveRefDateSegment = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+};
+
 const toNyLocalString = (iso: string | undefined): string | undefined => {
   if (!iso) {
     return undefined;
@@ -1556,25 +1564,55 @@ export function installFuturesRecorder(options: FuturesRecorderOptions): Futures
       }
       const symbol = normalizedSymbol ?? fallbackSymbol ?? 'GENERAL';
       if (group.detailRows.length > 0) {
-        const detailPath = dataPath(
-          { assetClass: 'futures', symbol },
-          'sessions',
-          'futures-trading-sessions-detail.csv',
-        );
-        const detailWriter = getWriter(detailPath, FUTURES_TRADING_SESSIONS_DETAIL_HEADER);
+        const buckets = new Map<
+          string | undefined,
+          FuturesCsvRow<FuturesTradingSessionsDetailHeader>[]
+        >();
         for (const row of group.detailRows) {
-          detailWriter.write(toCsvLine(FUTURES_TRADING_SESSIONS_DETAIL_HEADER, row));
+          const refDate = resolveRefDateSegment(row.ref_date);
+          const existing = buckets.get(refDate);
+          if (existing) {
+            existing.push(row);
+          } else {
+            buckets.set(refDate, [row]);
+          }
+        }
+        for (const [refDate, rowsForDate] of buckets.entries()) {
+          const detailPath = dataPath(
+            { assetClass: 'futures', symbol, date: refDate },
+            'sessions',
+            'futures-trading-sessions-detail.csv',
+          );
+          const detailWriter = getWriter(detailPath, FUTURES_TRADING_SESSIONS_DETAIL_HEADER);
+          for (const row of rowsForDate) {
+            detailWriter.write(toCsvLine(FUTURES_TRADING_SESSIONS_DETAIL_HEADER, row));
+          }
         }
       }
       if (group.summaryRows.length > 0) {
-        const summaryPath = dataPath(
-          { assetClass: 'futures', symbol },
-          'sessions',
-          'futures-trading-sessions-summary.csv',
-        );
-        const summaryWriter = getWriter(summaryPath, FUTURES_TRADING_SESSIONS_SUMMARY_HEADER);
+        const buckets = new Map<
+          string | undefined,
+          FuturesCsvRow<FuturesTradingSessionsSummaryHeader>[]
+        >();
         for (const row of group.summaryRows) {
-          summaryWriter.write(toCsvLine(FUTURES_TRADING_SESSIONS_SUMMARY_HEADER, row));
+          const refDate = resolveRefDateSegment(row.ref_date);
+          const existing = buckets.get(refDate);
+          if (existing) {
+            existing.push(row);
+          } else {
+            buckets.set(refDate, [row]);
+          }
+        }
+        for (const [refDate, rowsForDate] of buckets.entries()) {
+          const summaryPath = dataPath(
+            { assetClass: 'futures', symbol, date: refDate },
+            'sessions',
+            'futures-trading-sessions-summary.csv',
+          );
+          const summaryWriter = getWriter(summaryPath, FUTURES_TRADING_SESSIONS_SUMMARY_HEADER);
+          for (const row of rowsForDate) {
+            summaryWriter.write(toCsvLine(FUTURES_TRADING_SESSIONS_SUMMARY_HEADER, row));
+          }
         }
       }
     }
