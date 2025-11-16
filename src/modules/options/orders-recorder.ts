@@ -453,7 +453,7 @@ const normalizeSymbol = (logPrefix?: string): string =>
 
 const createGeneralLogger = (logPrefix?: string) => {
   const symbol = normalizeSymbol(logPrefix);
-  const basePath = dataPath({ assetClass: 'general', symbol }, 'options-orders.jsonl');
+  const basePath = dataPath({ kind: 'app', segments: ['options', 'orders', symbol] }, 'options-orders.jsonl');
   const writer = new RotatingWriter(basePath, ORDERS_ROTATE_POLICY);
 
   const writeGeneral = (entry: GeneralLogEntry) => {
