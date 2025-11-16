@@ -14,7 +14,7 @@ export class RotatingWriter {
 
   private readonly policy: RotatePolicy;
 
-  private stream: fs.WriteStream | null = null;
+  private fd: number | null = null;
 
   private startTs = 0;
 
@@ -48,15 +48,27 @@ export class RotatingWriter {
     const root = ext ? this.basePath.slice(0, -ext.length) : this.basePath;
     const file = `${root}-${this.tsName()}${ext}`;
     ensureDirectoryForFileSync(file);
-    this.stream = fs.createWriteStream(file, { flags: 'a' });
+    this.fd = fs.openSync(file, 'a');
     this.startTs = Date.now();
     this.bytes = 0;
     this.currentPath = file;
     if (this.header) {
-      this.stream.write(`${this.header}\n`);
-      this.bytes += Buffer.byteLength(this.header) + 1;
+      const headerLine = `${this.header}\n`;
+      fs.writeSync(this.fd, headerLine);
+      this.bytes += Buffer.byteLength(headerLine);
     }
     return file;
+  }
+
+  private closeCurrentStream(): string | undefined {
+    if (this.fd === null) {
+      return undefined;
+    }
+    const oldFd = this.fd;
+    const oldPath = this.currentPath ?? undefined;
+    this.fd = null;
+    fs.closeSync(oldFd);
+    return oldPath;
   }
 
   private rotateIfNeeded() {
@@ -66,12 +78,8 @@ export class RotatingWriter {
       this.policy.maxMinutes !== undefined &&
       now - this.startTs >= this.policy.maxMinutes * 60_000;
 
-    if (!this.stream || bySize || byTime) {
-      const oldStream = this.stream;
-      const oldPath = (oldStream && (oldStream as unknown as { path?: string }).path) as string | undefined;
-      if (oldStream) {
-        oldStream.end();
-      }
+    if (!this.fd || bySize || byTime) {
+      const oldPath = this.closeCurrentStream();
       const newPath = this.openNew();
       if (oldPath && this.policy.gzipOnRotate) {
         setImmediate(() => this.gzipFile(oldPath));
@@ -103,21 +111,19 @@ export class RotatingWriter {
 
   write(line: string) {
     this.rotateIfNeeded();
-    if (!this.stream) {
+    if (this.fd === null) {
       this.openNew();
     }
-    this.stream!.write(`${line}\n`);
-    this.bytes += Buffer.byteLength(line) + 1;
+    if (this.fd === null) {
+      return;
+    }
+    const chunk = `${line}\n`;
+    fs.writeSync(this.fd, chunk);
+    this.bytes += Buffer.byteLength(chunk);
   }
 
   close() {
-    if (!this.stream) {
-      return;
-    }
-    const oldStream = this.stream;
-    const oldPath = (oldStream as unknown as { path?: string }).path as string | undefined;
-    oldStream.end();
-    this.stream = null;
+    const oldPath = this.closeCurrentStream();
     if (oldPath && this.policy.gzipOnRotate) {
       this.gzipFile(oldPath);
     }
