@@ -1,4 +1,6 @@
-import type { Page, WaitUntilState } from 'playwright';
+import type { Page } from 'playwright';
+
+type WaitUntilState = 'load' | 'domcontentloaded' | 'networkidle' | 'commit';
 
 import { ENV } from './env.js';
 

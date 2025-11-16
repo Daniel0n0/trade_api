@@ -15,6 +15,10 @@ import { safeGoto } from '../../utils/navigation.js';
 import { installOptionsResponseRecorder, type OptionsRecorderHandle } from './interceptor.js';
 import { installOptionsOrdersRecorder, type OptionsOrdersRecorderHandle } from './orders-recorder.js';
 import {
+  installDiscoveryItemsRecorder,
+  type DiscoveryItemsRecorderHandle,
+} from '../discovery/discovery-items-recorder.js';
+import {
   assertParentMessage,
   sendToParent,
   type EndReason,
@@ -110,6 +114,7 @@ export async function runOptionsRunner(initialArgs: ModuleArgs): Promise<void> {
   let sniffer: SocketSnifferHandle | null = null;
   let optionsRecorder: OptionsRecorderHandle | null = null;
   let ordersRecorder: OptionsOrdersRecorderHandle | null = null;
+  let discoveryRecorder: DiscoveryItemsRecorderHandle | null = null;
   let shuttingDown = false;
   let exitResolver: (() => void) | null = null;
   let startPromise: Promise<void> | null = null;
@@ -275,6 +280,16 @@ export async function runOptionsRunner(initialArgs: ModuleArgs): Promise<void> {
         console.warn('[options-runner] No se pudo instalar el recorder de órdenes de opciones:', err);
       }
 
+      try {
+        discoveryRecorder = installDiscoveryItemsRecorder({
+          page: localPage,
+          symbol: symbols[0],
+        });
+      } catch (error) {
+        const err = toError(error);
+        console.warn('[options-runner] No se pudo instalar el recorder de discovery items:', err);
+      }
+
       sendStatus('navigating');
 
       try {
@@ -354,6 +369,13 @@ export async function runOptionsRunner(initialArgs: ModuleArgs): Promise<void> {
       console.warn('[options-runner] Error al cerrar el recorder de órdenes de opciones:', error);
     }
     ordersRecorder = null;
+
+    try {
+      await discoveryRecorder?.close();
+    } catch (error) {
+      console.warn('[options-runner] Error al cerrar el recorder de discovery items:', error);
+    }
+    discoveryRecorder = null;
 
     if (page) {
       try {
