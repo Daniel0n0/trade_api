@@ -114,6 +114,49 @@ describe('discovery items recorder', () => {
     assert.equal(rawContent.trim(), JSON.stringify(payload));
   });
 
+  it('preserves returned_all_items value even when it is not a boolean', async () => {
+    const timestampMs = Date.UTC(2024, 2, 10, 15, 0, 0);
+    const listId = 'list-non-bool';
+    const symbol = 'SPY';
+    const snapshotId = '1709996400000';
+    const payload = {
+      results: [],
+      returned_all_items: 'unknown',
+    } satisfies Record<string, unknown>;
+    const baseParams = {
+      rawText: JSON.stringify(payload),
+      listId,
+      ownerType: null,
+      symbol,
+      timestampMs,
+      status: 200,
+      url: `https://api.robinhood.com/discovery/lists/v2/${listId}/items/?owner_type=robinhood`,
+      querystring: 'owner_type=robinhood',
+      snapshotId,
+      requestMeta: { method: 'GET', headers: [] },
+    };
+
+    await persistDiscoveryItemsPayload({ ...baseParams, payload });
+
+    const summaryPath = path.join(
+      process.cwd(),
+      'data',
+      'stocks',
+      symbol,
+      '2024-03-10',
+      'discovery',
+      'lists',
+      listId,
+      'summary.json',
+    );
+
+    const summary = JSON.parse(await readFile(summaryPath, 'utf8'));
+    assert.deepEqual(summary, {
+      list_id: listId,
+      returned_all_items: 'unknown',
+    });
+  });
+
   it('crea raw/request_meta incluso si el JSON es inválido', async () => {
     const timestampMs = Date.UTC(2024, 5, 1, 0, 0, 0);
     const listId = 'list-invalid';
