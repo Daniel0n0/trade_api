@@ -7,7 +7,8 @@ import {
   FUTURES_FUNDAMENTALS_HEADER,
   FUTURES_MARKET_HOURS_HEADER,
   FUTURES_SNAPSHOT_HEADER,
-  FUTURES_TRADING_SESSIONS_HEADER,
+  FUTURES_TRADING_SESSIONS_DETAIL_HEADER,
+  FUTURES_TRADING_SESSIONS_SUMMARY_HEADER,
   normalizeFuturesBars,
   normalizeFuturesContracts,
   normalizeFuturesFundamentals,
@@ -288,18 +289,18 @@ describe('futures interceptor normalizers', () => {
     assert.equal(mesz25?.tradeable, 'FUTURES_TRADABILITY_TRADABLE');
   });
 
-  it('normalizes futures trading sessions data with multiple scopes', () => {
+  it('normalizes futures trading sessions data with detail and summary rows', () => {
     const payload = {
       date: '2025-11-10',
       futuresContractId: 'c4021dc3-bc5c-4252-a5b9-209572a1cb78',
       isHoliday: false,
-      startTime: '2025-11-09T21:55:00Z',
+      startTime: '2025-11-09T22:40:00Z',
       endTime: '2025-11-10T22:40:00Z',
       sessions: [
         {
           tradingDate: '2025-11-10',
           isTrading: false,
-          startTime: '2025-11-09T21:55:00Z',
+          startTime: '2025-11-09T22:40:00Z',
           endTime: '2025-11-09T23:00:00Z',
           sessionType: 'SESSION_TYPE_NO_TRADING',
         },
@@ -341,27 +342,56 @@ describe('futures interceptor normalizers', () => {
       },
     };
 
-    const rows = normalizeFuturesTradingSessions(payload, {
-      url: 'https://api.robinhood.com/arsenal/v1/futures/trading_sessions/c4021dc3-bc5c-4252-a5b9-209572a1cb78/2025-11-10',
-      fallbackSymbol: 'mesz25',
-    });
+    const originalNow = Date.now;
+    const mockNow = 1_700_000_000_000;
+    Date.now = () => mockNow;
+    const payloadUrl =
+      'https://api.robinhood.com/arsenal/v1/futures/trading_sessions/c4021dc3-bc5c-4252-a5b9-209572a1cb78/2025-11-10';
+    try {
+      const groups = normalizeFuturesTradingSessions(payload, {
+        url: payloadUrl,
+        fallbackSymbol: 'mesz25',
+      });
 
-    assert.equal(rows.length, 7);
-    const summary = rows.find((row) => row.sessionScope === 'summary');
-    assert.ok(summary);
-    assert.equal(summary?.dayDate, '2025-11-10T00:00:00.000Z');
-    assert.equal(summary?.dayStartsAt, '2025-11-09T21:55:00.000Z');
-    assert.equal(summary?.dayEndsAt, '2025-11-10T22:40:00.000Z');
-    assert.equal(summary?.dayIsHoliday, 'false');
-    assert.equal(summary?.startsAt, '2025-11-09T21:55:00.000Z');
-    assert.equal(summary?.endsAt, '2025-11-10T22:40:00.000Z');
-    const regularSession = rows.find((row) => row.sessionScope === 'sessions' && row.isTrading === 'true');
-    assert.ok(regularSession);
-    assert.equal(regularSession?.startsAt, '2025-11-09T23:00:00.000Z');
-    assert.equal(regularSession?.instrumentId, 'C4021DC3-BC5C-4252-A5B9-209572A1CB78');
-    const previous = rows.find((row) => row.sessionScope === 'previousSession');
-    assert.ok(previous);
-    assert.equal(previous?.tradingDate, '2025-11-07T00:00:00.000Z');
+      assert.equal(groups.length, 1);
+      const group = groups[0];
+      assert.equal(group.symbol, 'MESZ25');
+      assert.equal(group.detailRows.length, 3);
+      const detailRow = group.detailRows[0];
+      assert.equal(detailRow.ts, mockNow);
+      assert.equal(detailRow.contract_id, 'C4021DC3-BC5C-4252-A5B9-209572A1CB78');
+      assert.equal(detailRow.ref_date, '2025-11-10');
+      assert.equal(detailRow.trading_date, '2025-11-10');
+      assert.equal(detailRow.is_trading, 'false');
+      assert.equal(detailRow.duration_min, 20);
+      assert.equal(detailRow.start_ts, Date.parse('2025-11-09T22:40:00.000Z'));
+      assert.equal(detailRow.end_ts, Date.parse('2025-11-09T23:00:00.000Z'));
+      assert.equal(detailRow.start_local, '2025-11-09 17:40:00');
+      assert.equal(detailRow.source_url, payloadUrl);
+
+      const regular = group.detailRows.find((row) => row.session_type === 'REGULAR');
+      assert.ok(regular);
+      assert.equal(regular?.duration_min, 1380);
+      assert.equal(regular?.is_trading, 'true');
+
+      assert.equal(group.summaryRows.length, 1);
+      const summary = group.summaryRows[0];
+      assert.equal(summary.ts, mockNow);
+      assert.equal(summary.ref_date, '2025-11-10');
+      assert.equal(summary.contract_id, 'C4021DC3-BC5C-4252-A5B9-209572A1CB78');
+      assert.equal(summary.total_trading_min, 1380);
+      assert.equal(summary.total_break_min, 60);
+      assert.equal(summary.has_regular, 'true');
+      assert.equal(summary.day_start_ts, Date.parse('2025-11-09T22:40:00.000Z'));
+      assert.equal(summary.regular_start_ts, Date.parse('2025-11-09T23:00:00.000Z'));
+      assert.equal(summary.regular_end_ts, Date.parse('2025-11-10T22:00:00.000Z'));
+      assert.equal(summary.current_is_trading, 'true');
+      assert.equal(summary.previous_end_ts, Date.parse('2025-11-07T22:00:00.000Z'));
+      assert.equal(summary.next_start_ts, Date.parse('2025-11-10T23:00:00.000Z'));
+      assert.equal(summary.source_url, payloadUrl);
+    } finally {
+      Date.now = originalNow;
+    }
   });
 
   it('normalizes futures market hours data with extended fields', () => {

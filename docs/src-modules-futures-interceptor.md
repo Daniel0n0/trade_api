@@ -67,7 +67,9 @@ Captura las respuestas HTTP relacionadas con futuros que recibe Playwright, norm
   * `data/futures/<SYMBOL>/snapshots/futures-snapshots.csv`
   * `data/futures/<SYMBOL>/fundamentals/futures-fundamentals.csv`
   * `data/futures/<SYMBOL>/contracts/futures-contracts.csv`
-  * `data/futures/<SYMBOL>/sessions/futures-trading-sessions.csv`
+* `data/futures/<SYMBOL>/<YYYY-MM-DD>/sessions/futures-trading-sessions-detail.csv`
+* `data/futures/<SYMBOL>/<YYYY-MM-DD>/sessions/futures-trading-sessions-summary.csv`
+  *Las carpetas `<YYYY-MM-DD>` corresponden a `ref_date`, garantizando una carpeta por día guardado.*
   * `data/futures/<SYMBOL>/market-hours/futures-market-hours.csv`
   * `data/futures/GENERAL/overview/inbox-threads.jsonl`
 * **Depende de**:
