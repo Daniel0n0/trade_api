@@ -96,6 +96,7 @@ const formatRequestMeta = (
 
 const appendItems = async (filePath: string, payload: DiscoveryItemsPayload): Promise<void> => {
   if (!Array.isArray(payload.results) || payload.results.length === 0) {
+    await appendFile(filePath, '', 'utf8');
     return;
   }
   const content = payload.results.map((entry) => JSON.stringify(entry)).join('\n');

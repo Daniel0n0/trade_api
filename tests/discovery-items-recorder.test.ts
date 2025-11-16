@@ -157,6 +157,43 @@ describe('discovery items recorder', () => {
     });
   });
 
+  it('crea items.jsonl aunque la respuesta no tenga resultados', async () => {
+    const timestampMs = Date.UTC(2024, 7, 5, 9, 30, 0);
+    const listId = 'list-empty-results';
+    const symbol = 'SPY';
+    const snapshotId = '1722840600000';
+    const payload = { results: [] };
+    const baseParams = {
+      rawText: JSON.stringify(payload),
+      listId,
+      ownerType: 'robinhood',
+      symbol,
+      timestampMs,
+      status: 200,
+      url: `https://api.robinhood.com/discovery/lists/v2/${listId}/items/?owner_type=robinhood`,
+      querystring: 'owner_type=robinhood',
+      snapshotId,
+      requestMeta: { method: 'GET', headers: [] },
+    } as const;
+
+    await persistDiscoveryItemsPayload({ ...baseParams, payload });
+
+    const itemsPath = path.join(
+      process.cwd(),
+      'data',
+      'stocks',
+      symbol,
+      '2024-08-05',
+      'discovery',
+      'lists',
+      listId,
+      'items.jsonl',
+    );
+
+    const content = await readFile(itemsPath, 'utf8');
+    assert.equal(content, '');
+  });
+
   it('crea raw/request_meta incluso si el JSON es inválido', async () => {
     const timestampMs = Date.UTC(2024, 5, 1, 0, 0, 0);
     const listId = 'list-invalid';
