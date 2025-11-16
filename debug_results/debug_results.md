@@ -18,269 +18,371 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 25:
-¡Voy! Esta **petición** es de **históricos de futuros por contrato** (barras **5-min**):
-
-```
-GET /marketdata/futures/historicals/contracts/v1
-  ?ids=c4021dc3-bc5c-4252-a5b9-209572a1cb78
-  &interval=5minute
-  &start=2025-11-11T05:00:00.000Z
-```
+PUNTO 26:
+¡Perfecto, Amo! Vamos a integrar este **módulo de horarios de mercado** (XASE) en tu canal “vista general de futuros”.
 
 ---
 
-# 1) Estructura de la data (schema)
+# 1) Clasificación rápida
 
-### A. Raw (HTTP JSON)
+* **Origen/Transporte**: `http` (JSON)
+* **Dominio**: `market_hours`
+* **Exchange**: `XASE`
+* **Granularidad**: **diaria** (una fecha por payload)
+* **Uso**: sincronizar ventanas de trading, filtrar barras/quotes por “mercado abierto”, detectar **feriados**, **early/late close** y **extended hours**.
+
+---
+
+# 2) Esquema de la data
+
+### A. Raw (como llega)
 
 ```ts
-type FuturesHistoricalsRaw = {
-  status: 'SUCCESS' | string;
-  data: Array<{
-    status: 'SUCCESS' | string;
-    data: {
-      start_time: string;                // ISO UTC (inicio del rango servido)
-      end_time: string;                  // ISO UTC (fin del rango servido)
-      interval: '5minute' | '15minute' | 'hour' | 'day';
-      data_points: Array<{
-        begins_at: string;               // ISO UTC: apertura de la barra
-        open_price: string;              // número en string
-        close_price: string;
-        high_price: string;
-        low_price: string;
-        volume: number;
-        interpolated: boolean;           // true si es barra llenada (p.ej. pausa)
-        is_market_open: boolean;         // abierto según RH
-        contract_id: string;             // UUID del contrato
-      }>;
-      symbol: string;                    // '/MESZ25:XCME'
-      instrument_id: string;            // = contract_id
-    }
-  }>
+type MarketHoursRaw = {
+  date: string;                       // '2025-11-11' (día local del exchange)
+  is_open: boolean;                   // true/false para sesión regular
+  opens_at: string;                   // ISO UTC '2025-11-11T14:30:00Z'
+  closes_at: string;                  // ISO UTC '2025-11-11T21:00:00Z'
+
+  extended_opens_at: string | null;   // premarket start (UTC)
+  extended_closes_at: string | null;  // after-hours end (UTC)
+
+  late_option_closes_at?: string | null;
+  index_option_0dte_closes_at?: string | null;
+  index_option_non_0dte_closes_at?: string | null;
+
+  index_options_extended_hours?: {
+    curb_opens_at: string | null;     // “curb” (post 4:15pm ET) p/índices
+    curb_closes_at: string | null;
+  } | null;
+
+  all_day_opens_at?: string | null;   // ventana agregada “todo el día” (UTC)
+  all_day_closes_at?: string | null;
+
+  fx_opens_at?: string | null;
+  fx_closes_at?: string | null;
+  fx_is_open?: boolean | null;
+  fx_next_open_hours?: string | null; // ISO/UTC cuando vuelve a abrir FX
+
+  previous_open_hours?: string;       // URL Robinhood del día anterior
+  next_open_hours?: string;           // URL Robinhood del día siguiente
 }
 ```
 
-### B. Registro normalizado (una fila por barra)
+### B. Registro normalizado (Vista **diaria**)
+
+*(una fila por exchange/fecha)*
 
 ```ts
-type FuturesBar5mRow = {
-  ts: number;                            // epoch ms de ingestión
-  contract_id: string;                   // 'c4021d...'
-  symbol: string;                        // '/MESZ25:XCME'
-  interval: '5m';
+type MarketHoursDay = {
+  ts: number;                         // epoch ms de ingestión
+  exchange: string;                   // 'XASE'
+  date_local: string;                 // '2025-11-11' (America/New_York)
+  tz_exchange: 'America/New_York';
 
-  // tiempo de la barra
-  t_start_iso: string;                   // begins_at original (UTC)
-  t_start: number;                       // epoch ms (UTC)
-  t_end: number;                         // t_start + 5*60*1000
-  trading_date: string;                  // sesión por horario CME (NY): ver abajo
+  // Regular session
+  is_open: 0 | 1;
+  open_utc: string | null;
+  close_utc: string | null;
+  open_et: string | null;             // ISO con TZ 'ET'
+  close_et: string | null;
+  reg_minutes: number | null;         // duración en minutos (si aplica)
 
-  // OHLCV
-  o: number; h: number; l: number; c: number; v: number;
+  // Extended
+  ext_open_utc: string | null;
+  ext_close_utc: string | null;
+  ext_open_et: string | null;
+  ext_close_et: string | null;
+  ext_minutes: number | null;
 
-  // flags
-  interpolated: 0 | 1;
-  is_market_open: 0 | 1;
+  // Opciones (índices, late close)
+  late_opt_close_utc: string | null;
+  idx_opt_0dte_close_utc: string | null;
+  idx_opt_non0dte_close_utc: string | null;
+  curb_open_utc: string | null;
+  curb_close_utc: string | null;
 
-  // derivados inmediatos
-  hl2: number;                           // (h + l)/2
-  ohlc4: number;                         // (o+h+l+c)/4
-  change: number;                        // c - o
-  change_pct: number;                    // (c/o - 1)
-  range: number;                         // h - l
+  // All-day window (si viene)
+  all_day_open_utc: string | null;
+  all_day_close_utc: string | null;
 
-  // housekeeping
+  // FX window
+  fx_is_open: 0 | 1 | null;
+  fx_open_utc: string | null;
+  fx_close_utc: string | null;
+  fx_next_open_utc: string | null;
+
   source_url: string;
 };
 ```
 
-> **`trading_date` (clave)**: asigna la barra a la **sesión CME** del día **NY**:
-> sesión regular /MES ≈ **23:00–22:00 ET**. Para cada `t_start` en UTC ⇒ convértelo a **America/New_York** y mapea a la fecha de la sesión activa (usa el calendario que ya definimos con el endpoint de *trading_sessions*).
+### C. Registro normalizado (Vista **sesiones**)
+
+*(una fila por **tramo**: PRE, REG, POST, LATE_OPT, IDX_CURB, etc.)*
+
+```ts
+type MarketHoursSession = {
+  ts: number;
+  exchange: string;                   // 'XASE'
+  date_local: string;                 // día base del exchange
+  session_type: 'PRE' | 'REG' | 'POST' | 'LATE_OPT' | 'IDX_0DTE' | 'IDX_NON0DTE' | 'IDX_CURB' | 'ALL_DAY' | 'FX';
+  start_utc: string | null;
+  end_utc: string | null;
+  start_et: string | null;
+  end_et: string | null;
+  minutes: number | null;
+  is_open_flag: 0 | 1 | null;         // si aplica
+  source_url: string;
+};
+```
 
 ---
 
-# 2) Cómo recibirla
+# 3) Cómo recibirla
 
-* **Handler**: HTTP (pull).
-* **Headers**: como los que ya usas (con `authorization`, `x-timezone-id` opcional).
-* **Parsing**: `response.text()` → `safeJsonParse` → valida `status==='SUCCESS'`.
+* **Handler**: HTTP (pull programado diario + en apertura D-1 por cambios de feriado o DST).
+* **Parsing**: `response.text()` → `safeJsonParse`.
 * **Envelope**:
 
 ```ts
 const env: Envelope = {
   ts: Date.now(),
   transport: 'http',
-  source: '.../marketdata/futures/historicals/contracts/v1?...',
-  topic: 'futures.historicals',
-  symbol: '/MESZ25:XCME',
+  source: 'https://api.robinhood.com/markets/XASE/hours/2025-11-11/',
+  topic: 'market_hours',
   payload: json
 };
 ```
 
 ---
 
-# 3) Cómo procesarla
+# 4) Procesamiento (normalización y validaciones)
 
 ### A. Validaciones
 
-* `data[].data.interval === '5minute'`.
-* `symbol` y `instrument_id` presentes y consistentes con el `ids` solicitado.
-* `data_points` no vacío.
-* Para cada barra: `open<=high`, `low<=high`, `low<=open/close`, numéricos finitos.
-* Si `interpolated===true` ⇒ normalmente `volume===0` y `is_market_open===false` (permite excepciones pero márcalo).
+* `date` no vacío y formateable.
+* Si `is_open===true` ⇒ `opens_at` y `closes_at` deben existir y `opens_at < closes_at`.
+* Timestamps ISO válidos (UTC, terminados en `Z`).
+* Permitir `null` en campos opcionales (extended, fx, curb, etc.).
 
-### B. Normalización
+### B. Conversiones y derivados
 
-* Convierte **precios** a `number` (float) y **tiempos** a `epoch ms` (UTC).
-* Calcula `t_end = t_start + 5min`.
-* Derivados: `hl2`, `ohlc4`, `change`, `change_pct`, `range`.
-* **Trading date**:
+* **Zona horaria**: convierte cada `*_utc` a **ET** (`America/New_York`) → `*_et`.
+* **Duraciones** en minutos: `(end - start)/60_000`, `null` si no aplica.
+* **Sesiones**:
 
-  1. Convierte `t_start` a **NY**.
-  2. Usa la tabla de sesiones (que ingieres del otro endpoint) para asignar `trading_date` (la que cubre el tramo `t_start..t_end`).
-  3. Si cae en un bloque `NO_TRADING`, igualmente conserva la fila pero con `interpolated=1` (si vino así) o `is_market_open=0`.
+  * **PRE**: `extended_opens_at` → `opens_at` (si premarket antecede a la regular; en XASE: `extended_opens_at=12:00Z` ⇒ 7:00 ET).
+  * **REG**: `opens_at` → `closes_at`.
+  * **POST**: `closes_at` → `extended_closes_at`.
+  * **LATE_OPT**: `late_option_closes_at` (solo `end`; usa `closes_at` como `start`).
+  * **IDX_0DTE** / **IDX_NON0DTE**: ventanas de cierre diferenciado; start = `closes_at`, end = el respectivo `close`.
+  * **IDX_CURB**: `index_options_extended_hours.curb_opens_at` → `curb_closes_at`.
+  * **ALL_DAY**: si viene `all_day_*`.
+  * **FX**: `fx_opens_at` → `fx_closes_at` (si existen).
+* **Consistencia**: cualquier ventana con `start>=end` ⇒ descarta o marca `minutes=0` y log de advertencia.
 
-### C. Reglas de calidad / filtros
+### C. Salidas
 
-* **Mantener** barras `interpolated` para continuidad temporal (facilita indicadores); **marca** `interpolated=1`.
-* Si quieres una vista “operable”: puedes generar un **vista secundaria** filtrando `is_market_open=1 && v>0`.
-* **Deduplicación idempotente** por `(contract_id, t_start)`.
-
-### D. Agregados opcionales (útil para analítica)
-
-* **VWAP intrasesión** (acumulado por `trading_date`):
-
-  * `cum_pv += c * v`, `cum_v += v`, `vwap = cum_pv / max(1,cum_v)`.
-* **Indicadores livianos** (si te conviene en una salida aparte):
-
-  * `ema_20`, `rsi_14`, `atr_14` (sobre `c` y `h/l`).
-    *Recomiendo calcularlos en un job separado para no mezclar ingestión con cálculo pesado.*
+* **Vista diaria** (1 fila) y **vista sesiones** (N filas por tramos detectados).
+* **Idempotencia**: clave `(exchange, date_local, session_type, start_utc)`.
 
 ---
 
-# 4) ¿Se guarda? Sí, y en dos vistas
+# 5) ¿Se guarda? Sí
 
-### A. **Serie base 5m (todas las barras) – append**
-
-```
-data/futures/bars_5m/<CONTRACT_ID>/<YYYY>/<MM>/<TRADING_DATE>.csv
-```
-
-*Una carpeta por `contract_id` para evitar problemas con símbolos con `/` o `:`.*
-
-**Columnas (`bars_5m`)**
+### A. Diario (estado/ventanas del día)
 
 ```
-ts,contract_id,symbol,interval,t_start_iso,t_start,t_end,trading_date,
-o,h,l,c,v,interpolated,is_market_open,hl2,ohlc4,change,change_pct,range,source_url
+data/calendars/market_hours/<EXCHANGE>/<YYYY>/<MM>.csv
 ```
 
-### B. **Vista “operable” (solo abierto y con volumen) – append**
+* **Archivo mensual** por exchange; **append**/upsert por `date_local`.
+* **Columnas** = `MarketHoursDay` en orden:
 
 ```
-data/futures/bars_5m_live/<CONTRACT_ID>/<YYYY>/<MM>/<TRADING_DATE>.csv
+ts,exchange,date_local,tz_exchange,is_open,open_utc,close_utc,open_et,close_et,reg_minutes,
+ext_open_utc,ext_close_utc,ext_open_et,ext_close_et,ext_minutes,
+late_opt_close_utc,idx_opt_0dte_close_utc,idx_opt_non0dte_close_utc,
+curb_open_utc,curb_close_utc,all_day_open_utc,all_day_close_utc,
+fx_is_open,fx_open_utc,fx_close_utc,fx_next_open_utc,source_url
 ```
 
-**Columnas**: mismas que arriba **sin** `interpolated=1` y `v=0`.
-
-### C. **Crudo opcional** (auditoría)
+### B. Sesiones (una fila por tramo)
 
 ```
-data/_raw/futures_historicals/<CONTRACT_ID>/<YYYY-MM-DDTHH-mm-ssZ>.json
+data/calendars/market_hours_sessions/<EXCHANGE>/<YYYY>/<MM>/<YYYY-MM-DD>.csv
 ```
 
-*(redacta tokens/headers; guarda únicamente cuerpo y URL).*
+* **Columnas** = `MarketHoursSession`.
 
-### D. Reescritura / idempotencia
+### C. Crudo opcional (auditoría)
 
-* Al reingestar el mismo rango, reescribe el archivo de ese `TRADING_DATE` **o** deduplica por `(contract_id,t_start)` antes de `append`.
+```
+data/_raw/market_hours/XASE/2025-11/2025-11-11.json
+```
 
 ---
 
-# 5) Pseudocódigo de normalización (TypeScript)
+# 6) Pseudocódigo (TypeScript)
 
 ```ts
-function parseNum(s: string | number): number {
-  const n = typeof s === 'number' ? s : Number(s);
-  return Number.isFinite(n) ? n : NaN;
+function toET(isoUtc: string | null): string | null {
+  if (!isoUtc) return null;
+  // usar lib de TZ (luxon/dayjs-tz) para formatear a ET ISO
+  return toTimeZoneIso(isoUtc, 'America/New_York');
 }
 
-function toEpoch(iso: string): number { return Date.parse(iso); }
-
-function tradingDateFromUTC(isoUTC: string): string {
-  // 1) a NY; 2) mapear a sesión (23:00–22:00 ET) usando tu tabla de sessions
-  // fallback: si cae 22:00–23:00 ET => asigna al día siguiente
-  return resolveTradingDateBySessions(isoUTC, 'America/New_York');
+function minutesBetween(aIso: string | null, bIso: string | null): number | null {
+  if (!aIso || !bIso) return null;
+  return Math.max(0, (Date.parse(bIso) - Date.parse(aIso)) / 60000);
 }
 
-function normaliseFutures5m(env: Envelope): FuturesBar5mRow[] {
-  const out: FuturesBar5mRow[] = [];
-  const payload = env.payload as FuturesHistoricalsRaw;
-  for (const block of payload.data ?? []) {
-    const d = block.data;
-    const symbol = d.symbol;
-    const contract_id = d.instrument_id;
-    for (const p of d.data_points) {
-      const tStart = toEpoch(p.begins_at);
-      const o = parseNum(p.open_price);
-      const h = parseNum(p.high_price);
-      const l = parseNum(p.low_price);
-      const c = parseNum(p.close_price);
-      const v = p.volume ?? 0;
+function normaliseMarketHoursXASE(env: Envelope): {
+  day: MarketHoursDay,
+  sessions: MarketHoursSession[]
+} {
+  const r = env.payload as MarketHoursRaw;
+  const ex = 'XASE';
+  const day: MarketHoursDay = {
+    ts: env.ts,
+    exchange: ex,
+    date_local: r.date,
+    tz_exchange: 'America/New_York',
+    is_open: r.is_open ? 1 : 0,
 
-      if (![o,h,l,c].every(Number.isFinite)) continue; // descarta corruptas
+    open_utc: r.opens_at ?? null,
+    close_utc: r.closes_at ?? null,
+    open_et: toET(r.opens_at ?? null),
+    close_et: toET(r.closes_at ?? null),
+    reg_minutes: minutesBetween(r.opens_at ?? null, r.closes_at ?? null),
 
-      const row: FuturesBar5mRow = {
-        ts: env.ts,
-        contract_id,
-        symbol,
-        interval: '5m',
-        t_start_iso: p.begins_at,
-        t_start: tStart,
-        t_end: tStart + 5 * 60 * 1000,
-        trading_date: tradingDateFromUTC(p.begins_at),
+    ext_open_utc: r.extended_opens_at ?? null,
+    ext_close_utc: r.extended_closes_at ?? null,
+    ext_open_et: toET(r.extended_opens_at ?? null),
+    ext_close_et: toET(r.extended_closes_at ?? null),
+    ext_minutes: minutesBetween(r.extended_opens_at ?? null, r.extended_closes_at ?? null),
 
-        o, h, l, c, v,
-        interpolated: p.interpolated ? 1 : 0,
-        is_market_open: p.is_market_open ? 1 : 0,
+    late_opt_close_utc: r.late_option_closes_at ?? null,
+    idx_opt_0dte_close_utc: r.index_option_0dte_closes_at ?? null,
+    idx_opt_non0dte_close_utc: r.index_option_non_0dte_closes_at ?? null,
 
-        hl2: (h + l) / 2,
-        ohlc4: (o + h + l + c) / 4,
-        change: c - o,
-        change_pct: o ? (c / o - 1) : 0,
-        range: h - l,
+    curb_open_utc: r.index_options_extended_hours?.curb_opens_at ?? null,
+    curb_close_utc: r.index_options_extended_hours?.curb_closes_at ?? null,
 
-        source_url: env.source
-      };
-      out.push(row);
-    }
-  }
-  // dedup por (contract_id,t_start)
-  return dedupBy(out, r => `${r.contract_id}-${r.t_start}`);
+    all_day_open_utc: r.all_day_opens_at ?? null,
+    all_day_close_utc: r.all_day_closes_at ?? null,
+
+    fx_is_open: r.fx_is_open == null ? null : (r.fx_is_open ? 1 : 0),
+    fx_open_utc: r.fx_opens_at ?? null,
+    fx_close_utc: r.fx_closes_at ?? null,
+    fx_next_open_utc: r.fx_next_open_hours ?? null,
+
+    source_url: env.source
+  };
+
+  const S: MarketHoursSession[] = [];
+
+  // PRE
+  if (r.extended_opens_at && r.opens_at) S.push({
+    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'PRE',
+    start_utc: r.extended_opens_at, end_utc: r.opens_at,
+    start_et: toET(r.extended_opens_at), end_et: toET(r.opens_at),
+    minutes: minutesBetween(r.extended_opens_at, r.opens_at),
+    is_open_flag: 1, source_url: env.source
+  });
+
+  // REG
+  if (r.opens_at && r.closes_at) S.push({
+    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'REG',
+    start_utc: r.opens_at, end_utc: r.closes_at,
+    start_et: toET(r.opens_at), end_et: toET(r.closes_at),
+    minutes: minutesBetween(r.opens_at, r.closes_at),
+    is_open_flag: r.is_open ? 1 : 0, source_url: env.source
+  });
+
+  // POST
+  if (r.closes_at && r.extended_closes_at) S.push({
+    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'POST',
+    start_utc: r.closes_at, end_utc: r.extended_closes_at,
+    start_et: toET(r.closes_at), end_et: toET(r.extended_closes_at),
+    minutes: minutesBetween(r.closes_at, r.extended_closes_at),
+    is_open_flag: 1, source_url: env.source
+  });
+
+  // LATE_OPT
+  if (r.late_option_closes_at && r.closes_at) S.push({
+    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'LATE_OPT',
+    start_utc: r.closes_at, end_utc: r.late_option_closes_at,
+    start_et: toET(r.closes_at), end_et: toET(r.late_option_closes_at),
+    minutes: minutesBetween(r.closes_at, r.late_option_closes_at),
+    is_open_flag: 1, source_url: env.source
+  });
+
+  // IDX close windows
+  if (r.index_option_0dte_closes_at && r.closes_at) S.push({
+    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'IDX_0DTE',
+    start_utc: r.closes_at, end_utc: r.index_option_0dte_closes_at,
+    start_et: toET(r.closes_at), end_et: toET(r.index_option_0dte_closes_at),
+    minutes: minutesBetween(r.closes_at, r.index_option_0dte_closes_at),
+    is_open_flag: 1, source_url: env.source
+  });
+  if (r.index_option_non_0dte_closes_at && r.closes_at) S.push({
+    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'IDX_NON0DTE',
+    start_utc: r.closes_at, end_utc: r.index_option_non_0dte_closes_at,
+    start_et: toET(r.closes_at), end_et: toET(r.index_option_non_0dte_closes_at),
+    minutes: minutesBetween(r.closes_at, r.index_option_non_0dte_closes_at),
+    is_open_flag: 1, source_url: env.source
+  });
+
+  // IDX_CURB
+  if (r.index_options_extended_hours?.curb_opens_at && r.index_options_extended_hours?.curb_closes_at) S.push({
+    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'IDX_CURB',
+    start_utc: r.index_options_extended_hours.curb_opens_at,
+    end_utc: r.index_options_extended_hours.curb_closes_at,
+    start_et: toET(r.index_options_extended_hours.curb_opens_at),
+    end_et: toET(r.index_options_extended_hours.curb_closes_at),
+    minutes: minutesBetween(r.index_options_extended_hours.curb_opens_at, r.index_options_extended_hours.curb_closes_at),
+    is_open_flag: 1, source_url: env.source
+  });
+
+  // ALL_DAY
+  if (r.all_day_opens_at && r.all_day_closes_at) S.push({
+    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'ALL_DAY',
+    start_utc: r.all_day_opens_at, end_utc: r.all_day_closes_at,
+    start_et: toET(r.all_day_opens_at), end_et: toET(r.all_day_closes_at),
+    minutes: minutesBetween(r.all_day_opens_at, r.all_day_closes_at),
+    is_open_flag: 1, source_url: env.source
+  });
+
+  // FX
+  if (r.fx_opens_at && r.fx_closes_at) S.push({
+    ts: env.ts, exchange: ex, date_local: r.date, session_type: 'FX',
+    start_utc: r.fx_opens_at, end_utc: r.fx_closes_at,
+    start_et: toET(r.fx_opens_at), end_et: toET(r.fx_closes_at),
+    minutes: minutesBetween(r.fx_opens_at, r.fx_closes_at),
+    is_open_flag: r.fx_is_open == null ? null : (r.fx_is_open ? 1 : 0),
+    source_url: env.source
+  });
+
+  return { day, sessions: S };
 }
 ```
 
 ---
 
-# 6) Procesamiento recomendado (pipeline)
+# 7) Reglas de escritura
 
-1. **Ingesta HTTP** → Envelope.
-2. **Normalización** → `rows_5m`.
-3. **Split por `trading_date`** (según sesiones NY) y **append** en
-   `bars_5m/<CONTRACT_ID>/<YYYY>/<MM>/<TRADING_DATE>.csv`.
-4. **Genera vista operable** filtrando `is_market_open=1 && v>0`.
-5. (Opcional) **Job de indicadores** por sesión: `vwap`, `ema_20`, `rsi_14`, etc., a
-   `data/futures/indicators_5m/<CONTRACT_ID>/<YYYY>/<MM>/<TRADING_DATE>.csv`.
-6. **Logs**: cuenta de barras totales, interpoladas, y descartadas por validación.
+* **Crear** si no existe con encabezado; **append/upsert** por `date_local`.
+* **CSV UTF-8**, sin compresión (para lecturas rápidas).
+* **Tiempos**: conservar **UTC** y **ET**; ET facilita dashboards humanos.
+* **Reproceso**: si la hora cambia por *holiday update* o *DST patch*, sobrescribe la fila del día (o upsert por clave).
 
 ---
 
-# 7) Decisiones clave
+# 8) Por qué guardar
 
-* **Guardar siempre** estas barras (base de backtests/scalping y señales).
-* **Conservar “interpolated”** (0 volumen) para continuidad y detección de pausas; usar la **vista operable** para trading real.
-* **Particionar por `contract_id`** (UUID) para evitar problemas con `/` o `:` del símbolo.
-* **`trading_date` session-aware** (coincidirá con los horarios que ya definiste con el endpoint de *trading_sessions*).
+* Controlas **aperturas/cierres** y **ventanas especiales** (late/curb/extended).
+* Te permite **filtrar** barras/quotes en cálculos intradía y sincronizar **alertas** (no operar fuera de ventanas permitidas).
+* Maneja **anomalías** (early close/feriados) sin hardcode.
 
 ---
