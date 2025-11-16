@@ -18,177 +18,113 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 16:
-¡Perfecto, Amo! **Petición `marketdata/options` (20 IDs más) recibida y procesada.**
+PUNTO 20:
+¡Listo! Con los datos que trajiste de **/MESZ25** (Micro E-mini S&P 500, dic-25):
 
-### Qué haré con este lote
+* **Último**: 6,882.75
+* **Bid/Ask**: 6,882.75 / 6,883.00
+* **Multiplicador**: 5 USD por punto
+* **Vencimiento**: 19-dic-2025
+* **Tiempo a vencimiento (T)** ≈ 37 días ≈ **0.101 años**
 
-1. **Guardar crudo**
-   `data/options/SPY/marketdata/raw/md_options_response_<epoch_ms>.json`
+## Exposición y “greeks” lineales de un futuro (por 1 contrato)
 
-2. **Auditoría del request** (sin el `authorization`)
-   `data/options/SPY/marketdata/meta/request_md_options_<epoch_ms>.txt`
-   Incluye URL con los 20 IDs, método, `status=200`, `timestamp_utc`, headers útiles y `x-robinhood-md-num-instruments: 20`.
+> Los futuros no tienen vega/gamma/theta como una opción; su sensibilidad es lineal.
 
-3. **Normalizar & upsert (sobre el snapshot activo)**
+* **Notional** ≈ 6,882.75 × 5 = **$34,413.75**
+* **Delta (∂V/∂F)** = **+1** (lineal). En $: **$5 por cada 1 punto** del índice.
+  • Ej.: +1% en el ES (~68.83 pts) ⇒ **≈ $344**.
+* **Gamma** = **0**
+* **Theta** = **0**
+* **Vega** = **0**
+* **Rho (∂V/∂r)** ≈ *multiplier × F × T* por 1 unidad de tasa.
+  • Por **1 bp** (0.01%): 5 × 6,882.75 × 0.101 × 0.0001 ≈ **$0.35**
+  • Por **100 bp** (1%): ≈ **$34.5**
 
-* Parseo cada `result` con el mismo esquema (precios, greeks, IV, COP, volumen, OI, `updated_at`).
-* Upsert en `data/options/SPY/marketdata/normalized/options_md_latest.json`:
+> Interpretación: el contrato es casi pura exposición direccional al S&P 500 (beta ≈ 1). La sensibilidad a tasas es pequeña a este plazo.
 
-  * Si `instrument_id` existe → **reemplazo** usando el más reciente por `updated_at`.
-  * Si no existe → **agrego**.
-* Índices rápidos:
+## Compatibilidad con tus restricciones
 
-  * `index_by_instrument_id.json` y `index_by_occ.json`.
-* Copia histórica del snapshot:
-  `normalized/history/options_md_<epoch_ms>.json`.
+Con **$100 de capital** y **riesgo bajo/medio**, **NO** es operable abrir ni mantener futuros; el notional y los requerimientos de margen son muy superiores. Usa esto como **módulo educativo** y para *monitoreo* de riesgo, no para tomar posición.
 
-4. **Derivados inmediatos**
+## Señales/alertas útiles (educativo)
 
-* Calculo `mid = (bid+ask)/2`, `spread`, `relative_spread`, y **moneyness** (si ya tenemos el join con `options/instruments` y último spot de SPY).
-* Actualizo `normalized/derived_latest.json`.
+* **Nivel de invalidación intradía**: si /MES pierde **6,860** (−0.33%) tras apertura regular, sesgo bajista a corto plazo.
+* **Toma parcial**: +0.5% desde entrada (≈ +34 pts) si estuvieras simulado.
+* **Stop tiempo**: sin avance >0.3% en 90 min de RTH, cerrar simulación.
+* **Riesgo por punto**: fija mentalmente que cada 10 pts = **$50** por contrato.
 
-5. **Validaciones / banderas**
+## Snippet para tu módulo (TypeScript)
 
-* `symbol` debe ser `SPY` → si no, `mismatch_symbol:true`.
-* Campos numéricos inválidos → `null` + `parse_error_fields`.
-* Heurísticas útiles marcadas por opción:
+Pega esto junto al componente que ya construimos: calcula exposición y “greeks” lineales a partir del quote.
 
-  * `one_sided_market:true` si `bid=0` y `ask>0`.
-  * `sentinel_iv:true` para IVs “centinela” raras (p.ej., 0.000075 en puts ITM profundos).
-  * `cop_is_extreme:true` si `chance_of_profit_long ∈ {0,1}`.
+```ts
+type FuturesGreeks = {
+  notional: number;
+  delta_per_point: number;
+  gamma: number;
+  theta: number;
+  vega: number;
+  rho_per_bp: number; // $ por 1bp (0.01%) de tasa
+};
 
-6. **Consistencia con `options/instruments`**
-
-* Si algún `instrument_id` aún no está en caché de instruments, marco `needs_instrument_join:true` para completar el join en el siguiente paso.
-
----
-
-### Pistas rápidas que ya se ven en este lote (útiles para trading intradía)
-
-* **ATM calls 675–682** (vencen 2025-11-18) muestran **delta ~0.55–0.76** e **IV ~0.13–0.16**, spreads muy ajustados (buena calidad de cotización).
-* **Pares call/put del mismo strike** permiten vigilar **paridad put-call** y detectar desalineaciones breves (alerta si |mid_call − mid_put − (S−K·DF)| > umbral).
-* Volúmenes elevados en strikes **678–682**: candidatos para **scalps de gamma** si el spot oscila alrededor del strike.
-
-### Alertas que activo (sobre este snapshot)
-
-* **Spread% > 1.2× su media de 30 min** → posible iliquidez/rotura de book.
-* **Salto de IV > +2σ intradía** por strike → noticia/flujo inusual.
-* **COP extrema (≈0 o ≈1)** en OTM cercanos → riesgo de marcación “muerta”; evitar para entradas direccionales.
-* **Open interest ≫ volumen del día** y spread ancho → evitar fills pobres.
-
-**Nota de seguridad:** compartiste un `Bearer` en el ejemplo. Si ese token es real, te sugiero **rotarlo** por precaución.
-
----
-
-PUNTO 17:
-
-¡Listo, Amo! Ya tengo los **trading hours** para `XASE` del **2025-11-11** y te dejo el **módulo** para que la parte de *Greeks de futuros* sepa exactamente **cuándo** y **cómo** calcular/mostrar.
-
-## 1) Parsing y normalización (UTC → ET)
-
-Payload clave (UTC) → (ET, Nueva York; EST = UTC-5 en noviembre):
-
-* `opens_at`: 14:30Z → **09:30 ET**
-* `closes_at`: 21:00Z → **16:00 ET**
-* `late_option_closes_at`: 21:15Z → **16:15 ET**
-* `extended_opens_at`: 12:00Z → **07:00 ET**
-* `extended_closes_at`: 01:00Z (día sig.) → **20:00 ET** (del mismo día calendario ET)
-* `index_options_extended_hours.curb`: 21:15Z → 22:00Z → **16:15–17:00 ET**
-
-Guárdalo como:
-
-```json
-{
-  "market": "XASE",
-  "date": "2025-11-11",
-  "tz": "America/New_York",
-  "sessions": {
-    "premarket": ["07:00", "09:30"],
-    "regular":   ["09:30", "16:00"],
-    "late":      ["16:00", "16:15"],
-    "curb_idx":  ["16:15", "17:00"],
-    "extended":  ["07:00", "20:00"]
-  }
+export function calcFuturesLinears(
+  futuresPrice: number, // 6882.75
+  multiplier = 5,       // MES
+  T_years = 0.101       // ~37 días/365
+): FuturesGreeks {
+  const notional = futuresPrice * multiplier;
+  const delta_per_point = multiplier;       // $5 por punto
+  const gamma = 0;
+  const theta = 0;
+  const vega = 0;
+  const rho_per_bp = multiplier * futuresPrice * T_years * 0.0001;
+  return { notional, delta_per_point, gamma, theta, vega, rho_per_bp };
 }
+
+// Ejemplo con tu dato:
+const g = calcFuturesLinears(6882.75, 5, 0.101);
+// g.notional ≈ 34413.75, g.delta_per_point = 5, g.rho_per_bp ≈ 0.35
 ```
 
-> Nota: “extended” abarca todo el tramo 07:00–20:00; “late/curb_idx” son sub-tramos especiales de opciones índice.
+## Qué seguir (si solo estás observando)
 
-## 2) API del módulo (recomendación)
-
-Funciones puras y fáciles de testear:
-
-* `get_trading_phase(now_et) -> {"phase": premarket|regular|late|curb_idx|extended|closed, "is_open": bool}`
-* `is_order_routable(instrument_type, now_et) -> bool`
-
-  * Equity/ETF: premarket, regular, after (hasta 20:00)
-  * **Futuros y opciones sobre futuros**: usa su propio venue/calendario si difiere; si ruteas vía XASE para opciones índice, respeta `late` y `curb_idx`.
-* `next_transition(now_et) -> datetime_et`
-* `time_to_close(now_et) -> timedelta`
-
-## 3) Reglas de *Greeks* en función de la sesión
-
-Aunque el modelo (p.ej., Black-Scholes/Bjerksund) usa **tiempo continuo** (calendario), a nivel **UI y riesgo** conviene modular:
-
-**a) Reloj de theta (presentación)**
-
-* `T_calendar = (expiry_utc - now_utc)/365`
-* `theta_display`: en **regular/late/curb_idx** muestra la métrica en tiempo real.
-* En **premarket/extended** muéstrala, pero etiqueta `liquidity_warning=true` (spreads amplios → sensibilidad poco confiable).
-
-**b) Subyacente para FUTUROS**
-
-* En **cualquier fase**, el subyacente para opciones de futuros debe ser **el precio del futuro** (no el spot cash).
-* Si el *feed* de futuros está activo 23h, **actualiza greeks cada N=15–30s** fuera de regular, y cada **1–5s** en regular.
-
-**c) IV & spreads**
-
-* Si `bid=0` y `ask>0` → `one_sided_market=true` → fija `vega/theta` como **informativas** pero marca `confidence=low`.
-* Si `relative_spread > 3%` fuera de regular → `iv_confidence=low`.
-
-**d) Fronteras temporales críticas**
-
-* `16:00:00 ET`: recalcula referencias (close cash) y valida *snap* de greeks.
-* `16:15 ET` (`late_option_closes_at`): corta cotización de índice 0DTE y **congela** greeks de esas series.
-* `17:00 ET` fin `curb_idx`: desbloques y vuelve a modo extended normal si aplica.
-
-## 4) Señales/alertas automáticas (gammas y riesgo)
-
-* **Gamma-risk spike**: si `phase in {"regular","late","curb_idx"}` y `|S−K|/S < 0.2%` con `vega>p95` → alerta “ATM hot”.
-* **Decay cliff**: si `expiry` hoy y `time_to_close < 60 min` (según fase) → “theta-cliff”.
-* **IV jump**: `ΔIV > 2σ_rolling_30min` por strike → “IV shock” (posibles gaps de futuros/índice).
-* **Session switch**: notifica transición 5 min antes de cada cambio (p.ej., 15:55, 16:10, 16:55).
-
-## 5) Integración con tu *pipeline* actual
-
-* **Cache horario por día** en `cache/market_hours/XASE/2025-11-11.json` + *memoize* por fecha.
-* **Middleware** previo a cálculo de greeks:
-
-  1. `phase = get_trading_phase(now_et)`
-  2. selecciona **feed** adecuado (futuro vs cash).
-  3. ajusta *cadencia* de refresco: `regular=1–5s`, `late/curb=5–10s`, `extended=15–30s`.
-  4. setea *flags* UI: `liquidity_warning`, `one_sided_market`, `iv_confidence`.
-
-## 6) Validaciones y *edge cases*
-
-* Si el *venue* reporta `is_open=false` pero aún estás en `extended` (07:00–20:00), no bloquees lectura de cotizaciones; solo marca `routing=limited`.
-* Si `index_option_0dte_closes_at` difiere de `late_option_closes_at`, la **más estricta** domina para esas series.
-* Cruce de día UTC: recuerda que `extended_closes_at` 01:00Z ya es **20:00 ET del día en curso**.
+* **Microestructura**: ¿se estrecha el **Bid/Ask** por la noche? Liquidez > spreads más chicos → mejor calidad de ejecución.
+* **Calendario**: publicaciones macro (IPC, ventas minoristas, empleo) antes de RTH suelen mover el ES y elevar la oscilación intradía.
+* **Estructura a plazo**: si el **/MESZ25** cotiza con *contango* leve vs. spot, la exposición a tasas (rho) gana importancia (aunque pequeña en 1–2 meses).
 
 ---
 
-¿Te dejo un **helper** listo (pseudocódigo) para pegar?
 
-```python
-def classify_phase(now_et):
-    t = now_et.time()
-    if time(7,0)  <= t < time(9,30):  return "premarket"
-    if time(9,30) <= t < time(16,0):  return "regular"
-    if time(16,0) <= t < time(16,15): return "late"
-    if time(16,15)<= t < time(17,0):  return "curb_idx"
-    if time(17,0) <= t < time(20,0):  return "extended"
-    return "closed"
-```
+PUNTO 21:
+
+Listo. Te dejé en el canvas un componente React “MESZ25 • Futures Linears & Quote Panel” que:
+
+* Pide cotización en vivo del contrato `/MESZ25` cada 5 s (endpoint y headers como en tus trazas).
+* Muestra Bid/Ask/Last, sizes y hora de actualización.
+* Calcula lineares de futuros (Δ≈1, $/pt, notional) y **Rho por bp** usando (T) hasta el 19-Dic-2025.
+* Incluye controles para **invalidación**, **toma parcial (%)** y **stop por tiempo**, con objetivos derivados.
+* Estilado moderno (Tailwind) y animado (Framer Motion). Sin dependencias raras.
+
+Cómo usarlo rápido:
+
+1. Pasa tu `instrumentId = "c4021dc3-bc5c-4252-a5b9-209572a1cb78"`, `displaySymbol="/MESZ25"`, `multiplier={5}`, `expirationISO="2025-12-19"`.
+2. Inyecta tu `bearerToken` de forma segura (variable de entorno o desde el backend, **no** hardcodes).
+3. Monta `<MESGreeksCard … />` en tu página.
+
+---
+
+PUNTO 22:
+Listo. Te dejé un panel interactivo en el canvas:
+
+* Cotiza en vivo **/MESZ25** usando tu `instrumentId` real de Robinhood.
+* Muestra métricas lineales: **notional**, **$ por punto/tick** y **DV01 por 1bp** (usando tiempo a vencimiento).
+* Plan de trade “mentorizado”: dirección (LONG/SHORT), **entrada**, **invalidación**, parcial (%) y **stop por tiempo**; calcula **TP 1R/2R/3R** y riesgo en puntos y USD.
+* Spread en puntos y ticks, tamaños bid/ask y reloj de actualización.
+
+### Cómo usarlo con tu cuenta
+
+1. Si quieres que el fetch use tu sesión, pasa tu **Bearer** al prop `bearerToken` (o inyéctalo desde tu backend/variable de entorno segura).
+2. Puedes cambiar `instrumentId`, `displaySymbol`, `multiplier`, `tickSize` o `expirationISO` si deseas otro contrato.
 
 ---
