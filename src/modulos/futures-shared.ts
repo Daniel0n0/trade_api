@@ -134,7 +134,7 @@ export const rememberFuturesContractCodes = async (
     return { added: [], cache, path: CACHE_PATH };
   }
 
-  const nextCache = await writeCacheToDisk(known);
+  const nextCache = await writeCacheToDisk(Array.from(known));
   return { added: additions, cache: nextCache, path: CACHE_PATH };
 };
 

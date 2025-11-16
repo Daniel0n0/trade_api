@@ -1,7 +1,7 @@
-import { Command } from 'commander';
+import type { Command } from 'commander';
 
 import type { ProcessSnapshot } from '../../orchestrator/processManager.js';
-import { CommandContext } from './shared.js';
+import type { CommandContext } from './shared.js';
 
 function printStatus(json: boolean, snapshots: readonly ProcessSnapshot[]): void {
   if (json) {

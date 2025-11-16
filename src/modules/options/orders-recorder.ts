@@ -33,6 +33,18 @@ type GeneralLogEntry = Record<string, unknown> & { readonly kind: string };
 const ORDERS_ROTATE_POLICY = { maxBytes: 512_000, maxMinutes: 10, gzipOnRotate: true } as const;
 const RAW_FILE_PREFIX = 'options_orders_';
 
+let lastRawSnapshotTimestampMs = 0;
+
+const ensureUniqueRawSnapshotTimestamp = (): number => {
+  const now = Date.now();
+  if (now <= lastRawSnapshotTimestampMs) {
+    lastRawSnapshotTimestampMs += 1;
+    return lastRawSnapshotTimestampMs;
+  }
+  lastRawSnapshotTimestampMs = now;
+  return now;
+};
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
 
@@ -242,7 +254,7 @@ const persistOrdersPayload = async (
     return;
   }
 
-  const rawTimestamp = Date.now();
+  const rawTimestamp = ensureUniqueRawSnapshotTimestamp();
   const rawGroupsByPath = new Map<string, RawOrdersGroup>();
   const orderEntriesByPath = new Map<string, OrderEntry[]>();
   const legRowsByPath = new Map<string, LegsRow[]>();
@@ -441,7 +453,7 @@ const normalizeSymbol = (logPrefix?: string): string =>
 
 const createGeneralLogger = (logPrefix?: string) => {
   const symbol = normalizeSymbol(logPrefix);
-  const basePath = dataPath({ assetClass: 'general', symbol }, 'options-orders.jsonl');
+  const basePath = dataPath({ kind: 'app', segments: ['options', 'orders', symbol] }, 'options-orders.jsonl');
   const writer = new RotatingWriter(basePath, ORDERS_ROTATE_POLICY);
 
   const writeGeneral = (entry: GeneralLogEntry) => {
@@ -658,4 +670,7 @@ export const installOptionsOrdersRecorder = (
 
 export const __test__ = {
   persistOrdersPayload,
+  resetRawSnapshotTracker: () => {
+    lastRawSnapshotTimestampMs = 0;
+  },
 };

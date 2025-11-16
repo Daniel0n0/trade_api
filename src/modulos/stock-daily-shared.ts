@@ -17,7 +17,7 @@ import { normaliseFramePayload, safeJsonParse } from '../utils/payload.js';
 
 const JSON_MIME_PATTERN = /application\/json/i;
 const STATS_URL_HINT = /fundamental|stats|marketdata|phoenix|instruments|quote/i;
-const DORA_INSTRUMENT_FEED_HINT = 'dora\\.robinhood\\.com\\/(?:feed|feeds)\\/instrument(?:\\b|[:\\/?#]|$)';
+const DORA_INSTRUMENT_FEED_HINT = 'dora\\.robinhood\\.com/(?:feed|feeds)/instrument(?:\\b|[:/?#]|$)';
 
 const NEWS_URL_HINT = new RegExp(
   [
@@ -36,7 +36,7 @@ const NEWS_URL_HINT = new RegExp(
 );
 const DORA_HOST_PATTERN = /(^|\.)dora\.robinhood\.com$/i;
 const DORA_INSTRUMENT_FEED_INLINE_PATTERN = new RegExp(DORA_INSTRUMENT_FEED_HINT, 'i');
-const DORA_INSTRUMENT_PATH_PATTERN = /\/feeds?\/instrument(?=[:\/]|$|[?#])/i;
+const DORA_INSTRUMENT_PATH_PATTERN = /\/feeds?\/instrument(?=[:/]|$|[?#])/i;
 const ORDERBOOK_URL_HINT = /order[-_ ]?book|level2|depth|phoenix|marketdata|quotes/i;
 const GREEKS_URL_HINT = /options|greeks|chains|chain|marketdata|phoenix|legend/i;
 const STOCK_WS_PATTERN = /(legend|phoenix|stream|socket|ws)/i;
@@ -1179,6 +1179,10 @@ type NormalizedGreeksRecord = {
   readonly psi?: number;
 };
 
+type MutableNormalizedGreeksRecord = {
+  -readonly [K in keyof NormalizedGreeksRecord]: NormalizedGreeksRecord[K];
+};
+
 type GreeksFeature = {
   readonly result: { csvPath: string; jsonlPath: string };
   readonly shouldProcessUrl: (url: string) => boolean;
@@ -1210,6 +1214,17 @@ const GREEK_VALUE_ALIASES: Record<keyof NormalizedGreeksRecord, readonly string[
   phi: ['phi'],
   psi: ['psi'],
 };
+
+const NUMERIC_GREEK_KEYS = [
+  'impliedVolatility',
+  'delta',
+  'gamma',
+  'theta',
+  'vega',
+  'rho',
+  'phi',
+  'psi',
+] as const satisfies readonly (keyof NormalizedGreeksRecord)[];
 
 const pickNumberField = (record: Record<string, unknown>, keys: readonly string[]): number | undefined => {
   for (const key of keys) {
@@ -1272,20 +1287,12 @@ const normaliseInstrumentId = (record: Record<string, unknown>): string | undefi
   }
 };
 
-const extractGreekValues = (record: Record<string, unknown>): Partial<NormalizedGreeksRecord> => {
-  const values: Partial<NormalizedGreeksRecord> = {};
+const extractGreekValues = (
+  record: Record<string, unknown>,
+): Partial<MutableNormalizedGreeksRecord> => {
+  const values: Partial<MutableNormalizedGreeksRecord> = {};
   let matches = 0;
-  const numericKeys: (keyof NormalizedGreeksRecord)[] = [
-    'impliedVolatility',
-    'delta',
-    'gamma',
-    'theta',
-    'vega',
-    'rho',
-    'phi',
-    'psi',
-  ];
-  for (const key of numericKeys) {
+  for (const key of NUMERIC_GREEK_KEYS) {
     const aliases = GREEK_VALUE_ALIASES[key];
     const value = pickNumberField(record, aliases);
     if (value !== undefined) {
