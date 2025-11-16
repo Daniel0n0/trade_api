@@ -19,13 +19,6 @@ type WebSocketCreatedEvent = {
   readonly url?: string;
 };
 
-type WebSocketRequest = {
-  url?: string;
-  method?: string;
-  headers?: Record<string, string>;
-  // Add other properties from the actual CDP payload if needed
-};
-
 type WebSocketHandshakeEvent = {
   readonly requestId?: string;
   readonly request?: {

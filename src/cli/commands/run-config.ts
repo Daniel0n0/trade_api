@@ -1,12 +1,13 @@
 import path from 'node:path';
 
-import { Command } from 'commander';
+import type { Command } from 'commander';
 
 import { loadRunConfig } from '../../orchestrator/config.js';
 import type { ModuleArgsInput } from '../schema.js';
 import { deriveOutPrefix, mapEnvFallbacks, mergeArgChain, normalizeModuleArgs, parseSymbols } from '../normalize.js';
 import type { RunConfigJob } from '../../orchestrator/config.js';
-import { CommandContext, resolveEnv } from './shared.js';
+import { resolveEnv } from './shared.js';
+import type { CommandContext } from './shared.js';
 
 const DEFAULT_CONFIG = 'orchestrator.yaml';
 
