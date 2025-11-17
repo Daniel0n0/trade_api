@@ -18,345 +18,293 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 35:
+PUNTO 36:
 
-Perfecto, ahora sí, **ORDEN DEL MOMENTO aplicado a esta petición `/inbox/threads/`**.
-Voy a tratarla como la *primera* “petición recibida” del módulo.
-
----
-
-## 1. Qué es esta petición y para qué sirve
-
-**Endpoint:** `GET https://api.robinhood.com/inbox/threads/`
-**Dominio:** `notifications / inbox`
-**Función:** mensajes de:
-
-* fills de órdenes (acciones, opciones, cripto)
-* cancelaciones
-* expiración de opciones
-* depósitos / reversals
-* anuncios de IPO / ventanas para pedir acciones
-* avisos genéricos de la plataforma
-
-👉 **NO es la fuente principal de datos de mercado ni de órdenes**.
-Es un **log de eventos para el usuario**, útil como:
-
-* auditoría,
-* reconstrucción rápida de actividad,
-* detección de cosas graves (reversals, expiraciones, etc).
-
-Para greeks, stats y news de un símbolo (`SPY`, etc.) lo vamos a sacar de **otros endpoints** (quotes, options/marketdata, fundamentals, news), no de inbox. Este endpoint lo dejamos como **módulo auxiliar de notificaciones.**
+Perfecto, esta está buenísima porque define el **calendario de trading**, que luego tus otros módulos (quotes, opciones, órdenes) necesitan para saber si se puede operar o no.
 
 ---
 
-## 2. Esquema de la data (schema)
+## 1. Clasificación rápida
 
-### 2.1. Respuesta cruda (simplificada)
+* **Endpoint:** `GET /markets/XASE/hours/2025-11-13/`
+* **Transporte:** `http`
+* **Dominio:** `market_hours / calendar`
+* **Granularidad:** por **día** y por **mercado** (`XASE`)
+* **Uso dentro del proyecto:**
+
+  * Saber si el mercado está abierto ahora.
+  * Saber si estamos en **regular session / extended hours / FX / index options curb**.
+  * Evitar lanzar órdenes fuera de horario permitido.
+
+---
+
+## 2. Esquema de la respuesta (schema)
+
+Payload crudo:
 
 ```ts
-type InboxThreadsResponse = {
-  results: InboxThread[];
-  next: string | null;   // paginación
-};
+type MarketHoursResponse = {
+  date: string;                         // "2025-11-13"
+  is_open: boolean;                     // true | false
 
-type InboxThread = {
-  id: string;                 // "3275019698206418630"
-  pagination_id: string;      // "03275019698248361401"
-  display_name: string;       // "SPDR S&P 500 ETF" | "Bitcoin" | "Robinhood" | ...
-  short_display_name: string; // "SPY" | "BTC" | "R" | ...
-  is_read: boolean;
-  is_critical: boolean;
-  is_muted: boolean;
-  preview_text: {
-    text: string;             // resumen corto
-    attributes: unknown | null;
-  };
-  most_recent_message: InboxMessage;
-  last_message_sent_at: string;  // ISO "2025-11-11T14:52:09.856995Z"
-  avatar_url: string | null;
-  entity_url: string | null;     // ej. robinhood://instrument?id=...
-  avatar_color: string;          // "#0B972E"
-  options: {
-    allows_free_text: boolean;
-    has_settings: boolean;
-  };
-};
+  opens_at: string;                     // "2025-11-13T14:30:00Z"  (regular open)
+  closes_at: string;                    // "2025-11-13T21:00:00Z"  (regular close)
 
-type InboxMessage = {
-  id: string;
-  thread_id: string;
-  response_message_id: string | null;
-  message_type_config_id: string | null;
-  message_config_id: string;
-  sender: {
-    id: string;
-    display_name: string;
-    short_display_name: string;
-    is_bot: boolean;
-    avatar_url: string;
+  late_option_closes_at: string | null; // "2025-11-13T21:15:00Z"
+
+  extended_opens_at: string | null;     // "2025-11-13T12:00:00Z"
+  extended_closes_at: string | null;    // "2025-11-14T01:00:00Z"
+
+  all_day_opens_at: string | null;      // "2025-11-13T01:00:00Z"
+  all_day_closes_at: string | null;     // "2025-11-14T01:00:00Z"
+
+  previous_open_hours: string | null;   // url
+  next_open_hours: string | null;       // url
+
+  index_option_0dte_closes_at: string | null;      // "2025-11-13T21:00:00Z"
+  index_option_non_0dte_closes_at: string | null;  // "2025-11-13T21:15:00Z"
+
+  index_options_extended_hours?: {
+    curb_opens_at: string | null;       // "2025-11-13T21:15:00Z"
+    curb_closes_at: string | null;      // "2025-11-13T22:00:00Z"
   };
-  is_metadata: boolean;
-  rich_text: {
-    text: string;              // cuerpo completo
-    attributes: unknown | null;
-  };
-  action: {
-    value: string;
-    display_text: string;
-    url: string;               // deeplink: robinhood://orders?id=...&type=option
-  } | null;
-  media: unknown | null;
-  remote_medias: unknown[];
-  responses: {
-    display_text: string;
-    answer: string;
-  }[];
-  created_at: string;          // ISO
-  updated_at: string;          // ISO
+
+  fx_opens_at: string | null;           // "2025-11-12T22:00:00Z"
+  fx_closes_at: string | null;          // "2025-11-13T22:00:00Z"
+  fx_is_open: boolean;
+
+  fx_next_open_hours: string | null;    // "2025-11-13T22:00:00Z"
 };
 ```
 
 ---
 
-## 3. Cómo recibirla
+## 3. Cómo recibirla (handler → Envelope)
 
-### Transporte
-
-* **Transporte:** `http`
-* **Método:** `GET`
-* **Auth:** `Authorization: Bearer <token>` (⚠️ nunca loguear el token, ni guardarlo en disco)
-
-### Handler recomendado
+La envolvemos en tu `Envelope` estándar, pero aquí no hay `symbol`, sino **market**.
 
 ```ts
-async function fetchInboxThreads(client: HttpClient): Promise<Envelope[]> {
-  const url = 'https://api.robinhood.com/inbox/threads/';
-  const text = await client.getText(url);           // ya con headers, auth, etc.
-  const json = safeJsonParse<InboxThreadsResponse>(text);
+type MarketHoursEnvelope = Envelope & {
+  market: string;  // ej. "XASE"
+};
 
-  const ts = Date.now();
-  return json.results.map(thread => ({
-    ts,
+async function fetchMarketHours(
+  client: HttpClient,
+  market: string,
+  date: string,
+): Promise<MarketHoursEnvelope> {
+  const url = `https://api.robinhood.com/markets/${market}/hours/${date}/`;
+  const text = await client.getText(url);
+  const json = safeJsonParse<MarketHoursResponse>(text);
+
+  return {
+    ts: Date.now(),
     transport: 'http',
     source: url,
-    topic: 'inbox_threads',
-    symbol: thread.short_display_name || undefined,  // ej. "SPY", "BTC", etc.
-    payload: thread,
-  }));
+    topic: 'market_hours',
+    symbol: undefined,
+    payload: json,
+    market,
+  };
 }
 ```
-
-*Cada `thread` se convierte en un `Envelope`.*
 
 ---
 
-## 4. Cómo procesarla (normalización)
+## 4. Normalización y procesamiento
 
-Aquí lo importante es:
+### 4.1. Conversión de fechas
 
-1. **Extraer un símbolo “lógico” cuando exista**, normalmente `short_display_name`:
+Todas las fechas vienen en ISO UTC → conviene pasar a **epoch ms** y tener **flag de sesión** listo para que el engine pregunte “¿estoy dentro del horario X?”.
 
-   * SPDR S&P 500 ETF → `SPY`
-   * Invesco QQQ → `QQQ`
-   * S&P 500 Index → `SPX`
-   * Bitcoin → `BTC`
-   * etc.
-2. Clasificar el tipo de evento (fill, cancelación, IPO, reversal, expiración, info).
-3. Sacar un registro plano que puedas guardar en CSV o en una tabla.
-
-### 4.1. Detección de tipo de evento
-
-Parses por **patrones en `preview_text.text` o `rich_text.text`**:
-
-* Contiene `"was filled for"` → `order_fill`
-* Contiene `"was filled at an average price"` → `order_fill`
-* Contiene `"was canceled"` → `order_canceled`
-* Contiene `"expired"` → `option_expired`
-* Contiene `"has been reversed"` → `bank_reversal`
-* Contiene `"plans to go public"` → `ipo_announcement`
-* Contiene `"finalized its price"` & `"request for IPO shares"` → `ipo_window_open`
-* Contiene `"could not be filled"` → `ipo_not_allocated` o `request_not_filled`
-
-Puedes hacer algo tipo:
+Creamos una fila plana:
 
 ```ts
-type InboxEventKind =
-  | 'order_fill'
-  | 'order_canceled'
-  | 'option_expired'
-  | 'bank_reversal'
-  | 'ipo_announcement'
-  | 'ipo_window_open'
-  | 'ipo_not_allocated'
-  | 'generic';
+type MarketHoursRow = {
+  market: string;       // "XASE"
+  date: string;         // "2025-11-13"
 
-function inferEventKind(text: string): InboxEventKind {
-  const t = text.toLowerCase();
+  is_open: boolean;
 
-  if (t.includes('was filled for') || t.includes('has been filled')) return 'order_fill';
-  if (t.includes('was canceled') || t.includes("you've canceled your order")) return 'order_canceled';
-  if (t.includes('option') && t.includes('expired')) return 'option_expired';
-  if (t.includes('has been reversed')) return 'bank_reversal';
-  if (t.includes('plans to go public')) return 'ipo_announcement';
-  if (t.includes('finalized its price') && t.includes('request for initial public offering')) {
-    return 'ipo_window_open';
-  }
-  if (t.includes('could not be filled') && t.includes('ipo shares')) return 'ipo_not_allocated';
+  opens_at: number | null;
+  closes_at: number | null;
 
-  return 'generic';
-}
-```
+  late_option_closes_at: number | null;
 
-### 4.2. Normalización a fila plana
+  extended_opens_at: number | null;
+  extended_closes_at: number | null;
 
-**Tabla lógica:** `inbox_events`
+  all_day_opens_at: number | null;
+  all_day_closes_at: number | null;
 
-```ts
-type InboxEventRow = {
-  timestamp: number;          // most_recent_message.created_at (ms)
-  thread_id: string;
-  message_id: string;
-  symbol: string | null;      // short_display_name
-  display_name: string;
-  short_display_name: string;
-  event_kind: InboxEventKind;
-  is_read: boolean;
-  is_critical: boolean;
-  preview_text: string;
-  body: string;
-  action_text: string | null;
-  action_url: string | null;
-  entity_url: string | null;
-  last_message_sent_at: number;  // epoch ms
+  index_option_0dte_closes_at: number | null;
+  index_option_non_0dte_closes_at: number | null;
+
+  index_curb_opens_at: number | null;
+  index_curb_closes_at: number | null;
+
+  fx_is_open: boolean;
+  fx_opens_at: number | null;
+  fx_closes_at: number | null;
+  fx_next_open_hours: number | null;
+
+  previous_open_hours_url: string | null;
+  next_open_hours_url: string | null;
+
+  fetched_ts: number;            // cuándo lo leímos
   source_transport: 'http';
   source_url: string;
 };
 ```
 
-Normalizador:
+Helper para parsear:
 
 ```ts
-function normaliseInboxThread(env: Envelope): InboxEventRow {
-  const thread = env.payload as InboxThread;
-  const msg = thread.most_recent_message;
-  const text = msg.rich_text?.text || thread.preview_text?.text || '';
+const toMs = (s: string | null | undefined): number | null =>
+  s ? Date.parse(s) : null;
 
-  const tsMsg = Date.parse(msg.created_at);
-  const tsLast = Date.parse(thread.last_message_sent_at);
+function normaliseMarketHours(env: MarketHoursEnvelope): MarketHoursRow {
+  const h = env.payload as MarketHoursResponse;
 
   return {
-    timestamp: tsMsg,
-    thread_id: thread.id,
-    message_id: msg.id,
-    symbol: thread.short_display_name || null,
-    display_name: thread.display_name,
-    short_display_name: thread.short_display_name,
-    event_kind: inferEventKind(text || thread.preview_text.text),
-    is_read: thread.is_read,
-    is_critical: thread.is_critical,
-    preview_text: thread.preview_text?.text || '',
-    body: text,
-    action_text: msg.action?.display_text || null,
-    action_url: msg.action?.url || null,
-    entity_url: thread.entity_url,
-    last_message_sent_at: tsLast,
+    market: env.market,
+    date: h.date,
+    is_open: h.is_open,
+
+    opens_at: toMs(h.opens_at),
+    closes_at: toMs(h.closes_at),
+
+    late_option_closes_at: toMs(h.late_option_closes_at),
+
+    extended_opens_at: toMs(h.extended_opens_at),
+    extended_closes_at: toMs(h.extended_closes_at),
+
+    all_day_opens_at: toMs(h.all_day_opens_at),
+    all_day_closes_at: toMs(h.all_day_closes_at),
+
+    index_option_0dte_closes_at: toMs(h.index_option_0dte_closes_at),
+    index_option_non_0dte_closes_at: toMs(h.index_option_non_0dte_closes_at),
+
+    index_curb_opens_at: toMs(h.index_options_extended_hours?.curb_opens_at),
+    index_curb_closes_at: toMs(h.index_options_extended_hours?.curb_closes_at),
+
+    fx_is_open: h.fx_is_open,
+    fx_opens_at: toMs(h.fx_opens_at),
+    fx_closes_at: toMs(h.fx_closes_at),
+    fx_next_open_hours: toMs(h.fx_next_open_hours),
+
+    previous_open_hours_url: h.previous_open_hours,
+    next_open_hours_url: h.next_open_hours,
+
+    fetched_ts: env.ts,
     source_transport: env.transport,
     source_url: env.source,
   };
 }
 ```
 
----
+Con esto, en tiempo real puedes preguntar:
 
-## 5. ¿Se guarda o no? ¿Y cómo?
+```ts
+function isWithinRegularHours(row: MarketHoursRow, nowMs: number): boolean {
+  if (!row.is_open || row.opens_at == null || row.closes_at == null) return false;
+  return nowMs >= row.opens_at && nowMs <= row.closes_at;
+}
 
-### 5.1. ¿Conviene guardarlo?
-
-* **Sí**, pero **no como fuente de mercado**, sino como:
-
-  * log de actividad del usuario,
-  * señal de **eventos críticos** que afectan capital (reversal, expiraciones, fills),
-  * auditoría / debugging del sistema frente a lo que Robinhood confirma.
-
-**No usar este endpoint como substituto del API de órdenes u opciones**.
-Las fills y estados de órdenes deberías sacarlos de `/orders/` y endpoints específicos.
-
-### 5.2. Dónde y formato
-
-Yo lo pondría fuera de `data/stock/...` porque mezcla muchos símbolos.
-
-Propuesta:
-
-* Carpeta general de eventos de plataforma:
-
-  * `data/system/inbox_events/YYYY-MM-DD.csv`
-* Y opcional un crudo en JSONL:
-
-  * `data/_raw/inbox/YYYY-MM-DD.jsonl` (cada línea un `InboxThread` completo).
-
-#### `data/system/inbox_events/2025-11-12.csv`
-
-Columnas:
-
-```csv
-timestamp,thread_id,message_id,symbol,display_name,short_display_name,event_kind,is_read,is_critical,preview_text,body,action_text,action_url,entity_url,last_message_sent_at,source_transport,source_url
+function isWithinExtendedHours(row: MarketHoursRow, nowMs: number): boolean {
+  if (row.extended_opens_at == null || row.extended_closes_at == null) return false;
+  return nowMs >= row.extended_opens_at && nowMs <= row.extended_closes_at;
+}
 ```
 
-Regla:
-
-* **Append** por cada hilo (thread) recibido.
-* Si quieres evitar duplicados, puedes:
-
-  * o bien upsert en una base de datos (SQLite / Postgres),
-  * o bien poner una clave `thread_id + message_id` en una tabla relacional y usar CSV sólo como backup.
-
-#### Crudo (`_raw`)
-
-`data/_raw/inbox/2025-11-12.jsonl`
-
-* Cada línea: el `Envelope` completo o el `InboxThread` tal cual viene de Robinhood.
-* Útil para debugging cuando cambien el formato.
+Eso lo usarán tus módulos de **órdenes**, **estrategias**, etc., para saber si se permite operar.
 
 ---
 
-## 6. Integración con el resto del proyecto `trade_api`
+## 5. ¿Se guarda o no? y ¿cómo?
 
-Aunque este endpoint no da greeks ni stats, **sí se conecta** con tus otros módulos:
+### ¿Conviene guardarlo?
 
-* Cuando recibes un `order_fill` de, por ejemplo, `SPY $679 Put 11/11`:
+**Sí.** Razones:
 
-  * Puedes usarlo para marcar en tu propio log de órdenes que Robinhood confirmó el fill.
-* Cuando llega un `bank_reversal`:
+* No cambia mucho, pero:
 
-  * Puedes ajustar tu **registro interno de buying power / cash** en tu sistema (aunque el dato oficial viene de account/banking).
-* IPO:
+  * Hay días especiales (festivos, cierre temprano, etc.).
+  * Te sirve para backtesting (“¿esta vela es rara porque el día tuvo horario parcial?”).
+* Es poco volumen: 1 registro por día / mercado.
 
-  * Puedes construir un **historial de oportunidades de IPO** (qué se ofreció, cuándo tuviste ventana, si te asignaron o no).
+### Dónde y estructura de archivos
+
+Yo lo separaría por **mercado**:
+
+* Carpeta raíz de horarios:
+
+  * `data/system/market_hours/`
+* Dentro, por mercado:
+
+  * `data/system/market_hours/XASE/2025.csv`
+  * (y en 2026 → `XASE/2026.csv`, etc)
+
+#### Formato CSV
+
+`data/system/market_hours/XASE/2025.csv`:
+
+```csv
+date,market,is_open,opens_at,closes_at,late_option_closes_at,extended_opens_at,extended_closes_at,all_day_opens_at,all_day_closes_at,index_option_0dte_closes_at,index_option_non_0dte_closes_at,index_curb_opens_at,index_curb_closes_at,fx_is_open,fx_opens_at,fx_closes_at,fx_next_open_hours,previous_open_hours_url,next_open_hours_url,fetched_ts,source_transport,source_url
+```
+
+Cada fila = **un día**.
+
+Regla de escritura:
+
+* Si ya existe fila para `date + market`, puedes:
+
+  * o hacer **upsert** en una base de datos,
+  * o sobre-escribir el CSV completo si lo regeneras por rango,
+  * o manejarlo como “append pero luego deduplicas” en ETL.
+
+Dado que este endpoint lo puedes consultar “on demand”, también podrías:
+
+* Guardar un **cache en memoria**,
+* Y persistirlo sólo en CSV de vez en cuando (o cuando haya un festivo / cambio).
 
 ---
 
-## 7. Resumen corto de lo que haría con ESTA petición
+## 6. Integración con el resto de módulos
 
-1. **Recibir** la respuesta HTTP, parsear JSON → `InboxThreadsResponse`.
-2. Por cada `results[i]`:
+Este módulo de `market_hours` sirve como **servicio base** para el resto:
 
-   * meterlo en un `Envelope` con `topic = 'inbox_threads'`.
-3. **Normalizar** a `InboxEventRow`:
+* **Módulo de orders:**
 
-   * `symbol = short_display_name`,
-   * `event_kind` por patrones en `preview_text/body`,
-   * timestamps a epoch ms.
+  * Antes de enviar una orden de acciones / opciones:
+
+    * Chequea `isWithinRegularHours` o `isWithinExtendedHours`.
+* **Módulo de options:**
+
+  * Usa `late_option_closes_at`, `index_option_*` y `index_curb_*` para saber hasta cuándo puedes cerrar posiciones de índice / 0DTE.
+* **Módulo de estrategias intradía:**
+
+  * Evita abrir nuevas posiciones en los últimos X minutos antes del cierre (`closes_at`).
+* **Backtesting:**
+
+  * Saber si una vela está en premarket, regular, postmarket, o fuera de sesión.
+
+---
+
+## 7. Resumen para esta petición concreta
+
+Para `GET /markets/XASE/hours/2025-11-13/`:
+
+1. **Recibir** vía HTTP, parsear JSON a `MarketHoursResponse`.
+2. Envolverlo en `MarketHoursEnvelope` con `market = "XASE"`.
+3. **Normalizar** a `MarketHoursRow`:
+
+   * convertir todos los `*_at` a `epoch ms`,
+   * conservar URLs de `previous/next`.
 4. **Guardar**:
 
-   * CSV diario en `data/system/inbox_events/YYYY-MM-DD.csv`,
-   * opcional `_raw` en JSONL para debugging.
-5. **Usar** estos eventos sólo como:
-
-   * capa de auditoría y alertas,
-   * **no** como fuente primaria de datos de mercado / greeks.
-
-Cuando me pases la siguiente petición (por ejemplo, el endpoint donde realmente llegan **greeks / statistics / news del módulo de SPY**), la tratamos igual:
-te devuelvo el schema, normalización a filas (stats, greeks, news), y dónde guardarlas dentro de `data/stock/SPY/...`.
-
+   * CSV en `data/system/market_hours/XASE/2025.csv` (1 fila por día),
+   * opcionalmente nada en `_raw` porque el payload es muy simple.
+5. Usarlo como **única fuente de verdad de horarios de ese mercado** dentro de tu proyecto.
 
 ---
