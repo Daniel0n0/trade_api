@@ -71,7 +71,7 @@ Captura las respuestas HTTP relacionadas con futuros que recibe Playwright, norm
 * `data/futures/<SYMBOL>/<YYYY-MM-DD>/sessions/futures-trading-sessions-summary.csv`
   *Las carpetas `<YYYY-MM-DD>` corresponden a `ref_date`, garantizando una carpeta por día guardado.*
   * `data/futures/<SYMBOL>/market-hours/futures-market-hours.csv`
-  * `data/futures/GENERAL/overview/inbox-threads.jsonl`
+  * `data/_raw/inbox/<YYYY-MM-DD>.jsonl`
 * **Depende de**:
   * `src/io/csvWriter.ts` (`getCsvWriter`).
   * `src/io/paths.ts` (`dataPath`, sanitización de segmentos).
@@ -88,7 +88,7 @@ Captura las respuestas HTTP relacionadas con futuros que recibe Playwright, norm
 * **Salidas**:
   * CSVs incrementales (cabecera única) escritos por símbolo.
   * Evento `onDiscoveredSymbols` con símbolos nuevos detectados.
-  * JSONL en `inbox-threads.jsonl` cuando el payload no es parseable.
+  * JSONL diario en `_raw/inbox/<fecha>.jsonl` para snapshots de `inbox/threads`.
 
 ## 8) Errores conocidos & manejo
 
