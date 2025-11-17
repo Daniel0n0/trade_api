@@ -1,65 +1,38 @@
 import path from 'node:path';
 import { writeFile } from 'node:fs/promises';
 
-import { DateTime } from 'luxon';
-
-import { ensureDirectory, ensureDirectoryForFileSync } from '../../io/dir.js';
+import { ensureDirectoryForFileSync } from '../../io/dir.js';
 import { upsertCsv, type CsvRowInput } from '../../io/upsertCsv.js';
 
 const EXCHANGE_CODE = 'XASE' as const;
-const EXCHANGE_TZ = 'America/New_York' as const;
 
-export const MARKET_HOURS_DAY_HEADER = [
-  'ts',
-  'exchange',
-  'date_local',
-  'tz_exchange',
+export const MARKET_HOURS_HEADER = [
+  'date',
+  'market',
   'is_open',
-  'open_utc',
-  'close_utc',
-  'open_et',
-  'close_et',
-  'reg_minutes',
-  'ext_open_utc',
-  'ext_close_utc',
-  'ext_open_et',
-  'ext_close_et',
-  'ext_minutes',
-  'late_opt_close_utc',
-  'idx_opt_0dte_close_utc',
-  'idx_opt_non0dte_close_utc',
-  'curb_open_utc',
-  'curb_close_utc',
-  'all_day_open_utc',
-  'all_day_close_utc',
+  'opens_at',
+  'closes_at',
+  'late_option_closes_at',
+  'extended_opens_at',
+  'extended_closes_at',
+  'all_day_opens_at',
+  'all_day_closes_at',
+  'index_option_0dte_closes_at',
+  'index_option_non_0dte_closes_at',
+  'index_curb_opens_at',
+  'index_curb_closes_at',
   'fx_is_open',
-  'fx_open_utc',
-  'fx_close_utc',
-  'fx_next_open_utc',
+  'fx_opens_at',
+  'fx_closes_at',
+  'fx_next_open_hours',
+  'previous_open_hours_url',
+  'next_open_hours_url',
+  'fetched_ts',
+  'source_transport',
   'source_url',
 ] as const;
 
-export const MARKET_HOURS_SESSION_HEADER = [
-  'ts',
-  'exchange',
-  'date_local',
-  'session_type',
-  'start_utc',
-  'end_utc',
-  'start_et',
-  'end_et',
-  'minutes',
-  'is_open_flag',
-  'source_url',
-] as const;
-
-export type MarketHoursDayRow = CsvRowInput<typeof MARKET_HOURS_DAY_HEADER>;
-export type MarketHoursSessionRow = CsvRowInput<typeof MARKET_HOURS_SESSION_HEADER>;
-
-export type NormalizedMarketHours = {
-  readonly day: MarketHoursDayRow;
-  readonly sessions: MarketHoursSessionRow[];
-};
+export type MarketHoursRow = CsvRowInput<typeof MARKET_HOURS_HEADER>;
 
 type FetchLike = typeof fetch;
 
@@ -78,6 +51,7 @@ type SyncMarketHoursOptions = {
 type NormalizeEnv = {
   readonly ts?: number;
   readonly source?: string;
+  readonly transport?: string;
 };
 
 type MaybeRecord = Record<string, unknown> | undefined;
@@ -87,18 +61,20 @@ type MarketHoursRaw = {
   readonly is_open?: unknown;
   readonly opens_at?: unknown;
   readonly closes_at?: unknown;
+  readonly late_option_closes_at?: unknown;
   readonly extended_opens_at?: unknown;
   readonly extended_closes_at?: unknown;
-  readonly late_option_closes_at?: unknown;
+  readonly all_day_opens_at?: unknown;
+  readonly all_day_closes_at?: unknown;
   readonly index_option_0dte_closes_at?: unknown;
   readonly index_option_non_0dte_closes_at?: unknown;
   readonly index_options_extended_hours?: MaybeRecord;
-  readonly all_day_opens_at?: unknown;
-  readonly all_day_closes_at?: unknown;
+  readonly fx_is_open?: unknown;
   readonly fx_opens_at?: unknown;
   readonly fx_closes_at?: unknown;
   readonly fx_next_open_hours?: unknown;
-  readonly fx_is_open?: unknown;
+  readonly previous_open_hours?: unknown;
+  readonly next_open_hours?: unknown;
 };
 
 const toStringValue = (value: unknown): string | undefined => {
@@ -118,18 +94,6 @@ const toStringValue = (value: unknown): string | undefined => {
   return undefined;
 };
 
-const toIsoUtc = (value: unknown): string | null => {
-  const candidate = toStringValue(value);
-  if (!candidate) {
-    return null;
-  }
-  const parsed = DateTime.fromISO(candidate, { zone: 'utc' });
-  if (!parsed.isValid) {
-    return null;
-  }
-  return parsed.toUTC().toISO();
-};
-
 const toDateOnly = (value: unknown): string | null => {
   const candidate = toStringValue(value);
   if (!candidate) {
@@ -138,11 +102,20 @@ const toDateOnly = (value: unknown): string | null => {
   if (/^\d{4}-\d{2}-\d{2}$/.test(candidate)) {
     return candidate;
   }
-  const parsed = DateTime.fromISO(candidate, { zone: 'utc' });
-  if (!parsed.isValid) {
+  const parsed = Date.parse(candidate);
+  if (Number.isNaN(parsed)) {
     return null;
   }
-  return parsed.toISODate();
+  return new Date(parsed).toISOString().slice(0, 10);
+};
+
+const toMs = (value: unknown): number | null => {
+  const candidate = toStringValue(value);
+  if (!candidate) {
+    return null;
+  }
+  const parsed = Date.parse(candidate);
+  return Number.isFinite(parsed) ? parsed : null;
 };
 
 const toBoolean = (value: unknown): boolean | undefined => {
@@ -157,53 +130,14 @@ const toBoolean = (value: unknown): boolean | undefined => {
     if (!normalized) {
       return undefined;
     }
-    if (normalized === 'true' || normalized === '1' || normalized === 'yes') {
+    if (['true', '1', 'yes'].includes(normalized)) {
       return true;
     }
-    if (normalized === 'false' || normalized === '0' || normalized === 'no') {
+    if (['false', '0', 'no'].includes(normalized)) {
       return false;
     }
   }
   return undefined;
-};
-
-const flagFromBoolean = (value: unknown): 0 | 1 | null => {
-  const bool = toBoolean(value);
-  if (bool === undefined) {
-    return null;
-  }
-  return bool ? 1 : 0;
-};
-
-const toEtIso = (isoUtc: string | null): string | null => {
-  if (!isoUtc) {
-    return null;
-  }
-  try {
-    const parsed = DateTime.fromISO(isoUtc, { zone: 'utc' });
-    if (!parsed.isValid) {
-      return null;
-    }
-    return parsed.setZone(EXCHANGE_TZ).toISO();
-  } catch {
-    return null;
-  }
-};
-
-const minutesBetween = (startIso: string | null, endIso: string | null): number | null => {
-  if (!startIso || !endIso) {
-    return null;
-  }
-  const start = Date.parse(startIso);
-  const end = Date.parse(endIso);
-  if (Number.isNaN(start) || Number.isNaN(end)) {
-    return null;
-  }
-  const diff = end - start;
-  if (!Number.isFinite(diff)) {
-    return null;
-  }
-  return Math.max(0, diff / 60_000);
 };
 
 const ensureRecord = (payload: unknown): MaybeRecord => {
@@ -226,36 +160,21 @@ const ensureRecord = (payload: unknown): MaybeRecord => {
   return record;
 };
 
-const buildSessionRow = (
-  type: string,
-  date: string,
-  startUtc: string | null,
-  endUtc: string | null,
-  isOpenFlag: 0 | 1 | null,
-  env: NormalizeEnv,
-): MarketHoursSessionRow | null => {
-  if (!startUtc || !endUtc) {
-    return null;
+export const isWithinRegularHours = (row: MarketHoursRow, nowMs: number): boolean => {
+  if (row.is_open !== true || row.opens_at == null || row.closes_at == null) {
+    return false;
   }
-  return {
-    ts: env.ts ?? Date.now(),
-    exchange: EXCHANGE_CODE,
-    date_local: date,
-    session_type: type,
-    start_utc: startUtc,
-    end_utc: endUtc,
-    start_et: toEtIso(startUtc),
-    end_et: toEtIso(endUtc),
-    minutes: minutesBetween(startUtc, endUtc),
-    is_open_flag: isOpenFlag,
-    source_url: env.source,
-  };
+  return nowMs >= row.opens_at && nowMs <= row.closes_at;
 };
 
-export function normalizeMarketHoursXase(
-  payload: unknown,
-  env: NormalizeEnv,
-): NormalizedMarketHours | undefined {
+export const isWithinExtendedHours = (row: MarketHoursRow, nowMs: number): boolean => {
+  if (row.extended_opens_at == null || row.extended_closes_at == null) {
+    return false;
+  }
+  return nowMs >= row.extended_opens_at && nowMs <= row.extended_closes_at;
+};
+
+export function normalizeMarketHoursXase(payload: unknown, env: NormalizeEnv): MarketHoursRow | undefined {
   const record = ensureRecord(payload) as MarketHoursRaw | undefined;
   if (!record) {
     return undefined;
@@ -266,75 +185,33 @@ export function normalizeMarketHoursXase(
     return undefined;
   }
 
-  const opensAt = toIsoUtc(record.opens_at);
-  const closesAt = toIsoUtc(record.closes_at);
-  const extendedOpensAt = toIsoUtc(record.extended_opens_at);
-  const extendedClosesAt = toIsoUtc(record.extended_closes_at);
-  const lateOptionClosesAt = toIsoUtc(record.late_option_closes_at);
-  const idx0dteClose = toIsoUtc(record.index_option_0dte_closes_at);
-  const idxNon0dteClose = toIsoUtc(record.index_option_non_0dte_closes_at);
-  const curbOpensAt = toIsoUtc(record.index_options_extended_hours?.curb_opens_at);
-  const curbClosesAt = toIsoUtc(record.index_options_extended_hours?.curb_closes_at);
-  const allDayOpensAt = toIsoUtc(record.all_day_opens_at);
-  const allDayClosesAt = toIsoUtc(record.all_day_closes_at);
-  const fxOpensAt = toIsoUtc(record.fx_opens_at);
-  const fxClosesAt = toIsoUtc(record.fx_closes_at);
-  const fxNextOpen = toIsoUtc(record.fx_next_open_hours);
-
-  const day: MarketHoursDayRow = {
-    ts: env.ts ?? Date.now(),
-    exchange: EXCHANGE_CODE,
-    date_local: date,
-    tz_exchange: EXCHANGE_TZ,
-    is_open: flagFromBoolean(record.is_open),
-    open_utc: opensAt,
-    close_utc: closesAt,
-    open_et: toEtIso(opensAt),
-    close_et: toEtIso(closesAt),
-    reg_minutes: minutesBetween(opensAt, closesAt),
-    ext_open_utc: extendedOpensAt,
-    ext_close_utc: extendedClosesAt,
-    ext_open_et: toEtIso(extendedOpensAt),
-    ext_close_et: toEtIso(extendedClosesAt),
-    ext_minutes: minutesBetween(extendedOpensAt, extendedClosesAt),
-    late_opt_close_utc: lateOptionClosesAt,
-    idx_opt_0dte_close_utc: idx0dteClose,
-    idx_opt_non0dte_close_utc: idxNon0dteClose,
-    curb_open_utc: curbOpensAt,
-    curb_close_utc: curbClosesAt,
-    all_day_open_utc: allDayOpensAt,
-    all_day_close_utc: allDayClosesAt,
-    fx_is_open: flagFromBoolean(record.fx_is_open),
-    fx_open_utc: fxOpensAt,
-    fx_close_utc: fxClosesAt,
-    fx_next_open_utc: fxNextOpen,
+  const row: MarketHoursRow = {
+    date,
+    market: EXCHANGE_CODE,
+    is_open: toBoolean(record.is_open),
+    opens_at: toMs(record.opens_at),
+    closes_at: toMs(record.closes_at),
+    late_option_closes_at: toMs(record.late_option_closes_at),
+    extended_opens_at: toMs(record.extended_opens_at),
+    extended_closes_at: toMs(record.extended_closes_at),
+    all_day_opens_at: toMs(record.all_day_opens_at),
+    all_day_closes_at: toMs(record.all_day_closes_at),
+    index_option_0dte_closes_at: toMs(record.index_option_0dte_closes_at),
+    index_option_non_0dte_closes_at: toMs(record.index_option_non_0dte_closes_at),
+    index_curb_opens_at: toMs(record.index_options_extended_hours?.curb_opens_at),
+    index_curb_closes_at: toMs(record.index_options_extended_hours?.curb_closes_at),
+    fx_is_open: toBoolean(record.fx_is_open),
+    fx_opens_at: toMs(record.fx_opens_at),
+    fx_closes_at: toMs(record.fx_closes_at),
+    fx_next_open_hours: toMs(record.fx_next_open_hours),
+    previous_open_hours_url: toStringValue(record.previous_open_hours),
+    next_open_hours_url: toStringValue(record.next_open_hours),
+    fetched_ts: env.ts ?? Date.now(),
+    source_transport: env.transport ?? 'http',
     source_url: env.source,
   };
 
-  const sessions: MarketHoursSessionRow[] = [];
-  const addSession = (
-    type: string,
-    start: string | null,
-    end: string | null,
-    isOpenFlag: 0 | 1 | null,
-  ): void => {
-    const row = buildSessionRow(type, date, start, end, isOpenFlag, env);
-    if (row) {
-      sessions.push(row);
-    }
-  };
-
-  addSession('PRE', extendedOpensAt, opensAt, 1);
-  addSession('REG', opensAt, closesAt, flagFromBoolean(record.is_open));
-  addSession('POST', closesAt, extendedClosesAt, 1);
-  addSession('LATE_OPT', closesAt, lateOptionClosesAt, 1);
-  addSession('IDX_0DTE', closesAt, idx0dteClose, 1);
-  addSession('IDX_NON0DTE', closesAt, idxNon0dteClose, 1);
-  addSession('IDX_CURB', curbOpensAt, curbClosesAt, 1);
-  addSession('ALL_DAY', allDayOpensAt, allDayClosesAt, 1);
-  addSession('FX', fxOpensAt, fxClosesAt, flagFromBoolean(record.fx_is_open));
-
-  return { day, sessions };
+  return row;
 }
 
 const sanitizeDateInput = (value: string | undefined): string => {
@@ -343,52 +220,22 @@ const sanitizeDateInput = (value: string | undefined): string => {
     if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
       return trimmed;
     }
-    const parsed = DateTime.fromISO(trimmed, { zone: EXCHANGE_TZ });
-    if (parsed.isValid) {
-      return parsed.toISODate();
+    const parsed = Date.parse(trimmed);
+    if (!Number.isNaN(parsed)) {
+      return new Date(parsed).toISOString().slice(0, 10);
     }
   }
-  return DateTime.now().setZone(EXCHANGE_TZ).toISODate();
+  return new Date().toISOString().slice(0, 10);
 };
 
-const persistNormalized = async (
-  normalized: NormalizedMarketHours,
-  rawPayload: unknown,
-  baseDir?: string,
-): Promise<void> => {
-  const date = normalized.day.date_local;
-  const exchange = (normalized.day.exchange as string | undefined)?.trim() || EXCHANGE_CODE;
-  if (!date) {
-    return;
-  }
-  const [year, month] = date.split('-');
+const persistNormalized = async (row: MarketHoursRow, rawPayload: unknown, baseDir?: string): Promise<void> => {
+  const [year] = row.date.split('-');
   const base = baseDir ?? process.cwd();
+  const csvFile = path.join(base, 'data', 'system', 'market_hours', row.market ?? EXCHANGE_CODE, `${year}.csv`);
 
-  const dayFile = path.join(base, 'data', 'calendars', 'market_hours', exchange, year, `${month}.csv`);
-  await upsertCsv(dayFile, MARKET_HOURS_DAY_HEADER, [normalized.day], (row) => row.date_local ?? '');
+  await upsertCsv(csvFile, MARKET_HOURS_HEADER, [row], (r) => `${r.date}-${r.market}`);
 
-  if (normalized.sessions.length > 0) {
-    const sessionFile = path.join(
-      base,
-      'data',
-      'calendars',
-      'market_hours_sessions',
-      exchange,
-      year,
-      month,
-      `${date}.csv`,
-    );
-    await upsertCsv(
-      sessionFile,
-      MARKET_HOURS_SESSION_HEADER,
-      normalized.sessions,
-      (row) => `${row.session_type ?? ''}|${row.start_utc ?? ''}`,
-    );
-  }
-
-  const rawDir = path.join(base, 'data', '_raw', 'market_hours', exchange, `${year}-${month}`);
-  await ensureDirectory(rawDir);
-  const rawFile = path.join(rawDir, `${date}.json`);
+  const rawFile = path.join(base, 'data', 'system', 'market_hours', '_raw', row.market ?? EXCHANGE_CODE, `${row.date}.json`);
   ensureDirectoryForFileSync(rawFile);
   await writeFile(rawFile, `${JSON.stringify(rawPayload, null, 2)}\n`, 'utf8');
 };
@@ -405,9 +252,7 @@ export async function syncMarketHoursXase(options: SyncMarketHoursOptions = {}):
 
   let response: FetchResponse;
   try {
-    response = (await fetchFn(url, {
-      headers: { Accept: 'application/json' },
-    })) as FetchResponse;
+    response = (await fetchFn(url, { headers: { Accept: 'application/json' } })) as FetchResponse;
   } catch (error) {
     console.warn('[market-hours:xase] Error al solicitar horarios de mercado:', error);
     return;
@@ -426,7 +271,12 @@ export async function syncMarketHoursXase(options: SyncMarketHoursOptions = {}):
     return;
   }
 
-  const normalized = normalizeMarketHoursXase(payload, { ts: Date.now(), source: url });
+  const normalized = normalizeMarketHoursXase(payload, {
+    ts: Date.now(),
+    source: url,
+    transport: 'http',
+  });
+
   if (!normalized) {
     console.warn('[market-hours:xase] Payload sin datos de horario válidos, se omite.');
     return;
