@@ -18,183 +18,307 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 36:
+PUNTO 37:
+Nice, ahora sí estamos entrando al corazón de la “metadata” del instrumento 🔧
 
-Perfecto, esta está buenísima porque define el **calendario de trading**, que luego tus otros módulos (quotes, opciones, órdenes) necesitan para saber si se puede operar o no.
+Esta petición es **clave** porque es la que te da el **instrument_id** de SPY y todo lo que Robinhood sabe está referenciado a ese `id`.
 
 ---
 
 ## 1. Clasificación rápida
 
-* **Endpoint:** `GET /markets/XASE/hours/2025-11-13/`
+* **Endpoint:** `GET /instruments/?active_instruments_only=false&symbol=SPY`
 * **Transporte:** `http`
-* **Dominio:** `market_hours / calendar`
-* **Granularidad:** por **día** y por **mercado** (`XASE`)
-* **Uso dentro del proyecto:**
+* **Dominio:** `instrument_metadata`
+* **Cardinalidad:** `results[]` (en este caso 1 solo instrumento)
+* **Uso principal en tu proyecto:**
 
-  * Saber si el mercado está abierto ahora.
-  * Saber si estamos en **regular session / extended hours / FX / index options curb**.
-  * Evitar lanzar órdenes fuera de horario permitido.
+  * Resolver `symbol → instrument_id`.
+  * Saber si se puede operar (tradable, shortable, fractional, extended, etc).
+  * Saber en qué **market** está (para encajar con `/markets/.../hours/...`).
+  * Parametrizar riesgo: márgenes, day_trade_ratio, etc.
+
+⚠️ Nota rápida de seguridad: no vuelvas a compartir tokens `Bearer` reales en texto plano (como el de este fetch); en tu código real deben ir en config segura / variables de entorno.
 
 ---
 
-## 2. Esquema de la respuesta (schema)
+## 2. Esquema de la respuesta (schema crudo)
 
-Payload crudo:
+La respuesta:
+
+```json
+{
+  "next": null,
+  "previous": null,
+  "results": [ { ...instrumento... } ]
+}
+```
+
+Schema del objeto en `results[0]`:
 
 ```ts
-type MarketHoursResponse = {
-  date: string;                         // "2025-11-13"
-  is_open: boolean;                     // true | false
+type InstrumentResponse = {
+  id: string;                 // "8f92e76f-1e0e-4478-8580-16a6ffcfaef5"
+  url: string;                // https://api.robinhood.com/instruments/<id>/
+  quote: string;              // https://api.robinhood.com/quotes/SPY/
+  fundamentals: string;       // https://api.robinhood.com/fundamentals/SPY/
+  splits: string;             // https://api.robinhood.com/instruments/<id>/splits/
+  state: 'active' | string;   // estado del instrumento
 
-  opens_at: string;                     // "2025-11-13T14:30:00Z"  (regular open)
-  closes_at: string;                    // "2025-11-13T21:00:00Z"  (regular close)
+  market: string;             // url de market, ej: https://api.robinhood.com/markets/ARCX/
+  simple_name: string | null; // "SPDR S&P 500 ETF"
+  name: string | null;        // "SPDR S&P 500 ETF Trust"
+  tradeable: boolean;
+  tradability: string;        // "tradable" | "untradable" | etc.
 
-  late_option_closes_at: string | null; // "2025-11-13T21:15:00Z"
+  symbol: string;             // "SPY"
+  bloomberg_unique: string | null;
 
-  extended_opens_at: string | null;     // "2025-11-13T12:00:00Z"
-  extended_closes_at: string | null;    // "2025-11-14T01:00:00Z"
+  margin_initial_ratio: string;   // "0.5000"
+  maintenance_ratio: string;      // "0.2500"
+  country: string;                // "US"
+  day_trade_ratio: string;        // "0.2500"
+  list_date: string | null;       // "1993-01-29"
+  min_tick_size: string | null;
 
-  all_day_opens_at: string | null;      // "2025-11-13T01:00:00Z"
-  all_day_closes_at: string | null;     // "2025-11-14T01:00:00Z"
+  type: string;                   // "etp" (ETF)
+  tradable_chain_id: string | null;
 
-  previous_open_hours: string | null;   // url
-  next_open_hours: string | null;       // url
+  rhs_tradability: string;
+  affiliate_tradability: string;
+  fractional_tradability: string; // "tradable" / "untradable"
+  short_selling_tradability: string;
 
-  index_option_0dte_closes_at: string | null;      // "2025-11-13T21:00:00Z"
-  index_option_non_0dte_closes_at: string | null;  // "2025-11-13T21:15:00Z"
+  default_collar_fraction: string; // "0.05"
 
-  index_options_extended_hours?: {
-    curb_opens_at: string | null;       // "2025-11-13T21:15:00Z"
-    curb_closes_at: string | null;      // "2025-11-13T22:00:00Z"
-  };
+  ipo_access_status: string | null;
+  ipo_access_cob_deadline: string | null;
+  ipo_s1_url: string | null;
+  ipo_roadshow_url: string | null;
 
-  fx_opens_at: string | null;           // "2025-11-12T22:00:00Z"
-  fx_closes_at: string | null;          // "2025-11-13T22:00:00Z"
-  fx_is_open: boolean;
+  is_spac: boolean;
+  is_test: boolean;
+  ipo_access_supports_dsp: boolean;
 
-  fx_next_open_hours: string | null;    // "2025-11-13T22:00:00Z"
+  extended_hours_fractional_tradability: boolean;
+
+  internal_halt_reason: string;
+  internal_halt_details: string;
+  internal_halt_sessions: string | null;
+  internal_halt_start_time: string | null;
+  internal_halt_end_time: string | null;
+  internal_halt_source: string;
+
+  all_day_tradability: string;
+
+  notional_estimated_quantity_decimals: number;
+  tax_security_type: string;     // "etf"
+  reserved_buying_power_percent_queued: string;    // "0.10000000"
+  reserved_buying_power_percent_immediate: string; // "0.05000000"
+  otc_market_tier: string;
+  car_required: boolean;
+  high_risk_maintenance_ratio: string;
+  low_risk_maintenance_ratio: string;
+  default_preset_percent_limit: string;            // "0.02"
+  affiliate: string;                               // "rhf"
+
+  account_type_tradabilities: Array<{
+    account_type: string;               // "individual"
+    account_type_tradability: string;   // "tradable"
+  }>;
+
+  issuer_type: string;                  // "third_party"
+};
+```
+
+Wrapper de la página:
+
+```ts
+type InstrumentsPage = {
+  next: string | null;
+  previous: string | null;
+  results: InstrumentResponse[];
 };
 ```
 
 ---
 
-## 3. Cómo recibirla (handler → Envelope)
+## 3. Cómo recibirla (Envelope)
 
-La envolvemos en tu `Envelope` estándar, pero aquí no hay `symbol`, sino **market**.
+Reutilizando tu envoltura estándar:
 
 ```ts
-type MarketHoursEnvelope = Envelope & {
-  market: string;  // ej. "XASE"
+type InstrumentEnvelope = Envelope & {
+  symbol: string;   // "SPY" (del query, lo pones tú)
 };
+```
 
-async function fetchMarketHours(
+Handler:
+
+```ts
+async function fetchInstrumentBySymbol(
   client: HttpClient,
-  market: string,
-  date: string,
-): Promise<MarketHoursEnvelope> {
-  const url = `https://api.robinhood.com/markets/${market}/hours/${date}/`;
+  symbol: string
+): Promise<InstrumentEnvelope> {
+  const url = `https://api.robinhood.com/instruments/?active_instruments_only=false&symbol=${encodeURIComponent(symbol)}`;
   const text = await client.getText(url);
-  const json = safeJsonParse<MarketHoursResponse>(text);
+  const page = safeJsonParse<InstrumentsPage>(text);
+
+  if (!page.results.length) {
+    throw new Error(`Instrument not found for symbol=${symbol}`);
+  }
 
   return {
     ts: Date.now(),
     transport: 'http',
     source: url,
-    topic: 'market_hours',
-    symbol: undefined,
-    payload: json,
-    market,
+    topic: 'instrument',
+    symbol,
+    payload: page,
   };
 }
 ```
 
 ---
 
-## 4. Normalización y procesamiento
+## 4. Normalización: fila plana para tu “catálogo de instrumentos”
 
-### 4.1. Conversión de fechas
+Aquí sí tiene sentido guardar en una tabla **global de referencia**, porque:
 
-Todas las fechas vienen en ISO UTC → conviene pasar a **epoch ms** y tener **flag de sesión** listo para que el engine pregunte “¿estoy dentro del horario X?”.
+* `instrument_id` lo usarán muchos otros módulos,
+* los campos (ratios, tradability, etc.) cambian muy poco.
 
-Creamos una fila plana:
+### 4.1. Row normalizado
 
 ```ts
-type MarketHoursRow = {
-  market: string;       // "XASE"
-  date: string;         // "2025-11-13"
+type InstrumentRow = {
+  instrument_id: string;   // id
+  symbol: string;          // "SPY"
+  market_url: string;      // https://api.robinhood.com/markets/ARCX/
+  type: string;            // "etp"
+  tax_security_type: string; // "etf"
 
-  is_open: boolean;
+  state: string;           // "active"
+  tradeable: boolean;
+  tradability: string;
+  rhs_tradability: string;
+  affiliate_tradability: string;
+  fractional_tradability: string;
+  short_selling_tradability: string;
+  all_day_tradability: string;
 
-  opens_at: number | null;
-  closes_at: number | null;
+  simple_name: string | null;
+  name: string | null;
+  country: string;
+  list_date: string | null;    // YYYY-MM-DD
 
-  late_option_closes_at: number | null;
+  margin_initial_ratio: number;         // 0.5
+  maintenance_ratio: number;           // 0.25
+  high_risk_maintenance_ratio: number; // 0.25
+  low_risk_maintenance_ratio: number;  // 0.25
+  day_trade_ratio: number;             // 0.25
 
-  extended_opens_at: number | null;
-  extended_closes_at: number | null;
+  default_collar_fraction: number;           // 0.05
+  default_preset_percent_limit: number;      // 0.02
+  reserved_bp_percent_queued: number;        // 0.1
+  reserved_bp_percent_immediate: number;     // 0.05
 
-  all_day_opens_at: number | null;
-  all_day_closes_at: number | null;
+  extended_hours_fractional_tradability: boolean;
 
-  index_option_0dte_closes_at: number | null;
-  index_option_non_0dte_closes_at: number | null;
+  is_spac: boolean;
+  is_test: boolean;
+  issuer_type: string;       // "third_party"
+  affiliate: string;         // "rhf"
 
-  index_curb_opens_at: number | null;
-  index_curb_closes_at: number | null;
+  notional_qty_decimals: number;
+  min_tick_size: number | null;
 
-  fx_is_open: boolean;
-  fx_opens_at: number | null;
-  fx_closes_at: number | null;
-  fx_next_open_hours: number | null;
+  bloomberg_unique: string | null;
+  otc_market_tier: string;
 
-  previous_open_hours_url: string | null;
-  next_open_hours_url: string | null;
+  // info de halts internos
+  internal_halt_reason: string;
+  internal_halt_details: string;
+  internal_halt_sessions: string | null;
+  internal_halt_start_time: string | null;
+  internal_halt_end_time: string | null;
+  internal_halt_source: string;
 
-  fetched_ts: number;            // cuándo lo leímos
+  account_type_tradabilities_json: string; // JSON string para no complicarte
+
+  fetched_ts: number;
   source_transport: 'http';
   source_url: string;
 };
 ```
 
-Helper para parsear:
+Helper para convertir strings numéricas:
 
 ```ts
-const toMs = (s: string | null | undefined): number | null =>
-  s ? Date.parse(s) : null;
+const toNum = (s: string | null | undefined): number | null =>
+  s != null ? Number(s) : null;
+```
 
-function normaliseMarketHours(env: MarketHoursEnvelope): MarketHoursRow {
-  const h = env.payload as MarketHoursResponse;
+Normalizador:
+
+```ts
+function normaliseInstrument(env: InstrumentEnvelope): InstrumentRow {
+  const page = env.payload as InstrumentsPage;
+  const i = page.results[0];
 
   return {
-    market: env.market,
-    date: h.date,
-    is_open: h.is_open,
+    instrument_id: i.id,
+    symbol: i.symbol,
+    market_url: i.market,
+    type: i.type,
+    tax_security_type: i.tax_security_type,
 
-    opens_at: toMs(h.opens_at),
-    closes_at: toMs(h.closes_at),
+    state: i.state,
+    tradeable: i.tradeable,
+    tradability: i.tradability,
+    rhs_tradability: i.rhs_tradability,
+    affiliate_tradability: i.affiliate_tradability,
+    fractional_tradability: i.fractional_tradability,
+    short_selling_tradability: i.short_selling_tradability,
+    all_day_tradability: i.all_day_tradability,
 
-    late_option_closes_at: toMs(h.late_option_closes_at),
+    simple_name: i.simple_name,
+    name: i.name,
+    country: i.country,
+    list_date: i.list_date,
 
-    extended_opens_at: toMs(h.extended_opens_at),
-    extended_closes_at: toMs(h.extended_closes_at),
+    margin_initial_ratio: toNum(i.margin_initial_ratio) ?? 0,
+    maintenance_ratio: toNum(i.maintenance_ratio) ?? 0,
+    high_risk_maintenance_ratio: toNum(i.high_risk_maintenance_ratio) ?? 0,
+    low_risk_maintenance_ratio: toNum(i.low_risk_maintenance_ratio) ?? 0,
+    day_trade_ratio: toNum(i.day_trade_ratio) ?? 0,
 
-    all_day_opens_at: toMs(h.all_day_opens_at),
-    all_day_closes_at: toMs(h.all_day_closes_at),
+    default_collar_fraction: toNum(i.default_collar_fraction) ?? 0,
+    default_preset_percent_limit: toNum(i.default_preset_percent_limit) ?? 0,
+    reserved_bp_percent_queued: toNum(i.reserved_buying_power_percent_queued) ?? 0,
+    reserved_bp_percent_immediate: toNum(i.reserved_buying_power_percent_immediate) ?? 0,
 
-    index_option_0dte_closes_at: toMs(h.index_option_0dte_closes_at),
-    index_option_non_0dte_closes_at: toMs(h.index_option_non_0dte_closes_at),
+    extended_hours_fractional_tradability: i.extended_hours_fractional_tradability,
 
-    index_curb_opens_at: toMs(h.index_options_extended_hours?.curb_opens_at),
-    index_curb_closes_at: toMs(h.index_options_extended_hours?.curb_closes_at),
+    is_spac: i.is_spac,
+    is_test: i.is_test,
+    issuer_type: i.issuer_type,
+    affiliate: i.affiliate,
 
-    fx_is_open: h.fx_is_open,
-    fx_opens_at: toMs(h.fx_opens_at),
-    fx_closes_at: toMs(h.fx_closes_at),
-    fx_next_open_hours: toMs(h.fx_next_open_hours),
+    notional_qty_decimals: i.notional_estimated_quantity_decimals,
+    min_tick_size: toNum(i.min_tick_size),
 
-    previous_open_hours_url: h.previous_open_hours,
-    next_open_hours_url: h.next_open_hours,
+    bloomberg_unique: i.bloomberg_unique,
+    otc_market_tier: i.otc_market_tier,
+
+    internal_halt_reason: i.internal_halt_reason,
+    internal_halt_details: i.internal_halt_details,
+    internal_halt_sessions: i.internal_halt_sessions,
+    internal_halt_start_time: i.internal_halt_start_time,
+    internal_halt_end_time: i.internal_halt_end_time,
+    internal_halt_source: i.internal_halt_source,
+
+    account_type_tradabilities_json: JSON.stringify(i.account_type_tradabilities ?? []),
 
     fetched_ts: env.ts,
     source_transport: env.transport,
@@ -203,108 +327,104 @@ function normaliseMarketHours(env: MarketHoursEnvelope): MarketHoursRow {
 }
 ```
 
-Con esto, en tiempo real puedes preguntar:
-
-```ts
-function isWithinRegularHours(row: MarketHoursRow, nowMs: number): boolean {
-  if (!row.is_open || row.opens_at == null || row.closes_at == null) return false;
-  return nowMs >= row.opens_at && nowMs <= row.closes_at;
-}
-
-function isWithinExtendedHours(row: MarketHoursRow, nowMs: number): boolean {
-  if (row.extended_opens_at == null || row.extended_closes_at == null) return false;
-  return nowMs >= row.extended_opens_at && nowMs <= row.extended_closes_at;
-}
-```
-
-Eso lo usarán tus módulos de **órdenes**, **estrategias**, etc., para saber si se permite operar.
-
 ---
 
-## 5. ¿Se guarda o no? y ¿cómo?
+## 5. ¿Se guarda o no? y ¿cómo? 📦
 
-### ¿Conviene guardarlo?
+### ¿Conviene guardar?
 
-**Sí.** Razones:
+**Sí, 100%.** Este endpoint es:
 
-* No cambia mucho, pero:
+* La **tabla de dimensiones / catálogo de instrumentos**.
+* Poco volumen (tienes miles de símbolos como mucho; esto es muy pequeño comparado con ticks).
+* Referencia central para saber:
 
-  * Hay días especiales (festivos, cierre temprano, etc.).
-  * Te sirve para backtesting (“¿esta vela es rara porque el día tuvo horario parcial?”).
-* Es poco volumen: 1 registro por día / mercado.
+  * El `instrument_id` que otros endpoints usan,
+  * Parámetros de margen / riesgo,
+  * Si se permite short, fractional, extended, etc.
 
-### Dónde y estructura de archivos
+### Dónde y formato
 
-Yo lo separaría por **mercado**:
+Yo lo metería en algo así como:
 
-* Carpeta raíz de horarios:
+* Carpeta de metadatos:
 
-  * `data/system/market_hours/`
-* Dentro, por mercado:
+  ```text
+  data/meta/instruments.csv
+  ```
 
-  * `data/system/market_hours/XASE/2025.csv`
-  * (y en 2026 → `XASE/2026.csv`, etc)
+* Una sola tabla para **todos los símbolos**.
 
-#### Formato CSV
-
-`data/system/market_hours/XASE/2025.csv`:
+Encabezado sugerido:
 
 ```csv
-date,market,is_open,opens_at,closes_at,late_option_closes_at,extended_opens_at,extended_closes_at,all_day_opens_at,all_day_closes_at,index_option_0dte_closes_at,index_option_non_0dte_closes_at,index_curb_opens_at,index_curb_closes_at,fx_is_open,fx_opens_at,fx_closes_at,fx_next_open_hours,previous_open_hours_url,next_open_hours_url,fetched_ts,source_transport,source_url
+instrument_id,symbol,market_url,type,tax_security_type,state,tradeable,tradability,rhs_tradability,affiliate_tradability,fractional_tradability,short_selling_tradability,all_day_tradability,simple_name,name,country,list_date,margin_initial_ratio,maintenance_ratio,high_risk_maintenance_ratio,low_risk_maintenance_ratio,day_trade_ratio,default_collar_fraction,default_preset_percent_limit,reserved_bp_percent_queued,reserved_bp_percent_immediate,extended_hours_fractional_tradability,is_spac,is_test,issuer_type,affiliate,notional_qty_decimals,min_tick_size,bloomberg_unique,otc_market_tier,internal_halt_reason,internal_halt_details,internal_halt_sessions,internal_halt_start_time,internal_halt_end_time,internal_halt_source,account_type_tradabilities_json,fetched_ts,source_transport,source_url
 ```
 
-Cada fila = **un día**.
+### Estrategia de escritura
 
-Regla de escritura:
+* Si usas **CSV plano**:
 
-* Si ya existe fila para `date + market`, puedes:
+  * Hacer **append** y luego un proceso de deduplicación (quedarte con el último `fetched_ts` por `instrument_id`).
+* Si usas DB / SQLite:
 
-  * o hacer **upsert** en una base de datos,
-  * o sobre-escribir el CSV completo si lo regeneras por rango,
-  * o manejarlo como “append pero luego deduplicas” en ETL.
+  * Tabla `instruments` con:
 
-Dado que este endpoint lo puedes consultar “on demand”, también podrías:
-
-* Guardar un **cache en memoria**,
-* Y persistirlo sólo en CSV de vez en cuando (o cuando haya un festivo / cambio).
+    * PK: `instrument_id`,
+    * Índice secundario: `symbol`,
+    * `ON CONFLICT(instrument_id) DO UPDATE` para mantenerlo fresco.
 
 ---
 
-## 6. Integración con el resto de módulos
+## 6. Cómo lo usan otros módulos de tu trade_api
 
-Este módulo de `market_hours` sirve como **servicio base** para el resto:
+Este módulo de `instrument` se convierte en una especie de “DNS” de trading:
 
-* **Módulo de orders:**
+1. **Módulo de quotes / candles:**
 
-  * Antes de enviar una orden de acciones / opciones:
+   * Puede construir URLs usando `quote`, `fundamentals`, `market`.
+   * Si en el futuro Robinhood te exige `instrument_id` en algún endpoint específico, ya lo tienes.
 
-    * Chequea `isWithinRegularHours` o `isWithinExtendedHours`.
-* **Módulo de options:**
+2. **Módulo de opciones / greeks:**
 
-  * Usa `late_option_closes_at`, `index_option_*` y `index_curb_*` para saber hasta cuándo puedes cerrar posiciones de índice / 0DTE.
-* **Módulo de estrategias intradía:**
+   * Necesita saber si el subyacente:
 
-  * Evita abrir nuevas posiciones en los últimos X minutos antes del cierre (`closes_at`).
-* **Backtesting:**
+     * Es shorteable,
+     * Se puede operar en extended,
+     * Tiene restricciones de margen altas (`high_risk_maintenance_ratio`).
 
-  * Saber si una vela está en premarket, regular, postmarket, o fuera de sesión.
+3. **Módulo de risk / position sizing:**
+
+   * Usa `margin_initial_ratio`, `maintenance_ratio`, `day_trade_ratio`.
+   * `default_collar_fraction` y `default_preset_percent_limit` te pueden servir como **heurísticas** para sugerir stops/limits iniciales (opcional).
+
+4. **Módulo de reglas de operación:**
+
+   * Si `is_test` es true → ignorar en producción.
+   * Si `state !== 'active'` o `tradeable === false` → no permitir señales ni órdenes.
+
+5. **Integración con market hours:**
+
+   * `market_url` te dice el mercado real (`ARCX`), que conectas con los endpoints de `/markets/{MIC}/hours/...`.
 
 ---
 
-## 7. Resumen para esta petición concreta
+## 7. Resumen para esta petición
 
-Para `GET /markets/XASE/hours/2025-11-13/`:
+Para:
+`GET /instruments/?active_instruments_only=false&symbol=SPY`
 
-1. **Recibir** vía HTTP, parsear JSON a `MarketHoursResponse`.
-2. Envolverlo en `MarketHoursEnvelope` con `market = "XASE"`.
-3. **Normalizar** a `MarketHoursRow`:
+1. **Recibir:** HTTP → JSON → `InstrumentsPage`.
+2. **Envolver:** `InstrumentEnvelope` con `topic='instrument'` y `symbol='SPY'`.
+3. **Normalizar:** generar un `InstrumentRow`:
 
-   * convertir todos los `*_at` a `epoch ms`,
-   * conservar URLs de `previous/next`.
-4. **Guardar**:
+   * Convertir ratios string → `number`,
+   * Aplanar info importante de tradability y margen,
+   * Guardar `account_type_tradabilities` como JSON string.
+4. **Guardar:**
 
-   * CSV en `data/system/market_hours/XASE/2025.csv` (1 fila por día),
-   * opcionalmente nada en `_raw` porque el payload es muy simple.
-5. Usarlo como **única fuente de verdad de horarios de ese mercado** dentro de tu proyecto.
+   * En `data/meta/instruments.csv` (o tabla `instruments` en DB).
+   * 1 fila por `instrument_id`, upsert por id.
+5. **Uso práctico:** resolver symbol→id, parámetros de riesgo y compatibilidad de trading para SPY y resto de símbolos.
 
 ---
