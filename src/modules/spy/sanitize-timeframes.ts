@@ -103,13 +103,17 @@ export async function upsertSpyCandle(row: SpyCandleRow): Promise<void> {
 }
 
 export function validateSpyCandle(raw: RawSpyCandle, tf: Timeframe): boolean {
+  if (!raw.begins_at || typeof raw.begins_at !== 'string') {
+    return false;
+  }
+
   const numbers = [raw.open_price, raw.high_price, raw.low_price, raw.close_price, raw.volume].map(Number);
   if (numbers.some((value) => !Number.isFinite(value))) {
     return false;
   }
 
   const [open, high, low, close, volume] = numbers;
-  if (!(high >= open && high >= close && low <= open && low <= close)) {
+  if (!(high >= open && high >= close && low <= open && low <= close && high >= low)) {
     return false;
   }
 
@@ -122,7 +126,12 @@ export function validateSpyCandle(raw: RawSpyCandle, tf: Timeframe): boolean {
     return false;
   }
 
-  const minutes = new Date(timestamp).getUTCMinutes();
+  const date = new Date(timestamp);
+  if (date.getUTCSeconds() !== 0 || date.getUTCMilliseconds() !== 0) {
+    return false;
+  }
+
+  const minutes = date.getUTCMinutes();
   if (tf === '5m' && minutes % 5 !== 0) {
     return false;
   }
