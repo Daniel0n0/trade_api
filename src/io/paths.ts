@@ -6,7 +6,7 @@ import {
 } from './dir.js';
 
 const DEFAULT_SYMBOL = 'GENERAL';
-const DEFAULT_ASSET_CLASS = 'general';
+const DEFAULT_ASSET_CLASS = 'stocks';
 
 export type AssetPathInput =
   | string
