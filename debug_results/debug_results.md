@@ -18,235 +18,269 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 29:
-¡Perfecto! Tomo esa **batch de quotes de futuros** y te dejo el módulo listo: esquema, normalización, derivados útiles (mid/spread, micro-movimientos), persistencia y cómo “joinear” con metadata del contrato para tener **ticks y notionals** cuando lo agregues.
+PUNTO 30:
 
-# 1) Payload → Campos (observados)
+¡Vamos! Armemos el **módulo de “Greeks & Stats” para SPY** (la vista tipo `robinhood.com/stocks/SPY`) con todo lo necesario para calcular griegas, IV metrics y estadísticas del subyacente, usando la petición que ya viste (horarios) y el resto de señales típicas de esa pantalla.
 
-Para cada instrumento (uno por `instrument_id`):
+# Qué hará el módulo
 
-* `symbol` → p.ej. `/CLZ25:XNYM`, `/GCZ25:XCEC`, `/RTYZ25:XCME`
-* `bid_price`, `bid_size`, `bid_venue_timestamp`
-* `ask_price`, `ask_size`, `ask_venue_timestamp`
-* `last_trade_price`, `last_trade_size`, `last_trade_venue_timestamp`
-* `state` (`active`, etc.)
-* `updated_at`
-* `out_of_band` (boolean)
+* Mostrar **estado de mercado** (regular/extended/closed) y relojes.
+* Ficha del subyacente (**precio, variación, Vol, ATR, RV**).
+* **Greeks agregadas** por vencimiento y por strike (Delta/Gamma/Theta/Vega).
+* **Smile de IV**, **IV Rank** e **IV Percentile** por tenor.
+* Explorador de **0DTE / weekly** y mapas de exposición (Gamma/Theta).
+* Señales rápidas (overpriced IV, contango/backwardation en term structure, skew).
 
-# 2) **Schema normalizado** (una fila por instrumento)
+---
 
-Archivo lógico: `futures_quotes_current`
+# 1) Data sources (endpoints & campos)
+
+### A. Horarios (ya observado)
+
+**GET** `/markets/XASE/hours/{YYYY-MM-DD}/`
+Campos clave:
+
+* `is_open`, `opens_at`, `closes_at`, `extended_opens_at`, `extended_closes_at`
+* `index_option_0dte_closes_at`, `index_option_non_0dte_closes_at`
+* `index_options_extended_hours:{curb_opens_at, curb_closes_at}`
+
+> Persistimos todo tal cual y derivamos `session` actual.
+
+### B. Quote del subyacente (SPY)
+
+**GET** `/marketdata/quotes/?symbols=SPY`
+Campos esperados: `last_trade_price, previous_close, trading_halted, bid/ask, volume, updated_at`.
+
+### C. OHLC histórico (para RV/ATR/RSI)
+
+**GET** `/marketdata/historicals/SPY/?interval=5minute|day&span=...`
+Campos: `begins_at, open_price, close_price, high_price, low_price, volume`.
+
+### D. Fundamentals (si disponible)
+
+**GET** `/fundamentals/?symbols=SPY`
+Campos útiles: `market_cap, pe_ratio, dividend_yield, high_52_weeks, low_52_weeks`.
+
+### E. Cadena de opciones
+
+1. **Instrumento/chain id**
+   **GET** `/instruments/?symbol=SPY` → `id`
+   **GET** `/options/chains/?equity_instrument_ids={id}` → `chain_id`
+2. **Listado de contratos**
+   **GET** `/options/instruments/?chain_id={chain_id}&state=active&tradability=tradable`
+   Campos: `id, expiration_date, strike_price, type(call/put), min_ticks...`
+3. **Quotes + Greeks**
+   **GET** `/marketdata/options/quotes/?ids={ids...}`
+   (o variante de batch)
+   Campos esperados por contrato:
+   `mark_price, bid_price, ask_price, last_trade_price, volume, open_interest, implied_volatility, delta, gamma, theta, vega, rho, updated_at`.
+
+> Nota: nombres exactos pueden variar según versión, pero el módulo es robusto a eso (mapeo por keys presentes).
+
+---
+
+# 2) Esquemas normalizados (CSV / tablas)
+
+### a) `equity_hours`
+
+```
+date,is_open,opens_at,closes_at,extended_opens_at,extended_closes_at,
+index_option_0dte_closes_at,index_option_non_0dte_closes_at,
+curb_opens_at,curb_closes_at,fx_is_open,fx_opens_at,fx_closes_at
+```
+
+### b) `equity_quote`
+
+```
+ts,symbol,last_px,prev_close,change_abs,change_pct,bid,ask,mid,spread,volume,halted,updated_at
+```
+
+### c) `equity_ohlc`
+
+```
+begins_at,open,high,low,close,volume,interval
+```
+
+### d) `options_instruments`
+
+```
+id,chain_id,symbol,expiration,strike,type,min_tick,tradability
+```
+
+### e) `options_quotes_greeks`
+
+```
+ts,option_id,expiration,strike,type,
+bid,ask,mid,spread,mark,last,volume,open_interest,
+iv,delta,gamma,theta,vega,rho,updated_at
+```
+
+### f) `iv_timeseries` (por tenor y/o por at-the-money)
+
+```
+ts,tenor,iv_atm,iv_10d,iv_30d,iv_60d,iv_90d  // según lo que recuperes/estimes
+```
+
+---
+
+# 3) Cálculos y derivados
+
+### Subyacente
+
+* `mid = (bid+ask)/2` si ambos; `spread = ask-bid`.
+* **ATR(14)** (diario): Wilder.
+* **Realized Vol (RV)**:
+
+  * 5d/10d/20d anualizada: stdev de **log returns** * √252.
+* **RSI(14)** y **MA(20/50)** para contexto.
+
+### Opciones (por contrato)
+
+* Completar `mid`/`spread`.
+* **Greeks**: usar las que entrega el API; si faltan, estimar con Black-Scholes usando `iv`, `r` (overnight), `q` (dividendo SPY).
+* **Moneyness**: `spot/strike` y `Δ` como proxy.
+* **Liquidity score**: normalizado por `spread %`, `volume`, `open_interest`.
+
+### Agregados por vencimiento (tenor buckets: 0DTE, 1-7d, 8-30d, 31-60d, >60d)
+
+* **Gamma exposure (GEX)** aproximada: Σ(`gamma` · `notional_per_contract`).
+* **Theta decay**: Σ(`theta` · notional).
+* **Promedios ponderados por OI**: `iv`, `delta` medios.
+* **Term structure**: IV ATM por tenor.
+
+### IV metrics
+
+* **IV Rank (lookback 1y)**:
+  `IVR = (IV_now - IV_min) / (IV_max - IV_min)` ∈ [0,1]
+* **IV Percentile (1y)**: % de días con IV ≤ IV_now.
+* **Skew**: diferencia IV ATM vs IV 25Δ puts/calls por vencimiento.
+
+---
+
+# 4) Reglas de calidad & sanity checks
+
+* Rechazar cotas con `bid>ask`.
+* Marcar **stale** si `now - updated_at > 15s` (regular) o `>60s` (extended).
+* Spread extremo: `spread / mid > 2%` → “ilíquido”.
+* Opciones sin `volume` y `OI` muy bajo → degradar ranking.
+* En 0DTE, limitar strikes ±5% del spot para cálculos “ATM cluster”.
+
+---
+
+# 5) UI/UX propuesto (componentes)
+
+1. **Header de mercado**
+
+   * Pill: `OPEN / EXTENDED / CLOSED`
+   * Próximo hito: `opens_at / closes_at / curb_*` (según hora actual NY).
+2. **Tarjeta SPY**
+
+   * Precio, cambio %, **ATR(14)**, **RV(20d)**, Volumen.
+   * Min/Max 52s si fundamentals disponibles.
+3. **Smile de IV (chart)**
+
+   * Eje X: strike% (strike/spot−1), Eje Y: IV; selector de vencimiento.
+4. **Term structure (chart)**
+
+   * IV ATM vs días a vencimiento; destacar IVR.
+5. **Tabla de opciones** (filtrable)
+
+   * `exp, strike, type, mid, spread%, iv, delta, gamma, theta, vega, vol, OI, updated_at`
+   * Badge para 0DTE/weekly.
+6. **Greeks por vencimiento**
+
+   * Chips: ΣGamma, ΣTheta, IV ATM, IVR, %ITM.
+7. **Alertas**
+
+   * “IVR>0.8” (caro), “Term structure invertida”, “Gamma flip cerca del spot”, “Spread%>1%”.
+
+---
+
+# 6) Lógica de sesión (con tu endpoint de horas)
+
+* Determinar `session` en tiempo real:
+
+  * `regular` si `opens_at ≤ now < closes_at`
+  * `extended` si dentro de `[extended_opens_at, extended_closes_at)`
+  * `curb` si `index_options_extended_hours` activo y dentro del rango
+  * `closed` en otro caso
+* Mostrar **timer** al próximo cambio de estado.
+
+---
+
+# 7) Pipelines de ingestión (cada 5–10s)
+
+1. **quote SPY** → `equity_quote` (+ derivados).
+2. **options quotes+greeks** (batch) → `options_quotes_greeks`.
+
+   * Mapear a `options_instruments` por `option_id`.
+3. Cada 1–5 min: **historicals** para **RV/ATR** (buffer local).
+4. Al cierre: consolidar **IV Rank/Percentile** (lookback 1y) y snapshots.
+
+Paths sugeridos:
+
+```
+data/equity/SPY/quote.csv
+data/equity/SPY/ohlc_<interval>.csv
+data/options/SPY/instruments.csv
+data/options/SPY/quotes_greeks.csv
+data/options/SPY/iv_timeseries.csv
+data/alerts/options/SPY/<YYYY-MM-DD>.csv
+```
+
+---
+
+# 8) Señales y uso práctico (mentor mode)
+
+* **Scalp 0–3 días**: busca **IVR bajo** con spreads ajustados si vendes delta (poco premio) o **IVR alto** si vendes theta (crédito) — siempre con liquidez (spread% < 0.6% en SPY suele ser óptimo) y stops por **Δ** y **IV spike**.
+* **Swing 1–2 semanas**: evalúa **term structure** y **skew**: calls baratos cuando skew de puts está muy cargado; para coberturas, prioriza puts con **vega eficiente** (30–45d).
+* **Gestión**: alertas por `IVR cruza 0.7`, `spread% se ensancha`, `stale data`, y `Gamma flip` cercano al spot (si ΣGamma cambia de signo alrededor del precio).
+
+---
+
+# 9) Pseudocódigo clave (normalización quotes+greeks)
 
 ```ts
-type FuturesQuote = {
-  ts: number;                    // epoch ms de ingestión
-  source_url: string;
-
-  instrument_id: string;
-  symbol: string;                // ej: "/CLZ25:XNYM"
-  root: string;                  // "/CL"
-  expiry_code: string;           // "Z25" (derivado de symbol)
-  venue: string;                 // "XNYM" / "XCME" / "XCEC"...
-
-  bid_px: string;                // decimal string
-  bid_sz: string;                // contratos (int/decimal como string)
-  bid_ts: string;                // ISO
-
-  ask_px: string;
-  ask_sz: string;
-  ask_ts: string;
-
-  last_px: string;
-  last_sz: string;
-  last_ts: string;
-
-  state: string | null;          // 'active' | ...
-  updated_at_iso: string | null;
-
-  // Derivados inmediatos
-  mid_px: string | null;         // (bid+ask)/2 si ambos
-  spread_px: string | null;      // ask - bid
-  spread_bps: string | null;     // (spread/mid)*10000 si mid>0
+type OptRow = {
+  ts:number, option_id:string, expiration:string, strike:number, type:'call'|'put',
+  bid:number|null, ask:number|null, mid:number|null, spread:number|null,
+  mark:number|null, last:number|null, volume:number|null, open_interest:number|null,
+  iv:number|null, delta:number|null, gamma:number|null, theta:number|null, vega:number|null, rho:number|null,
+  updated_at:string|null
 };
-```
 
-> Nota: `root`, `expiry_code` y `venue` salen de partir `symbol` por `:` y del mes/letra. Ej: `/GCZ25:XCEC` → `root="/GC"`, `expiry_code="Z25"`, `venue="XCEC"`.
+function normalizeOptionQuote(raw:any): OptRow {
+  const b = num(raw.bid_price), a = num(raw.ask_price);
+  const both = b!=null && a!=null && a>=b;
+  const mid = both ? (a+b)/2 : null;
+  const spread = both ? (a-b) : null;
 
-# 3) Persistencia recomendada
-
-* **Stream (append)** cada pull (Robinhood sugiere `x-poll-interval: 5`):
-
-```
-data/marketdata/futures/<ROOT>/<YYYY-MM-DD>/quotes.csv
-```
-
-Columnas:
-
-```
-ts,source_url,instrument_id,symbol,root,expiry_code,venue,
-bid_px,bid_sz,bid_ts,ask_px,ask_sz,ask_ts,last_px,last_sz,last_ts,
-state,updated_at_iso,mid_px,spread_px,spread_bps
-```
-
-* **“Último”** (snapshot por instrumento, se sobreescribe):
-
-```
-data/marketdata/futures/<ROOT>/last_quote.csv
-```
-
-# 4) Derivados opcionales (si añades metadata)
-
-Cuando integres **metadata del contrato** (tick size, tick value, multiplier, currency):
-
-```ts
-type FuturesMeta = {
-  instrument_id: string;
-  root: string;         // "/CL"
-  multiplier: string;   // p.ej. 1000 (bbl), 100 (oz), 50 (mini índices)...
-  tick_size: string;    // p.ej. 0.01, 0.25, 0.005 ...
-  tick_value: string;   // $ por tick
-  quote_ccy: "USD";     // casi siempre USD en estos
-};
-```
-
-Entonces puedes agregar:
-
-* `spread_ticks = spread_px / tick_size`
-* `notional_mid = mid_px * multiplier`
-* `last_notional = last_px * multiplier`
-
-Guárdalos en un **archivo extendido**:
-
-```
-data/marketdata/futures/<ROOT>/<YYYY-MM-DD>/quotes_enriched.csv
-```
-
-# 5) Normalizador (TypeScript) — seguro con decimales
-
-```ts
-import Decimal from 'decimal.js';
-
-const dec = (s?: any) => new Decimal(s ?? '0');
-
-function parseSymbol(sym: string) {
-  const [left, venue] = sym.split(':');     // "/GCZ25" , "XCEC"
-  const root = left.replace(/[A-Z]\d{2}$/, (m) => '') // quita "Z25"
-                    .replace(/Z25|H26|[FGHJKMNQUVXZ]\d{2}$/, ''); // robusto
-  const expiry = left.substring(root.length); // "Z25"
-  return { root, expiry_code: expiry, venue };
-}
-
-function normaliseFuturesQuotes(env: { ts: number; source: string; payload: any }): FuturesQuote[] {
-  const arr = Array.isArray(env.payload?.data) ? env.payload.data : [];
-  const out: FuturesQuote[] = [];
-
-  for (const wrap of arr) {
-    if (wrap?.status !== 'SUCCESS') continue;
-    const q = wrap.data;
-
-    const bid = q.bid_price != null ? dec(q.bid_price) : null;
-    const ask = q.ask_price != null ? dec(q.ask_price) : null;
-
-    const hasBoth = !!(bid && ask);
-    const mid = hasBoth ? bid!.plus(ask!).div(2) : null;
-    const spread = hasBoth ? ask!.minus(bid!) : null;
-    const spread_bps = hasBoth && mid!.gt(0) ? spread!.div(mid!).mul(10000) : null;
-
-    const { root, expiry_code, venue } = parseSymbol(q.symbol);
-
-    out.push({
-      ts: env.ts,
-      source_url: env.source,
-
-      instrument_id: q.instrument_id,
-      symbol: q.symbol,
-      root, expiry_code, venue,
-
-      bid_px: q.bid_price ?? null,
-      bid_sz: (q.bid_size ?? '').toString(),
-      bid_ts: q.bid_venue_timestamp ?? null,
-
-      ask_px: q.ask_price ?? null,
-      ask_sz: (q.ask_size ?? '').toString(),
-      ask_ts: q.ask_venue_timestamp ?? null,
-
-      last_px: q.last_trade_price ?? null,
-      last_sz: (q.last_trade_size ?? '').toString(),
-      last_ts: q.last_trade_venue_timestamp ?? null,
-
-      state: q.state ?? null,
-      updated_at_iso: q.updated_at ?? null,
-
-      mid_px: mid?.toString() ?? null,
-      spread_px: spread?.toString() ?? null,
-      spread_bps: spread_bps?.toString() ?? null
-    });
-  }
-  return out;
+  return {
+    ts: Date.now(),
+    option_id: raw.instrument_id || raw.id,
+    expiration: raw.expiration_date,
+    strike: +raw.strike_price,
+    type: raw.type,
+    bid: b, ask: a, mid, spread,
+    mark: num(raw.mark_price), last: num(raw.last_trade_price),
+    volume: int(raw.volume), open_interest: int(raw.open_interest),
+    iv: num(raw.implied_volatility),
+    delta: num(raw.delta), gamma: num(raw.gamma), theta: num(raw.theta), vega: num(raw.vega), rho: num(raw.rho),
+    updated_at: raw.updated_at || null
+  };
 }
 ```
 
-# 6) Reglas de calidad
+---
 
-* **Descartar frame** si `bid_px > ask_px` (data inválida); loggear con `context`.
-* Si falta uno de los lados, setear `mid_px`/`spread_*` en `null`.
-* `Decimal` para todo cálculo; **nunca** `float`.
-* `symbol` y `instrument_id` **no vacíos**.
+# 10) Checklist de entrega
 
-# 7) Alertas recomendadas (intradía)
-
-Escribe en `data/alerts/futures/<ROOT>/<YYYY-MM-DD>/alerts.csv`
-
-```
-ts,kind,root,symbol,detail,trigger_value,context,source_url
-```
-
-Disparadores:
-
-* **Spread alto**: `spread_bps > 8–12 bps` (ajústalo por root; en FX/bonos será distinto).
-* **Liquidez**: `bid_sz==0 || ask_sz==0`.
-* **Estado**: `state != 'active'`.
-* **Stale**: si `now - max(bid_ts, ask_ts, last_ts) > 10s` (mercado 24h) o >60s (curb).
-* **Jump**: `abs(Δlast_px)/prev_last_px > 0.20%` en ≤1 min.
-
-# 8) Join con **metadata** para risk/notional
-
-Cuando tengas el catálogo por `instrument_id` (puede venir de tu módulo “instrumentos”), añade:
-
-* `tick_size`, `tick_value`, `multiplier` → calcula:
-
-  * `spread_ticks = spread_px / tick_size`
-  * `notional_mid = mid_px * multiplier`
-  * **Slippage estimado** por cruzar spread: `spread_ticks * tick_value`
-
-# 9) Ejemplo (a partir de tu payload)
-
-Para `/GCZ25:XCEC` (oro COMEX):
-
-* `bid_px=4115.9`, `ask_px=4116.1` → `mid=4116.0`, `spread=0.2`
-* `spread_bps ≈ (0.2 / 4116.0) * 10000 ≈ 4.86 bps`
-
-> Con metadata típica (ejemplo ilustrativo), si `tick_size=0.1` y `tick_value=$10`, `spread_ticks=2`, costo implícito≈ **$20/contrato** al cruzar.
-
-# 10) Carpetería final (resumen)
-
-```
-data/
-  marketdata/
-    futures/<ROOT>/<YYYY-MM-DD>/quotes.csv
-    futures/<ROOT>/last_quote.csv
-    futures/<ROOT>/<YYYY-MM-DD>/quotes_enriched.csv      (si tienes metadata)
-  alerts/
-    futures/<ROOT>/<YYYY-MM-DD>/alerts.csv
-```
-
-# 11) Checklist de implementación
-
-* [ ] Ingesta cada 5 s (usa `x-poll-interval` como hint).
-* [ ] Normalización → `quotes.csv` (append) + `last_quote.csv`.
-* [ ] Validaciones (bid>ask, stale, vacíos).
-* [ ] Cálculo `mid/spread/spread_bps`.
-* [ ] Alertas básicas.
-* [ ] (Luego) Join con **metadata** para ticks/notional.
+* [ ] Ingesta de **horarios** (ya listo) → `session`.
+* [ ] Quote SPY + derivados (mid/spread, ATR, RV).
+* [ ] Chain discovery (instrument → chain_id) y **batch de quotes+greeks**.
+* [ ] Agregados por vencimiento + term structure.
+* [ ] IV Rank/Percentile (lookback 1y) y skew.
+* [ ] UI con smile, term structure y tabla filtrable.
+* [ ] Alertas configuradas.
 
 ---
