@@ -152,6 +152,20 @@ export function dataPath(input: DataPathInput, ...segments: string[]): string {
   return target;
 }
 
+export function marketDataPath(input: AssetPathInput, ...segments: string[]): string {
+  const { assetClass, symbol, date } = normalizeAssetPathInput(input);
+  const baseDir = path.join(process.cwd(), 'data', 'marketdata', assetClass, symbol, date);
+
+  if (segments.length === 0) {
+    ensureDirectorySync(baseDir);
+    return baseDir;
+  }
+
+  const target = path.join(baseDir, ...segments);
+  ensureDirectoryForFileSync(target);
+  return target;
+}
+
 export function strikeDataPath(
   input: AssetPathInput,
   strike: number | string | null | undefined,
