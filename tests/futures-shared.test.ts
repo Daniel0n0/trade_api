@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { BrowserContext, Page, Response } from 'playwright';
+import { DateTime } from 'luxon';
 import { dataPath } from '../src/io/paths.js';
 
 const originalCwd = process.cwd();
@@ -287,10 +288,12 @@ describe('futures shared helpers', () => {
 
     await page.emit(createJsonResponse('https://api.robinhood.com/inbox/threads/', payload));
 
-    const snapshotPath = dataPath(
-      { assetClass: 'futures', symbol: 'GENERAL' },
-      'overview',
-      'inbox-threads.jsonl',
+    const snapshotPath = path.join(
+      process.cwd(),
+      'data',
+      '_raw',
+      'inbox',
+      `${DateTime.now().toISODate()}.jsonl`,
     );
     const raw = await waitForCacheFile(snapshotPath);
     const lines = raw

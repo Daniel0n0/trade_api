@@ -5,6 +5,7 @@ import type { Page, Response } from 'playwright';
 import { DateTime } from 'luxon';
 import Decimal from 'decimal.js';
 
+import { ensureDirectoryForFileSync } from '../../io/dir.js';
 import { getCsvWriter } from '../../io/csvWriter.js';
 import { dataPath, marketDataPath } from '../../io/paths.js';
 import { toCsvLine } from '../../io/row.js';
@@ -1615,11 +1616,10 @@ const isJsonContentType = (headers: Record<string, string | undefined>): boolean
 };
 
 const persistInboxThreadsSnapshot = async (payload: string): Promise<void> => {
-  const filePath = dataPath(
-    { assetClass: 'futures', symbol: 'GENERAL' },
-    'overview',
-    'inbox-threads.jsonl',
-  );
+  const date = DateTime.now().toISODate();
+  const filePath = path.join(process.cwd(), 'data', '_raw', 'inbox', `${date}.jsonl`);
+
+  ensureDirectoryForFileSync(filePath);
 
   try {
     await appendFile(filePath, payload.endsWith('\n') ? payload : `${payload}\n`, 'utf8');
