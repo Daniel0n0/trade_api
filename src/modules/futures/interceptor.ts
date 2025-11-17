@@ -1,15 +1,19 @@
 import type { WriteStream } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
+import path from 'node:path';
 import type { Page, Response } from 'playwright';
 import { DateTime } from 'luxon';
+import Decimal from 'decimal.js';
 
 import { getCsvWriter } from '../../io/csvWriter.js';
-import { dataPath } from '../../io/paths.js';
+import { dataPath, marketDataPath } from '../../io/paths.js';
 import { toCsvLine } from '../../io/row.js';
+import { upsertCsv } from '../../io/upsertCsv.js';
 import { safeJsonParse } from '../../utils/payload.js';
 
 export const FUTURES_HISTORICAL_PATTERN = /marketdata\/futures\/historicals/i;
-export const FUTURES_SNAPSHOT_PATTERN = /marketdata\/futures\/(?:prices|snapshots|quotes)/i;
+export const FUTURES_SNAPSHOT_PATTERN = /marketdata\/futures\/(?:prices|snapshots)/i;
+export const FUTURES_QUOTES_PATTERN = /marketdata\/futures\/quotes/i;
 export const FUTURES_FUNDAMENTALS_PATTERN = /marketdata\/futures\/fundamentals/i;
 export const FUTURES_MARKET_HOURS_PATTERN = /markets\/[\w-]+\/hours/i;
 export const FUTURES_CONTRACTS_BY_SYMBOL_PATTERN = /arsenal\/v1\/futures\/contracts\/symbol/i;
@@ -112,6 +116,32 @@ export const FUTURES_CONTRACTS_HEADER = [
 
 export type FuturesContractsHeader = typeof FUTURES_CONTRACTS_HEADER;
 
+export const FUTURES_QUOTES_HEADER = [
+  'ts',
+  'source_url',
+  'instrument_id',
+  'symbol',
+  'root',
+  'expiry_code',
+  'venue',
+  'bid_px',
+  'bid_sz',
+  'bid_ts',
+  'ask_px',
+  'ask_sz',
+  'ask_ts',
+  'last_px',
+  'last_sz',
+  'last_ts',
+  'state',
+  'updated_at_iso',
+  'mid_px',
+  'spread_px',
+  'spread_bps',
+] as const;
+
+export type FuturesQuotesHeader = typeof FUTURES_QUOTES_HEADER;
+
 export const FUTURES_TRADING_SESSIONS_DETAIL_HEADER = [
   'ts',
   'ref_date',
@@ -194,6 +224,11 @@ type FuturesCsvRow<T extends readonly string[]> = Partial<Record<T[number], stri
 type NormalizeContext = {
   readonly url?: string;
   readonly fallbackSymbol?: string;
+};
+
+type NormalizeQuotesContext = NormalizeContext & {
+  readonly ts?: number;
+  readonly sourceUrl?: string;
 };
 
 const toNumber = (value: unknown): number | undefined => {
@@ -411,6 +446,51 @@ const normaliseSymbol = (value: unknown): string | undefined => {
     return undefined;
   }
   return trimmed.toUpperCase();
+};
+
+const parseFuturesSymbol = (
+  symbol: string | undefined,
+): { readonly root?: string; readonly expiryCode?: string; readonly venue?: string } => {
+  if (!symbol) {
+    return {};
+  }
+  const [leftPart, venue] = symbol.split(':');
+  const left = (leftPart ?? '').trim();
+  if (!left) {
+    return { venue: venue?.trim() || undefined };
+  }
+
+  const root = left
+    .replace(/([FGHJKMNQUVXZ]\d{2})$/iu, '')
+    .replace(/[A-Z]\d{2}$/u, '')
+    .trim();
+  const expiryCode = left.slice(root.length).trim();
+
+  return {
+    root: root || undefined,
+    expiryCode: expiryCode || undefined,
+    venue: venue?.trim() || undefined,
+  };
+};
+
+const dec = (value: unknown): Decimal | null => {
+  try {
+    const decimal = new Decimal(value as Decimal.Value);
+    if (!decimal.isFinite() || decimal.isNaN()) {
+      return null;
+    }
+    return decimal;
+  } catch {
+    return null;
+  }
+};
+
+const dateFromEpochMs = (value: number | undefined): string => {
+  const date = new Date(typeof value === 'number' && Number.isFinite(value) ? value : Date.now());
+  const year = String(date.getUTCFullYear());
+  const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(date.getUTCDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
 
 const IGNORED_SEGMENT_PATTERNS = [/^\d{4}-\d{2}-\d{2}$/u, /^v\d+$/iu];
@@ -1095,6 +1175,115 @@ export function normalizeFuturesContracts(
   return out;
 }
 
+export function normalizeFuturesQuotes(
+  payload: unknown,
+  context: NormalizeQuotesContext,
+): FuturesCsvRow<typeof FUTURES_QUOTES_HEADER>[] {
+  const ingestionTs = typeof context.ts === 'number' && Number.isFinite(context.ts) ? context.ts : Date.now();
+  const fallbackSymbol = normaliseSymbol(context.fallbackSymbol);
+  const sourceUrl = toStringValue(context.sourceUrl ?? context.url ?? undefined);
+
+  const out: FuturesCsvRow<typeof FUTURES_QUOTES_HEADER>[] = [];
+
+  for (const entry of extractArray(payload)) {
+    if (!entry || typeof entry !== 'object') {
+      continue;
+    }
+
+    const container = entry as Record<string, unknown>;
+    const status = toStringValue(container.status)?.toUpperCase();
+    if (status && status !== 'SUCCESS') {
+      continue;
+    }
+
+    const quoteRecord =
+      container.data && typeof container.data === 'object' && !Array.isArray(container.data)
+        ? (container.data as Record<string, unknown>)
+        : container;
+
+    if (!quoteRecord || typeof quoteRecord !== 'object') {
+      continue;
+    }
+
+    const symbol =
+      extractSymbol(quoteRecord, extractSymbol(container, fallbackSymbol) ?? fallbackSymbol) ?? fallbackSymbol;
+    const instrumentId =
+      normaliseSymbol(
+        pickString(quoteRecord, ['instrument_id', 'instrumentId', 'instrument']) ??
+          pickString(container, ['instrument_id', 'instrumentId', 'instrument']),
+      ) ?? undefined;
+
+    if (!symbol && !instrumentId) {
+      continue;
+    }
+
+    const bidPx = toStringValue(quoteRecord.bid_price ?? quoteRecord.bidPrice);
+    const bidSz = toStringValue(quoteRecord.bid_size ?? quoteRecord.bidSize);
+    const bidTs = toIsoString(quoteRecord.bid_venue_timestamp ?? quoteRecord.bidVenueTimestamp);
+    const askPx = toStringValue(quoteRecord.ask_price ?? quoteRecord.askPrice);
+    const askSz = toStringValue(quoteRecord.ask_size ?? quoteRecord.askSize);
+    const askTs = toIsoString(quoteRecord.ask_venue_timestamp ?? quoteRecord.askVenueTimestamp);
+    const lastPx = toStringValue(quoteRecord.last_trade_price ?? quoteRecord.lastTradePrice);
+    const lastSz = toStringValue(quoteRecord.last_trade_size ?? quoteRecord.lastTradeSize);
+    const lastTs = toIsoString(quoteRecord.last_trade_venue_timestamp ?? quoteRecord.lastTradeVenueTimestamp);
+    const state = toStringValue(quoteRecord.state ?? quoteRecord.trading_status ?? quoteRecord.status);
+    const updatedAt = toIsoString(quoteRecord.updated_at ?? quoteRecord.updatedAt);
+
+    const bid = dec(bidPx);
+    const ask = dec(askPx);
+    if (bid && ask && bid.greaterThan(ask)) {
+      console.warn('[futures-recorder] Se descarta quote con bid>ask', {
+        url: sourceUrl,
+        symbol,
+        bid: bid.toString(),
+        ask: ask.toString(),
+      });
+      continue;
+    }
+    const mid = bid && ask ? bid.plus(ask).div(2) : null;
+    const spread = bid && ask ? ask.minus(bid) : null;
+    const spreadBps = mid && spread && mid.greaterThan(0) ? spread.div(mid).mul(10_000) : null;
+
+    const { root, expiryCode, venue } = parseFuturesSymbol(symbol ?? undefined);
+
+    const row: FuturesCsvRow<typeof FUTURES_QUOTES_HEADER> = {
+      ts: ingestionTs,
+      source_url: sourceUrl ?? undefined,
+      instrument_id: instrumentId ?? undefined,
+      symbol: symbol ?? undefined,
+      root: root ?? undefined,
+      expiry_code: expiryCode ?? undefined,
+      venue: venue ?? undefined,
+      bid_px: bidPx ?? undefined,
+      bid_sz: bidSz ?? undefined,
+      bid_ts: bidTs ?? undefined,
+      ask_px: askPx ?? undefined,
+      ask_sz: askSz ?? undefined,
+      ask_ts: askTs ?? undefined,
+      last_px: lastPx ?? undefined,
+      last_sz: lastSz ?? undefined,
+      last_ts: lastTs ?? undefined,
+      state: state ?? undefined,
+      updated_at_iso: updatedAt ?? undefined,
+      mid_px: mid?.toString() ?? undefined,
+      spread_px: spread?.toString() ?? undefined,
+      spread_bps: spreadBps?.toString() ?? undefined,
+    };
+
+    if (!row.symbol && fallbackSymbol) {
+      row.symbol = fallbackSymbol;
+    }
+
+    if (!row.symbol && !row.instrument_id) {
+      continue;
+    }
+
+    out.push(row);
+  }
+
+  return out;
+}
+
 export function normalizeFuturesTradingSessions(
   payload: unknown,
   context: NormalizeContext,
@@ -1544,6 +1733,32 @@ export function installFuturesRecorder(options: FuturesRecorderOptions): Futures
     notifyDiscoveredSymbols(extractSymbolsFromRows(rows));
   };
 
+  const handleQuotes = async (payload: unknown, url: string | undefined) => {
+    const rows = normalizeFuturesQuotes(payload, { url, fallbackSymbol, ts: Date.now(), sourceUrl: url });
+    for (const row of rows) {
+      const symbol =
+        normaliseSymbol((row.root as string | undefined) ?? (row.symbol as string | undefined) ?? fallbackSymbol) ??
+        fallbackSymbol ??
+        'GENERAL';
+      const ts = typeof row.ts === 'number' && Number.isFinite(row.ts) ? row.ts : Date.now();
+      const dateFolder = dateFromEpochMs(ts);
+      const dailyPath = marketDataPath({ assetClass: 'futures', symbol, date: dateFolder }, 'quotes.csv');
+      getWriter(dailyPath, FUTURES_QUOTES_HEADER).write(toCsvLine(FUTURES_QUOTES_HEADER, row));
+
+      const baseDir = marketDataPath({ assetClass: 'futures', symbol, date: dateFolder });
+      const snapshotPath = path.resolve(baseDir, '..', 'last_quote.csv');
+      await upsertCsv(snapshotPath, FUTURES_QUOTES_HEADER, [row], (current) => {
+        return (
+          toStringValue(current.instrument_id) ??
+          toStringValue(row.instrument_id) ??
+          toStringValue(row.symbol) ??
+          symbol
+        );
+      });
+    }
+    notifyDiscoveredSymbols(extractSymbolsFromRows(rows));
+  };
+
   const handleContracts = (payload: unknown, url: string | undefined) => {
     const rows = normalizeFuturesContracts(payload, { url, fallbackSymbol });
     for (const row of rows) {
@@ -1635,6 +1850,7 @@ export function installFuturesRecorder(options: FuturesRecorderOptions): Futures
     const url = response.url();
     if (
       !FUTURES_HISTORICAL_PATTERN.test(url) &&
+      !FUTURES_QUOTES_PATTERN.test(url) &&
       !FUTURES_SNAPSHOT_PATTERN.test(url) &&
       !FUTURES_FUNDAMENTALS_PATTERN.test(url) &&
       !FUTURES_MARKET_HOURS_PATTERN.test(url) &&
@@ -1683,6 +1899,11 @@ export function installFuturesRecorder(options: FuturesRecorderOptions): Futures
 
     if (FUTURES_HISTORICAL_PATTERN.test(url)) {
       handleBars(parsed, url);
+      return;
+    }
+
+    if (FUTURES_QUOTES_PATTERN.test(url)) {
+      await handleQuotes(parsed, url);
       return;
     }
 
