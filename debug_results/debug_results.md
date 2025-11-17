@@ -18,351 +18,322 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 39:
-Buenísima, ahora sí tenemos **news por instrumento** 💚.
-Este endpoint es perfecto para tu módulo de “noticias SPY” y para features tipo *feed de eventos*.
+PUNTO 40:
 
-Voy con el protocolo: esquema → normalización → guardado.
+Perfecto, vamos a diseñar ese **comando de saneamiento por temporalidad solo para SPY**.
 
 ---
 
-## 1. Clasificación rápida
+## 1. Objetivo del comando
 
-* **Endpoint:**
-  `GET https://dora.robinhood.com/feed/instrument/8f92e76f-1e0e-4478-8580-16a6ffcfaef5/?`
-* **Transporte:** `http`
-* **Dominio:** `news_feed`
-* **Instrumento principal:**
+* **Símbolo fijo:** `SPY`
+* **Temporalidades:** `5m`, `15m`, `1h`
+* **Fuente de datos:** mismas respuestas que usa el **módulo de gráfica avanzada de velas de SPY**
+* **Acción:**
 
-  * `instrument_id: 8f92e76f-1e0e-4478-8580-16a6ffcfaef5`
-  * `symbol: SPY`
-* **Uso:** noticias/artículos relacionados con SPY (y otros símbolos asociados en cada nota).
-
-En tu `Envelope` lo marcaría como:
-
-```ts
-topic: 'instrument_news'
-```
+  * Comparar cada vela nueva con lo ya guardado.
+  * Si pasa los **middlewares de validación**, actualizar (“sanar”) la data en disco.
+  * Si llega una vela de una **fecha que no existe aún**, crear carpeta/archivo para esa fecha y temporalidad.
 
 ---
 
-## 2. Esquema del payload crudo
+## 2. Firma del comando (CLI sugerido)
 
-### 2.1. Top-level response
+Algo así:
 
-```ts
-type DoraInstrumentFeedResponse = {
-  next: string | null;
-  previous: string | null;
-  results: DoraFeedSection[];
-};
-
-type DoraFeedSection = {
-  display_label: string;        // "Company"
-  category: string;             // "company"
-  templates: string[];          // ["news_regular"]
-  contents: DoraFeedContent[];  // las noticias de verdad están aquí
-  url: string;                  // "https://dora.robinhood.com/feed/?category=company"
-  description: string | null;
-  ranking_version: string;      // "v0.1"
-  id: string;                   // id de la sección
-  logo_asset_name: string | null;
-  display_label_info_action: unknown | null;
-  feed_type: string | null;
-  feed_location: string | null;
-};
+```bash
+trade_api sanitize-spy-tf \
+  --since 2025-10-01 \
+  --tfs 5m,15m,1h
 ```
 
-### 2.2. Contenido (noticias)
+Internamente:
 
 ```ts
-type DoraFeedContent = {
-  content_type: 'feed_article';   // lo que te interesa
-  data: DoraArticleData;
-  id: string;                     // id del contenido en el feed
-  reason: string;                 // "instrument"
-  instrument_id: string | null;   // casi siempre null aquí
-  instrument_sector: string | null;
-};
+type Timeframe = '5m' | '15m' | '1h';
 
-type DoraArticleData = {
-  source: string;                 // "TipRanks", "Nasdaq", "Barchart", etc.
-  title: string;
-  published_at: string;           // "2025-11-12T21:25:03.000000Z" (ISO)
-  related_instruments: Array<{
-    instrument_id: string;
-    symbol: string;
-    name: string;
-    sector: string | null;
-    simple_name: string | null;
-  }>;
-  related_assets: Array<{
-    asset_id: string;
-    asset_type: 'equity' | 'index' | string;
-    symbol: string;
-  }>;
-  url: string;                    // link a la noticia
-  feedback: {
-    positive_count: number;
-  };
-  media: null | {
-    url: string;
-    width: number;
-    height: number;
-    mimetype: string;
-  };
-  preview_media: unknown | null;
-  preview_text: string;           // el “snippet” que ves en Robinhood
-  is_embedded: boolean;
-  logo_hex_code: string | null;
-  authors: string;                // string ya preformateado
-  popularity: number;             // 0 en tus ejemplos
-};
-```
-
-### 2.3. Envelope específico
-
-```ts
-type InstrumentNewsEnvelope = Envelope & {
-  topic: 'instrument_news';
-  instrument_id: string;
-  symbol: string;
-  payload: DoraInstrumentFeedResponse;
-};
-```
-
----
-
-## 3. Cómo recibirlo (handler)
-
-```ts
-async function fetchInstrumentNews(
-  client: HttpClient,
-  instrumentId: string,
-  symbol: string
-): Promise<InstrumentNewsEnvelope> {
-  const url = `https://dora.robinhood.com/feed/instrument/${instrumentId}/?`;
-  const text = await client.getText(url);
-  const payload = safeJsonParse<DoraInstrumentFeedResponse>(text);
-
-  return {
-    ts: Date.now(),
-    transport: 'http',
-    source: url,
-    topic: 'instrument_news',
-    symbol,
-    instrument_id: instrumentId,
-    payload,
-  };
+interface SanitizeSpyOptions {
+  since?: string;           // YYYY-MM-DD, opcional
+  tfs: Timeframe[];         // ['5m','15m','1h']
 }
 ```
 
 ---
 
-## 4. Normalización: qué filas queremos
+## 3. Configuración de URLs (con placeholders)
 
-De este tocho solo te interesa **una fila por noticia** (mínimo).
-Luego, si quieres algo más avanzado, puedes generar *una fila por noticia x símbolo relacionado*, pero eso puede venir después.
-
-Yo te propongo una tabla/tipo:
+Define un config central para las 3 fuentes de datos (2 URLs nuevas + la existente de la gráfica avanzada):
 
 ```ts
-type InstrumentNewsRow = {
-  symbol: string;                // SPY
-  instrument_id: string;         // id de SPY
+const SPY_TF_ENDPOINTS: Record<Timeframe, string> = {
+  '5m':  '<<TODO_URL_5M_SPY>>',      // TODO: url nueva 5m
+  '15m': '<<TODO_URL_15M_SPY>>',     // TODO: url nueva 15m
+  '1h':  '<<TODO_URL_1H_SPY>>',      // TODO: url nueva 1h
+};
 
-  article_id: string;            // content.id
-  provider: string;              // data.source
-  title: string;
-  published_ts: number;          // epoch ms
-  published_at: string;          // ISO original
-  date: string;                  // YYYY-MM-DD (extraído de published_at)
+/**
+ * Comentario:
+ * Una de estas (por ejemplo la de 5m) puede ser exactamente
+ * la URL que usa el módulo de gráfica avanzada de velas del SPY
+ * cuando selecciones esa temporalidad en Robinhood.
+ */
+```
 
-  url: string;
-  preview_text: string;
+Si prefieres mantener explícito “módulo avanzado”:
 
-  authors: string | null;
-  popularity: number | null;
+```ts
+const SPY_ADVANCED_CHART_URL = '<<TODO_URL_GRAFICA_AVANZADA_SPY>>';
+```
 
-  // agregados útiles
-  related_symbols: string;       // "SPY,QQQ,SPX" (join)
-  related_asset_types: string;   // "equity,index"
+y documentas en comentario que los payloads que llegan aquí son los que se usan como modelo para las 3 temporalidades.
 
-  has_media: boolean;
-  media_url: string | null;
-  media_width: number | null;
-  media_height: number | null;
-  media_mimetype: string | null;
+---
 
-  // hueco para futuro NLP
-  sentiment: string | null;      // "pos","neg","neu" o null
-  sentiment_score: number | null;
+## 4. Esquema mínimo de vela (payload normalizado)
 
-  fetched_ts: number;
+Suponiendo que el módulo avanzado devuelve algo tipo vela OHLC:
+
+```ts
+type RawSpyCandle = {
+  // nombres aproximados; los adaptas al payload real
+  begins_at: string;        // ISO, inicio de la vela
+  open_price: string;
+  high_price: string;
+  low_price: string;
+  close_price: string;
+  volume: string | number;
+  vwap?: string | number;
+  session?: string;         // 'reg', 'pre', 'post'
+  // ...otros campos que quieras ignorar o guardar
+};
+
+type SpyCandleRow = {
+  timestamp: number;        // epoch ms (empieza la vela)
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  vwap: number | null;
+  tf: Timeframe;
   source_transport: 'http';
   source_url: string;
 };
 ```
 
-Helpers:
-
-```ts
-function toEpochMs(iso: string): number {
-  return Date.parse(iso);
-}
-
-function isoToDate(iso: string): string {
-  return iso.slice(0, 10); // "YYYY-MM-DD"
-}
-```
-
-Normalizador principal:
-
-```ts
-function normaliseInstrumentNews(env: InstrumentNewsEnvelope): InstrumentNewsRow[] {
-  const res = env.payload;
-
-  const rows: InstrumentNewsRow[] = [];
-
-  for (const section of res.results) {
-    for (const content of section.contents) {
-      if (content.content_type !== 'feed_article') continue;
-
-      const d = content.data;
-      const published_ts = toEpochMs(d.published_at);
-      const date = isoToDate(d.published_at);
-
-      const relatedSymbols = d.related_assets?.map(a => a.symbol).join(',') ?? '';
-      const relatedTypes = d.related_assets?.map(a => a.asset_type).join(',') ?? '';
-
-      const media = d.media;
-
-      rows.push({
-        symbol: env.symbol,
-        instrument_id: env.instrument_id,
-
-        article_id: content.id,
-        provider: d.source,
-        title: d.title,
-        published_ts,
-        published_at: d.published_at,
-        date,
-
-        url: d.url,
-        preview_text: d.preview_text,
-
-        authors: d.authors || null,
-        popularity: d.popularity ?? null,
-
-        related_symbols: relatedSymbols,
-        related_asset_types: relatedTypes,
-
-        has_media: !!media,
-        media_url: media?.url ?? null,
-        media_width: media?.width ?? null,
-        media_height: media?.height ?? null,
-        media_mimetype: media?.mimetype ?? null,
-
-        sentiment: null,
-        sentiment_score: null,
-
-        fetched_ts: env.ts,
-        source_transport: env.transport,
-        source_url: env.source,
-      });
-    }
-  }
-
-  return rows;
-}
-```
-
 ---
 
-## 5. ¿Dónde y cómo guardar?
+## 5. Rutas y archivos (aprovechando lo ya definido)
 
-Aquí engancho con el esquema de news que te propuse al principio del proyecto:
-
-### Ruta base por símbolo y fecha de publicación
+Solo SPY:
 
 ```text
-data/stock/SPY/2025-11-12/news.csv
-data/stock/SPY/2025-11-11/news.csv
-...
+data/stock/SPY/<YYYY-MM-DD>/
+  5m.csv
+  15m.csv
+  1h.csv
 ```
 
-* La **partición** la haces por `date = published_at[0:10]`.
-* Así, una misma llamada que trae artículos de varios días se reparte en varios archivos.
+Columnas de cada `<tf>.csv`:
 
-### Encabezado `news.csv`
-
-```csv
-symbol,instrument_id,article_id,provider,title,published_ts,published_at,date,url,preview_text,authors,popularity,related_symbols,related_asset_types,has_media,media_url,media_width,media_height,media_mimetype,sentiment,sentiment_score,fetched_ts,source_transport,source_url
+```text
+timestamp,open,high,low,close,volume,vwap,source_transport,source_url
 ```
 
-### Lógica de escritura (pseudo)
+> ✅ Con esto, si llega una vela con fecha de un día que aún no existe, simplemente se crea `data/stock/SPY/<fecha>/<tf>.csv` con encabezado y se append/upsert.
+
+---
+
+## 6. Middleware de validación (“saneamiento”)
+
+### 6.1. Validación general (SPY + tipos)
 
 ```ts
-function persistInstrumentNews(rows: InstrumentNewsRow[]) {
-  const groups = groupBy(rows, r => `${r.symbol}/${r.date}`); // p.ej "SPY/2025-11-12"
+function validateSpyCandle(raw: RawSpyCandle, tf: Timeframe): boolean {
+  // 1) tipo numérico y no NaN
+  const nums = [
+    raw.open_price,
+    raw.high_price,
+    raw.low_price,
+    raw.close_price,
+    raw.volume,
+  ].map(Number);
 
-  for (const [key, group] of Object.entries(groups)) {
-    const [symbol, date] = key.split('/');
-    const dir = `data/stock/${symbol}/${date}`;
-    const filePath = `${dir}/news.csv`;
+  if (nums.some(n => !Number.isFinite(n))) return false;
 
-    appendCsv(filePath, group, { ensureHeader: true });
+  const [open, high, low, close, volume] = nums;
+
+  // 2) OHL C lógico
+  if (!(high >= open && high >= close && low <= open && low <= close)) {
+    return false;
+  }
+
+  if (volume < 0) return false;
+
+  // 3) timestamp válido y alineado a temporalidad
+  const ts = Date.parse(raw.begins_at);
+  if (!Number.isFinite(ts)) return false;
+
+  const date = new Date(ts);
+  const min = date.getUTCMinutes();
+
+  if (tf === '5m'  && min % 5  !== 0) return false;
+  if (tf === '15m' && min % 15 !== 0) return false;
+  if (tf === '1h'  && min !== 0)      return false;
+
+  // Otros checks: dentro de horarios de mercado si quieres,
+  // usando el endpoint /markets/XASE/hours/<date>/ que ya vimos.
+
+  return true;
+}
+```
+
+### 6.2. Normalización
+
+```ts
+function normalizeSpyCandle(raw: RawSpyCandle, tf: Timeframe, sourceUrl: string): SpyCandleRow {
+  const ts = Date.parse(raw.begins_at);
+
+  return {
+    timestamp: ts,
+    open:  Number(raw.open_price),
+    high:  Number(raw.high_price),
+    low:   Number(raw.low_price),
+    close: Number(raw.close_price),
+    volume: Number(raw.volume),
+    vwap:  raw.vwap != null ? Number(raw.vwap) : null,
+    tf,
+    source_transport: 'http',
+    source_url: sourceUrl,
+  };
+}
+```
+
+---
+
+## 7. Lógica de saneamiento / upsert por vela
+
+### 7.1. Resolver ruta según timestamp + tf
+
+```ts
+function resolveSpyPath(row: SpyCandleRow): string {
+  const d = new Date(row.timestamp);
+  const yyyy = d.getUTCFullYear();
+  const mm   = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const dd   = String(d.getUTCDate()).padStart(2, '0');
+
+  const dateStr = `${yyyy}-${mm}-${dd}`;
+
+  return `data/stock/SPY/${dateStr}/${row.tf}.csv`;
+}
+```
+
+### 7.2. Upsert (crea fecha/archivo si no existe)
+
+Pseudo-código:
+
+```ts
+async function upsertSpyCandle(row: SpyCandleRow) {
+  const filePath = resolveSpyPath(row);
+
+  // 1) si el archivo NO existe -> crear con header + fila
+  if (!fs.existsSync(filePath)) {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const header = 'timestamp,open,high,low,close,volume,vwap,source_transport,source_url\n';
+    const firstLine = serializeRow(row) + '\n';
+    fs.writeFileSync(filePath, header + firstLine);
+    return;
+  }
+
+  // 2) si ya existe, leer y reemplazar/insertar por timestamp
+  const lines = fs.readFileSync(filePath, 'utf8').trim().split('\n');
+  const header = lines[0];
+  const body   = lines.slice(1);
+
+  const tsStr = String(row.timestamp);
+  let replaced = false;
+
+  const newBody = body.map(line => {
+    const [ts] = line.split(',');
+    if (ts === tsStr) {
+      replaced = true;
+      return serializeRow(row); // reemplaza la fila corrupta
+    }
+    return line;
+  });
+
+  if (!replaced) {
+    // Si no existía, añade y luego (opcional) reordena por timestamp
+    newBody.push(serializeRow(row));
+    newBody.sort((a, b) => Number(a.split(',')[0]) - Number(b.split(',')[0]));
+  }
+
+  fs.writeFileSync(filePath, [header, ...newBody].join('\n') + '\n');
+}
+
+function serializeRow(row: SpyCandleRow): string {
+  const { timestamp, open, high, low, close, volume, vwap, source_transport, source_url } = row;
+  return [
+    timestamp,
+    open,
+    high,
+    low,
+    close,
+    volume,
+    vwap ?? '',
+    source_transport,
+    source_url,
+  ].join(',');
+}
+```
+
+> 🔹 Si llega un dato con **fecha anterior a todo lo que había**, `resolveSpyPath` generará una ruta de un día que no existe → `upsertSpyCandle` creará carpeta y CSV nuevos. Eso cumple tu requisito de backfill automático.
+
+---
+
+## 8. Flujo completo del comando
+
+```ts
+async function sanitizeSpyTf(opts: SanitizeSpyOptions) {
+  const timeframes = opts.tfs;
+
+  for (const tf of timeframes) {
+    const url = SPY_TF_ENDPOINTS[tf]; // TODO: poner URLs reales
+
+    const rawResponse = await fetch(url);
+    const json = await rawResponse.json();
+
+    // aquí adaptas a cómo venga exactamente:
+    const rawCandles: RawSpyCandle[] = json.results ?? json.candles ?? [];
+
+    for (const raw of rawCandles) {
+      if (!validateSpyCandle(raw, tf)) continue;
+
+      const row = normalizeSpyCandle(raw, tf, url);
+      await upsertSpyCandle(row);
+    }
   }
 }
 ```
 
 ---
 
-## 6. ¿Se guarda o no?
+## 9. Resumen rápido de lo importante
 
-* ✅ **Sí**, merece la pena guardar, pero como **eventos ligeros**:
+* **Solo SPY**, hardcodeado en rutas.
+* **Temporalidades fijas:** `5m`, `15m`, `1h`.
+* **3 URLs configurables** (2 nuevas + la del módulo de velas avanzadas) dejadas con `TODO` en comentarios, como pediste.
+* **Middleware de validación**:
 
-  * Tienes:
+  * tipos numéricos y OHL C lógicos;
+  * alineación exacta de timestamp a la temporalidad;
+  * opcional: dentro del horario de mercado.
+* **Saneamiento** = *upsert por timestamp*:
 
-    * fecha/hora,
-    * fuente,
-    * título,
-    * preview,
-    * URL,
-    * símbolos relacionados.
-  * Te sirve para:
+  * si existe → reemplaza fila “sucia”;
+  * si no existe → añade, creando fecha/archivo si hace falta.
 
-    * ver qué noticias había alrededor de un spike de precio,
-    * alimentar un motor de alertas (por ejemplo, “cuando haya news de SPY con palabra ‘shutdown’”),
-    * entrenar un futuro modelo de sentimiento (usa `preview_text` y `title`).
+Cuando tengas las URLs reales del módulo avanzado y las nuevas temporalidades, solo tendrías que rellenar los `<<TODO_...>>` y este comando te sirve como “motor de saneamiento” de toda la data histórica e intradía de SPY para 5m, 15m y 1h.
 
-* **No guardas**:
-
-  * Body completo del artículo (no lo tienes aquí, solo el link),
-  * datos irrelevantes para trading (p. ej. `ranking_version`, `feed_location`).
-
-Opcionalmente puedes limitar:
-
-* Solo guardar noticias de los últimos **N días** o
-* No duplicar `article_id` (si repites llamada al mismo feed).
-
----
-
-## 7. Resumen rápido para esta petición
-
-1. **Recibes** `InstrumentNewsEnvelope` con `topic='instrument_news'`.
-2. **Normalizas**:
-
-   * Flatten `response.results[].contents[]`
-   * Filtras `content_type === 'feed_article'`
-   * Mapeas a `InstrumentNewsRow`.
-3. **Particionas** por `symbol` y `date` (de `published_at`) y haces append a:
-
-   * `data/stock/SPY/YYYY-MM-DD/news.csv`
-4. **Campos clave para tu motor de trading**:
-
-   * `published_ts` (timeline),
-   * `provider`, `title`, `preview_text`, `url`,
-   * `related_symbols` (para saber si toca QQQ, SPX, NVDA, etc.).
 
 ---
