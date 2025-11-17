@@ -11,6 +11,7 @@ import { registerStartCommand } from './commands/start.js';
 import { registerStopCommand } from './commands/stop.js';
 import { registerStatusCommand } from './commands/status.js';
 import { registerRunConfigCommand } from './commands/run-config.js';
+import { registerSanitizeSpyTfCommand } from './commands/sanitize-spy-tf.js';
 import { ProcessManager } from '../orchestrator/processManager.js';
 import type { CommandContext, GlobalOptions, ProcessManagerLike } from './commands/shared.js';
 
@@ -248,6 +249,7 @@ function buildProgram(manager: ProcessManager): Command {
   registerStopCommand(program, context);
   registerStatusCommand(program, context);
   registerRunConfigCommand(program, context);
+  registerSanitizeSpyTfCommand(program, context);
 
   attachHelp(program);
 
