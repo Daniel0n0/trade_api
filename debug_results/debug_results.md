@@ -18,269 +18,270 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 30:
+PUNTO 31:
 
-¡Vamos! Armemos el **módulo de “Greeks & Stats” para SPY** (la vista tipo `robinhood.com/stocks/SPY`) con todo lo necesario para calcular griegas, IV metrics y estadísticas del subyacente, usando la petición que ya viste (horarios) y el resto de señales típicas de esa pantalla.
+¡Excelente captura! Este endpoint de **ETP details** es justo el que alimenta la ficha “fundamental/estática” de SPY en la vista de acciones/opciones. Te dejo la integración completa del módulo con mapeos, normalización, cálculos y alertas útiles para trading con opciones.
 
-# Qué hará el módulo
+# Qué entrega este endpoint (y para qué nos sirve)
 
-* Mostrar **estado de mercado** (regular/extended/closed) y relojes.
-* Ficha del subyacente (**precio, variación, Vol, ATR, RV**).
-* **Greeks agregadas** por vencimiento y por strike (Delta/Gamma/Theta/Vega).
-* **Smile de IV**, **IV Rank** e **IV Percentile** por tenor.
-* Explorador de **0DTE / weekly** y mapas de exposición (Gamma/Theta).
-* Señales rápidas (overpriced IV, contango/backwardation en term structure, skew).
+**GET** `bonfire.robinhood.com/instruments/{instrument_id}/etp-details/` (tu `instrument_id`= `8f92e76f-...`)
 
----
+Campos clave que ya viste y cómo los usaremos:
 
-# 1) Data sources (endpoints & campos)
+* **Identidad**: `instrument_id`, `symbol`, `index_tracked`, `category`, `broad_category_group`, `is_actively_managed`, `is_leveraged`, `is_inverse`, `is_volatility_linked`, `is_crypto_futures`.
+* **Estructura/costos**: `aum` (AUM en USD), `gross_expense_ratio`, `sec_yield`, `documents.prospectus`.
+* **Performance**:
 
-### A. Horarios (ya observado)
+  * `quarter_end_date` + `quarter_end_performance` (market/nav: 1Y/3Y/5Y/10Y/since_inception).
+  * `month_end_date` + `month_end_performance` (idem).
+* **Composición**:
 
-**GET** `/markets/XASE/hours/{YYYY-MM-DD}/`
-Campos clave:
-
-* `is_open`, `opens_at`, `closes_at`, `extended_opens_at`, `extended_closes_at`
-* `index_option_0dte_closes_at`, `index_option_non_0dte_closes_at`
-* `index_options_extended_hours:{curb_opens_at, curb_closes_at}`
-
-> Persistimos todo tal cual y derivamos `session` actual.
-
-### B. Quote del subyacente (SPY)
-
-**GET** `/marketdata/quotes/?symbols=SPY`
-Campos esperados: `last_trade_price, previous_close, trading_halted, bid/ask, volume, updated_at`.
-
-### C. OHLC histórico (para RV/ATR/RSI)
-
-**GET** `/marketdata/historicals/SPY/?interval=5minute|day&span=...`
-Campos: `begins_at, open_price, close_price, high_price, low_price, volume`.
-
-### D. Fundamentals (si disponible)
-
-**GET** `/fundamentals/?symbols=SPY`
-Campos útiles: `market_cap, pe_ratio, dividend_yield, high_52_weeks, low_52_weeks`.
-
-### E. Cadena de opciones
-
-1. **Instrumento/chain id**
-   **GET** `/instruments/?symbol=SPY` → `id`
-   **GET** `/options/chains/?equity_instrument_ids={id}` → `chain_id`
-2. **Listado de contratos**
-   **GET** `/options/instruments/?chain_id={chain_id}&state=active&tradability=tradable`
-   Campos: `id, expiration_date, strike_price, type(call/put), min_ticks...`
-3. **Quotes + Greeks**
-   **GET** `/marketdata/options/quotes/?ids={ids...}`
-   (o variante de batch)
-   Campos esperados por contrato:
-   `mark_price, bid_price, ask_price, last_trade_price, volume, open_interest, implied_volatility, delta, gamma, theta, vega, rho, updated_at`.
-
-> Nota: nombres exactos pueden variar según versión, pero el módulo es robusto a eso (mapeo por keys presentes).
+  * `total_holdings`, `sectors_portfolio_date`, `sectors:[{name, weight}]`.
+  * `holdings_portfolio_date`, `holdings:[{symbol, name, weight, sector, description}]`.
+  * `show_holdings_visualization` (bandera UI).
 
 ---
 
-# 2) Esquemas normalizados (CSV / tablas)
+# Normalización (tablas/CSV)
 
-### a) `equity_hours`
-
-```
-date,is_open,opens_at,closes_at,extended_opens_at,extended_closes_at,
-index_option_0dte_closes_at,index_option_non_0dte_closes_at,
-curb_opens_at,curb_closes_at,fx_is_open,fx_opens_at,fx_closes_at
-```
-
-### b) `equity_quote`
+### 1) `etp_profile`
 
 ```
-ts,symbol,last_px,prev_close,change_abs,change_pct,bid,ask,mid,spread,volume,halted,updated_at
+instrument_id,symbol,index_tracked,category,broad_category_group,
+is_actively_managed,is_leveraged,is_inverse,is_volatility_linked,is_crypto_futures,
+aum_usd,expense_ratio,sec_yield,prospectus_url,inception_date,total_holdings,
+last_sectors_date,last_holdings_date,show_holdings_visualization,asof_ts
 ```
 
-### c) `equity_ohlc`
+**Transformaciones**
+
+* `aum_usd = parseFloat(aum)`
+* `expense_ratio = parseFloat(gross_expense_ratio)` (porcentaje, ej. 0.0945% → guarda como 0.0945)
+* `sec_yield = parseFloat(sec_yield)`
+* `asof_ts = now()`.
+
+### 2) `etp_performance`
 
 ```
-begins_at,open,high,low,close,volume,interval
+instrument_id,asof_type,asof_date,kind,period,return_pct
 ```
 
-### d) `options_instruments`
+* **Ejemplos**:
+
+  * `(SPY, 'quarter_end','2025-09-30','market','1Y', 17.513640)`
+  * `(SPY, 'month_end','2025-10-31','nav','5Y', 17.526450)`
+* `period ∈ {1Y,3Y,5Y,10Y,since_inception}`, `kind ∈ {market, nav}`.
+
+### 3) `etp_sectors`
 
 ```
-id,chain_id,symbol,expiration,strike,type,min_tick,tradability
+instrument_id,asof_date,sector,weight_pct
 ```
 
-### e) `options_quotes_greeks`
+* De `sectors_portfolio_date` + `sectors[].weight`.
+
+### 4) `etp_holdings`
 
 ```
-ts,option_id,expiration,strike,type,
-bid,ask,mid,spread,mark,last,volume,open_interest,
-iv,delta,gamma,theta,vega,rho,updated_at
+instrument_id,asof_date,rank,symbol,name,sector,weight_pct
 ```
 
-### f) `iv_timeseries` (por tenor y/o por at-the-money)
-
-```
-ts,tenor,iv_atm,iv_10d,iv_30d,iv_60d,iv_90d  // según lo que recuperes/estimes
-```
+* Asigna `rank` por orden descendente de `weight`. (En tu payload vienen top holdings: NVDA 8.00, AAPL 6.93, MSFT 6.44, …).
 
 ---
 
-# 3) Cálculos y derivados
+# Cálculos derivados (lo “bonito” de este módulo)
 
-### Subyacente
+### A) Concentración y diversificación
 
-* `mid = (bid+ask)/2` si ambos; `spread = ask-bid`.
-* **ATR(14)** (diario): Wilder.
-* **Realized Vol (RV)**:
+* **Top-10 %**: suma de `weight_pct` de los 10 mayores.
+* **Herfindahl-Hirschman (HHI)** sectorial: `Σ(weight_sector^2)`.
 
-  * 5d/10d/20d anualizada: stdev de **log returns** * √252.
-* **RSI(14)** y **MA(20/50)** para contexto.
+  * **Interpretación** (regla interna):
 
-### Opciones (por contrato)
+    * HHI < 1200 → Bien diversificado
+    * 1200–2500 → Moderada concentración
+    * > 2500 → Alta concentración
+* **Bandera de concentración tecnológica**: sector *Technology* > 30% → “tech-heavy” (tu caso: **35.95%**).
 
-* Completar `mid`/`spread`.
-* **Greeks**: usar las que entrega el API; si faltan, estimar con Black-Scholes usando `iv`, `r` (overnight), `q` (dividendo SPY).
-* **Moneyness**: `spot/strike` y `Δ` como proxy.
-* **Liquidity score**: normalizado por `spread %`, `volume`, `open_interest`.
+### B) “Costos/eficiencia”
 
-### Agregados por vencimiento (tenor buckets: 0DTE, 1-7d, 8-30d, 31-60d, >60d)
+* **Expense Ratio anual**: 0.0945% (ultra bajo).
+* **SEC Yield** (rendimiento corriente anualizado): 1.04% → contexto de carry vs. T-Bills (para decisiones de puts covered o cash-secured puts).
 
-* **Gamma exposure (GEX)** aproximada: Σ(`gamma` · `notional_per_contract`).
-* **Theta decay**: Σ(`theta` · notional).
-* **Promedios ponderados por OI**: `iv`, `delta` medios.
-* **Term structure**: IV ATM por tenor.
+### C) Rendimientos (para backtests simples de estrategias)
 
-### IV metrics
+* **Pick de “as-of”**: Preferimos **month_end** para reporting en UI (más fresco: 2025-10-31).
+* **Market vs NAV**: muestra ambos; diferencia suele ser mínima en SPY (tracking fuerte).
 
-* **IV Rank (lookback 1y)**:
-  `IVR = (IV_now - IV_min) / (IV_max - IV_min)` ∈ [0,1]
-* **IV Percentile (1y)**: % de días con IV ≤ IV_now.
-* **Skew**: diferencia IV ATM vs IV 25Δ puts/calls por vencimiento.
+### D) Lecturas rápidas para opciones
+
+* **Sesgo macro**: tech 36% → **beta a growth/semis** más alta; vega del subyacente tiende a reaccionar a megacaps (NVDA, AAPL, MSFT).
+* **Eventos**: con `prospectus_url` listo para link, y combinable con calendario de dividendos (si luego conectamos dividend endpoints) para ajustes de calls ITM/assignment.
 
 ---
 
-# 4) Reglas de calidad & sanity checks
+# UI/UX (secciones nuevas que sumamos al módulo Greeks & Stats)
 
-* Rechazar cotas con `bid>ask`.
-* Marcar **stale** si `now - updated_at > 15s` (regular) o `>60s` (extended).
-* Spread extremo: `spread / mid > 2%` → “ilíquido”.
-* Opciones sin `volume` y `OI` muy bajo → degradar ranking.
-* En 0DTE, limitar strikes ±5% del spot para cálculos “ATM cluster”.
+1. **Tarjeta ETP “Perfil SPY”**
 
----
+   * **AUM** (USD), **Expense Ratio**, **SEC Yield**.
+   * **Index Tracked**: *S&P 500 TR USD*.
+   * Chips: *Passive*, *No leverage*, *No inverse*, *Equity—Large Blend*.
+   * Link: **Prospectus** (abre en nueva pestaña).
 
-# 5) UI/UX propuesto (componentes)
+2. **Performance (selector Month-end / Quarter-end)**
 
-1. **Header de mercado**
+   * Mini tabla: Market & NAV → 1Y | 3Y | 5Y | 10Y | SI.
+   * Tooltip: “Fuentes: Robinhood Bonfire (as-of: {date}).”
 
-   * Pill: `OPEN / EXTENDED / CLOSED`
-   * Próximo hito: `opens_at / closes_at / curb_*` (según hora actual NY).
-2. **Tarjeta SPY**
+3. **Sectors**
 
-   * Precio, cambio %, **ATR(14)**, **RV(20d)**, Volumen.
-   * Min/Max 52s si fundamentals disponibles.
-3. **Smile de IV (chart)**
+   * Barra apilada o donut: pesos sectoriales.
+   * Badges de alerta:
 
-   * Eje X: strike% (strike/spot−1), Eje Y: IV; selector de vencimiento.
-4. **Term structure (chart)**
+     * *Tech >30%* (ON en tu payload: 35.95).
+     * *Energy <3%* (2.88) → cobertura limitada a shocks de crudo (útil si operas XLE puts como hedge alternativo).
 
-   * IV ATM vs días a vencimiento; destacar IVR.
-5. **Tabla de opciones** (filtrable)
+4. **Top Holdings**
 
-   * `exp, strike, type, mid, spread%, iv, delta, gamma, theta, vega, vol, OI, updated_at`
-   * Badge para 0DTE/weekly.
-6. **Greeks por vencimiento**
-
-   * Chips: ΣGamma, ΣTheta, IV ATM, IVR, %ITM.
-7. **Alertas**
-
-   * “IVR>0.8” (caro), “Term structure invertida”, “Gamma flip cerca del spot”, “Spread%>1%”.
+   * Tabla compacta: Rank, Ticker, Peso, Sector.
+   * Nota: para **estrategias de opciones en SPY**, vigilar earnings/flows de **NVDA/AAPL/MSFT**: impactos en la skew y IV de SPY.
 
 ---
 
-# 6) Lógica de sesión (con tu endpoint de horas)
+# Reglas de refresco & caching
 
-* Determinar `session` en tiempo real:
+* **ETP details** no cambia intradía con alta frecuencia:
 
-  * `regular` si `opens_at ≤ now < closes_at`
-  * `extended` si dentro de `[extended_opens_at, extended_closes_at)`
-  * `curb` si `index_options_extended_hours` activo y dentro del rango
-  * `closed` en otro caso
-* Mostrar **timer** al próximo cambio de estado.
+  * **Sectors/Holdings**: refrescar **diario** (o cuando `*_portfolio_date` cambie).
+  * **Performance**: refrescar **mensual** (month_end) y **trimestral** (quarter_end).
+  * **AUM**: semanal o cuando detectes cambio >1%.
 
 ---
 
-# 7) Pipelines de ingestión (cada 5–10s)
+# Validaciones & saneamiento
 
-1. **quote SPY** → `equity_quote` (+ derivados).
-2. **options quotes+greeks** (batch) → `options_quotes_greeks`.
-
-   * Mapear a `options_instruments` por `option_id`.
-3. Cada 1–5 min: **historicals** para **RV/ATR** (buffer local).
-4. Al cierre: consolidar **IV Rank/Percentile** (lookback 1y) y snapshots.
-
-Paths sugeridos:
-
-```
-data/equity/SPY/quote.csv
-data/equity/SPY/ohlc_<interval>.csv
-data/options/SPY/instruments.csv
-data/options/SPY/quotes_greeks.csv
-data/options/SPY/iv_timeseries.csv
-data/alerts/options/SPY/<YYYY-MM-DD>.csv
-```
+* `weight_pct` debe sumar ~100% (tolerancia ±0.5%).
+* Si `total_holdings` > filas reales en `holdings`, marcar que son **top holdings** (no el universo completo) → ya es lo normal en front.
+* Si `prospectus_url` falta → ocultar CTA.
+* Tipos booleanos (is_leveraged/inverse/volatility_linked/crypto_futures) → chips y filtros.
 
 ---
 
-# 8) Señales y uso práctico (mentor mode)
+# Alertas útiles (para tu tablero de opciones)
 
-* **Scalp 0–3 días**: busca **IVR bajo** con spreads ajustados si vendes delta (poco premio) o **IVR alto** si vendes theta (crédito) — siempre con liquidez (spread% < 0.6% en SPY suele ser óptimo) y stops por **Δ** y **IV spike**.
-* **Swing 1–2 semanas**: evalúa **term structure** y **skew**: calls baratos cuando skew de puts está muy cargado; para coberturas, prioriza puts con **vega eficiente** (30–45d).
-* **Gestión**: alertas por `IVR cruza 0.7`, `spread% se ensancha`, `stale data`, y `Gamma flip` cercano al spot (si ΣGamma cambia de signo alrededor del precio).
+1. **Concentración sectorial**
+
+   * Trigger: `Technology ≥ 30%` → *“SPY tech-heavy: considera la sensibilidad a resultados mega-cap; IV puede inflarse en ventanas de earnings de NVDA/AAPL/MSFT.”*
+2. **Top-10 > 35%**
+
+   * Si supera el umbral → *“Riesgo idiosincrático de mega-cap en un ETF broad.”*
+3. **Expense Ratio > 0.3%** (no aplica a SPY, pero deja la regla genérica).
+4. **Diferencia Market vs NAV** fuera de banda (tracking error) → alerta si |Market−NAV| en 1Y difiere >50 bps (en SPY es raro).
 
 ---
 
-# 9) Pseudocódigo clave (normalización quotes+greeks)
+# Cómo conectarlo con tu módulo de Greeks
+
+* En la **cabecera** de SPY: añade un **panel lateral** “Fundamentals” alimentado por este endpoint.
+* En la **sección de estrategias**:
+
+  * Si *Tech concentration* alerta = ON y **IV Rank** (de tu módulo) > 0.7 → favorece **ventas de prima** (credit spreads/iron condors) salvo evento binario próximo (CPI/FOMC/earnings NVDA).
+  * Si *Tech* alta pero **IV Rank** bajo → calls débiles (debit) posiblemente ineficientes; mejor **verticales** o **diagonales** con calendario sobre vencimientos de mega-caps.
+
+---
+
+# Pseudocódigo (parse/guardar)
 
 ```ts
-type OptRow = {
-  ts:number, option_id:string, expiration:string, strike:number, type:'call'|'put',
-  bid:number|null, ask:number|null, mid:number|null, spread:number|null,
-  mark:number|null, last:number|null, volume:number|null, open_interest:number|null,
-  iv:number|null, delta:number|null, gamma:number|null, theta:number|null, vega:number|null, rho:number|null,
-  updated_at:string|null
+type EtpDetails = {
+  instrument_id:string; symbol:string; index_tracked:string; category:string;
+  broad_category_group:string; is_actively_managed:boolean; is_leveraged:boolean;
+  is_inverse:boolean; is_volatility_linked:boolean; is_crypto_futures:boolean;
+  aum:string; sec_yield:string; gross_expense_ratio:string;
+  documents?:{prospectus?:string};
+  inception_date?:string; total_holdings?:number;
+  quarter_end_date?:string; quarter_end_performance?:any;
+  month_end_date?:string; month_end_performance?:any;
+  sectors_portfolio_date?:string; sectors?:{name:string; weight:string}[];
+  holdings_portfolio_date?:string; holdings?:{symbol:string; name:string; weight:string; sector?:string}[];
 };
 
-function normalizeOptionQuote(raw:any): OptRow {
-  const b = num(raw.bid_price), a = num(raw.ask_price);
-  const both = b!=null && a!=null && a>=b;
-  const mid = both ? (a+b)/2 : null;
-  const spread = both ? (a-b) : null;
-
-  return {
-    ts: Date.now(),
-    option_id: raw.instrument_id || raw.id,
-    expiration: raw.expiration_date,
-    strike: +raw.strike_price,
-    type: raw.type,
-    bid: b, ask: a, mid, spread,
-    mark: num(raw.mark_price), last: num(raw.last_trade_price),
-    volume: int(raw.volume), open_interest: int(raw.open_interest),
-    iv: num(raw.implied_volatility),
-    delta: num(raw.delta), gamma: num(raw.gamma), theta: num(raw.theta), vega: num(raw.vega), rho: num(raw.rho),
-    updated_at: raw.updated_at || null
+function parseEtpDetails(raw:EtpDetails){
+  const profile = {
+    instrument_id: raw.instrument_id,
+    symbol: raw.symbol,
+    index_tracked: raw.index_tracked,
+    category: raw.category,
+    broad_category_group: raw.broad_category_group,
+    is_actively_managed: !!raw.is_actively_managed,
+    is_leveraged: !!raw.is_leveraged,
+    is_inverse: !!raw.is_inverse,
+    is_volatility_linked: !!raw.is_volatility_linked,
+    is_crypto_futures: !!raw.is_crypto_futures,
+    aum_usd: num(raw.aum),
+    expense_ratio: num(raw.gross_expense_ratio),
+    sec_yield: num(raw.sec_yield),
+    prospectus_url: raw.documents?.prospectus ?? null,
+    inception_date: raw.inception_date ?? null,
+    total_holdings: raw.total_holdings ?? null,
+    last_sectors_date: raw.sectors_portfolio_date ?? null,
+    last_holdings_date: raw.holdings_portfolio_date ?? null,
+    show_holdings_visualization: !!raw.show_holdings_visualization,
+    asof_ts: new Date().toISOString(),
   };
+
+  const perf = [];
+  for (const asof of ['quarter','month'] as const){
+    const key = asof==='quarter'?'quarter_end_performance':'month_end_performance';
+    const dkey = asof==='quarter'?'quarter_end_date':'month_end_date';
+    const asof_date = (raw as any)[dkey] ?? null;
+    if (!asof_date || !(raw as any)[key]) continue;
+    for (const kind of ['market','nav'] as const){
+      const bucket = (raw as any)[key]?.[kind];
+      if (!bucket) continue;
+      for (const period of ['1Y','3Y','5Y','10Y','since_inception'] as const){
+        const v = num(bucket[period]);
+        if (v!=null) perf.push({
+          instrument_id: raw.instrument_id, asof_type: asof+'_end', asof_date,
+          kind, period, return_pct: v
+        });
+      }
+    }
+  }
+
+  const sectors = (raw.sectors??[]).map(s=>({
+    instrument_id: raw.instrument_id,
+    asof_date: raw.sectors_portfolio_date ?? null,
+    sector: s.name,
+    weight_pct: num(s.weight)
+  }));
+
+  const holdings = (raw.holdings??[])
+    .sort((a,b)=>num(b.weight)-num(a.weight))
+    .map((h,idx)=>({
+      instrument_id: raw.instrument_id,
+      asof_date: raw.holdings_portfolio_date ?? null,
+      rank: idx+1,
+      symbol: h.symbol,
+      name: h.name,
+      sector: h.sector ?? null,
+      weight_pct: num(h.weight)
+    }));
+
+  return {profile, perf, sectors, holdings};
 }
+
+function num(x:any){ if(x==null) return null; const v=parseFloat(String(x)); return Number.isFinite(v)?v:null; }
 ```
 
 ---
 
-# 10) Checklist de entrega
+# “Mentor tips” para operativa real (SPY)
 
-* [ ] Ingesta de **horarios** (ya listo) → `session`.
-* [ ] Quote SPY + derivados (mid/spread, ATR, RV).
-* [ ] Chain discovery (instrument → chain_id) y **batch de quotes+greeks**.
-* [ ] Agregados por vencimiento + term structure.
-* [ ] IV Rank/Percentile (lookback 1y) y skew.
-* [ ] UI con smile, term structure y tabla filtrable.
-* [ ] Alertas configuradas.
+* **Concentración tech (36%)** → cuando haya **earnings de NVDA/AAPL/MSFT**, la **smile** de SPY suele sesgar puts (skew) y subir IV: aprovecha con **put credit spreads** lejos del spot si **IVR alto** y spreads <0.5%.
+* **Expense 0.0945%** + **tracking perfecto** → para **diagonales** y **calendars** usa SPY como subyacente estándar (mejor que productos apalancados).
+* Si tu módulo de **Greeks** detecta **ΣGamma** cercano a flip y el panel **ETP** marca **Top-10>30%**, ten cuidado con gaps por single-name megacaps.
 
 ---
