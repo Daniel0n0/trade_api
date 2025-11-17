@@ -18,322 +18,291 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 40:
+PUNTO 41:
 
-Perfecto, vamos a diseñar ese **comando de saneamiento por temporalidad solo para SPY**.
 
----
-
-## 1. Objetivo del comando
-
-* **Símbolo fijo:** `SPY`
-* **Temporalidades:** `5m`, `15m`, `1h`
-* **Fuente de datos:** mismas respuestas que usa el **módulo de gráfica avanzada de velas de SPY**
-* **Acción:**
-
-  * Comparar cada vela nueva con lo ya guardado.
-  * Si pasa los **middlewares de validación**, actualizar (“sanar”) la data en disco.
-  * Si llega una vela de una **fecha que no existe aún**, crear carpeta/archivo para esa fecha y temporalidad.
+Perfecto, aplico la **ORDEN DEL MOMENTO** a *esta misma petición de `legend`* pensando ya en que es la **fuente maestra** para sanear SPY y alimentar tus 5m/15m/1h. 
 
 ---
 
-## 2. Firma del comando (CLI sugerido)
+## 1. Estructura de la data (schema)
 
-Algo así:
-
-```bash
-trade_api sanitize-spy-tf \
-  --since 2025-10-01 \
-  --tfs 5m,15m,1h
-```
-
-Internamente:
+### a) Frame WS genérico
 
 ```ts
-type Timeframe = '5m' | '15m' | '1h';
+type LegendFrame =
+  | FeedDataFrame
+  | FeedConfigFrame;
 
-interface SanitizeSpyOptions {
-  since?: string;           // YYYY-MM-DD, opcional
-  tfs: Timeframe[];         // ['5m','15m','1h']
-}
-```
-
----
-
-## 3. Configuración de URLs (con placeholders)
-
-Define un config central para las 3 fuentes de datos (2 URLs nuevas + la existente de la gráfica avanzada):
-
-```ts
-const SPY_TF_ENDPOINTS: Record<Timeframe, string> = {
-  '5m':  '<<TODO_URL_5M_SPY>>',      // TODO: url nueva 5m
-  '15m': '<<TODO_URL_15M_SPY>>',     // TODO: url nueva 15m
-  '1h':  '<<TODO_URL_1H_SPY>>',      // TODO: url nueva 1h
+type FeedDataFrame = {
+  type: 'FEED_DATA';
+  channel: number;              // 1=candles, 3=Trade, 5=TradeETH, 7=Quote (en tu captura)
+  data: any[];                  // array de eventos homogéneos
 };
 
-/**
- * Comentario:
- * Una de estas (por ejemplo la de 5m) puede ser exactamente
- * la URL que usa el módulo de gráfica avanzada de velas del SPY
- * cuando selecciones esa temporalidad en Robinhood.
- */
-```
-
-Si prefieres mantener explícito “módulo avanzado”:
-
-```ts
-const SPY_ADVANCED_CHART_URL = '<<TODO_URL_GRAFICA_AVANZADA_SPY>>';
-```
-
-y documentas en comentario que los payloads que llegan aquí son los que se usan como modelo para las 3 temporalidades.
-
----
-
-## 4. Esquema mínimo de vela (payload normalizado)
-
-Suponiendo que el módulo avanzado devuelve algo tipo vela OHLC:
-
-```ts
-type RawSpyCandle = {
-  // nombres aproximados; los adaptas al payload real
-  begins_at: string;        // ISO, inicio de la vela
-  open_price: string;
-  high_price: string;
-  low_price: string;
-  close_price: string;
-  volume: string | number;
-  vwap?: string | number;
-  session?: string;         // 'reg', 'pre', 'post'
-  // ...otros campos que quieras ignorar o guardar
+type FeedConfigFrame = {
+  type: 'FEED_CONFIG';
+  channel: number;
+  dataFormat: 'FULL';
+  aggregationPeriod: number;    // 0.25, etc
+  eventFields?: Record<string, string[]>;
 };
+```
 
-type SpyCandleRow = {
-  timestamp: number;        // epoch ms (empieza la vela)
-  open: number;
-  high: number;
-  low: number;
+### b) Eventos de `FEED_DATA`
+
+```ts
+type CandleEvent = {
   close: number;
+  eventFlags: number;
+  eventSymbol: string;    // p.ej "SPY{=d,a=m}" o "SPY{=h,tho=true,a=m}"
+  eventType: 'Candle';
+  eventTime: number;      // 0
+  high: number;
+  impVolatility: number;
+  low: number;
+  open: number;
+  openInterest: string;   // "NaN"
+  time: number;           // epoch ms del inicio del candle
   volume: number;
-  vwap: number | null;
-  tf: Timeframe;
-  source_transport: 'http';
-  source_url: string;
+  vwap: number;
+  sequence: number;
+  count: number;
+};
+
+type TradeEvent = {
+  price: number;
+  dayVolume: number;
+  eventSymbol: string;    // "SPY"
+  eventType: 'Trade';
+  time: number;           // epoch ms
+};
+
+type TradeEthEvent = {
+  price: number;
+  dayVolume: number;
+  eventSymbol: string;
+  eventType: 'TradeETH';
+  time: number;
+};
+
+type QuoteEvent = {
+  askPrice: number;
+  askSize: number;
+  askTime: number;
+  bidPrice: number;
+  bidSize: number;
+  bidTime: number;
+  eventSymbol: string;    // "SPY"
+  eventType: 'Quote';
 };
 ```
 
----
+### c) Filtrado SPY
 
-## 5. Rutas y archivos (aprovechando lo ya definido)
-
-Solo SPY:
-
-```text
-data/stock/SPY/<YYYY-MM-DD>/
-  5m.csv
-  15m.csv
-  1h.csv
-```
-
-Columnas de cada `<tf>.csv`:
-
-```text
-timestamp,open,high,low,close,volume,vwap,source_transport,source_url
-```
-
-> ✅ Con esto, si llega una vela con fecha de un día que aún no existe, simplemente se crea `data/stock/SPY/<fecha>/<tf>.csv` con encabezado y se append/upsert.
+Aunque el stream puede mandar más símbolos, tú **solo procesas si `eventSymbol` empieza por `"SPY"`**.
 
 ---
 
-## 6. Middleware de validación (“saneamiento”)
-
-### 6.1. Validación general (SPY + tipos)
+## 2. Cómo recibirla
 
 ```ts
-function validateSpyCandle(raw: RawSpyCandle, tf: Timeframe): boolean {
-  // 1) tipo numérico y no NaN
-  const nums = [
-    raw.open_price,
-    raw.high_price,
-    raw.low_price,
-    raw.close_price,
-    raw.volume,
-  ].map(Number);
+const ws = new WebSocket('wss://api.robinhood.com/marketdata/streaming/legend/', {
+  headers: {
+    'sec-websocket-protocol': `bearer, ${accessToken}`,
+  },
+});
 
-  if (nums.some(n => !Number.isFinite(n))) return false;
+ws.onmessage = (msg) => {
+  const ts = Date.now();
+  const payload = safeJsonParse(msg.data);
+  if (!payload) return;
 
-  const [open, high, low, close, volume] = nums;
-
-  // 2) OHL C lógico
-  if (!(high >= open && high >= close && low <= open && low <= close)) {
-    return false;
-  }
-
-  if (volume < 0) return false;
-
-  // 3) timestamp válido y alineado a temporalidad
-  const ts = Date.parse(raw.begins_at);
-  if (!Number.isFinite(ts)) return false;
-
-  const date = new Date(ts);
-  const min = date.getUTCMinutes();
-
-  if (tf === '5m'  && min % 5  !== 0) return false;
-  if (tf === '15m' && min % 15 !== 0) return false;
-  if (tf === '1h'  && min !== 0)      return false;
-
-  // Otros checks: dentro de horarios de mercado si quieres,
-  // usando el endpoint /markets/XASE/hours/<date>/ que ya vimos.
-
-  return true;
-}
-```
-
-### 6.2. Normalización
-
-```ts
-function normalizeSpyCandle(raw: RawSpyCandle, tf: Timeframe, sourceUrl: string): SpyCandleRow {
-  const ts = Date.parse(raw.begins_at);
-
-  return {
-    timestamp: ts,
-    open:  Number(raw.open_price),
-    high:  Number(raw.high_price),
-    low:   Number(raw.low_price),
-    close: Number(raw.close_price),
-    volume: Number(raw.volume),
-    vwap:  raw.vwap != null ? Number(raw.vwap) : null,
-    tf,
-    source_transport: 'http',
-    source_url: sourceUrl,
+  const env: Envelope = {
+    ts,
+    transport: 'ws',
+    source: 'wss://api.robinhood.com/marketdata/streaming/legend/',
+    topic: `legend`,
+    symbol: 'SPY',            // porque solo estás suscrito a SPY
+    payload,
   };
-}
+
+  processLegendEnvelope(env);
+};
 ```
+
+> `Envelope` es el sobre estándar que ya definimos; este módulo solo implementa `processLegendEnvelope`.
 
 ---
 
-## 7. Lógica de saneamiento / upsert por vela
+## 3. Cómo procesarla (normalización + saneo base)
 
-### 7.1. Resolver ruta según timestamp + tf
+### a) Routing por tipo
 
 ```ts
-function resolveSpyPath(row: SpyCandleRow): string {
-  const d = new Date(row.timestamp);
-  const yyyy = d.getUTCFullYear();
-  const mm   = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const dd   = String(d.getUTCDate()).padStart(2, '0');
+function processLegendEnvelope(env: Envelope) {
+  const frame = env.payload as LegendFrame;
 
-  const dateStr = `${yyyy}-${mm}-${dd}`;
+  if (frame.type === 'FEED_CONFIG') {
+    // opcional: guardar mapping channel->eventFields en memoria
+    updateLegendConfig(frame);
+    return;                 // no se persiste
+  }
 
-  return `data/stock/SPY/${dateStr}/${row.tf}.csv`;
+  if (frame.type !== 'FEED_DATA') return;
+
+  for (const raw of frame.data) {
+    switch (raw.eventType) {
+      case 'Candle':
+        handleSpyCandle(env, frame.channel, raw as CandleEvent);
+        break;
+      case 'Trade':
+        handleSpyTrade(env, frame.channel, raw as TradeEvent, 'rth');
+        break;
+      case 'TradeETH':
+        handleSpyTrade(env, frame.channel, raw as TradeEthEvent, 'eth');
+        break;
+      case 'Quote':
+        handleSpyQuote(env, frame.channel, raw as QuoteEvent);
+        break;
+    }
+  }
 }
 ```
 
-### 7.2. Upsert (crea fecha/archivo si no existe)
-
-Pseudo-código:
+### b) Normalización Candle SPY (base para 5m/15m/1h)
 
 ```ts
-async function upsertSpyCandle(row: SpyCandleRow) {
-  const filePath = resolveSpyPath(row);
+function handleSpyCandle(env: Envelope, channel: number, e: CandleEvent) {
+  // 1) validar
+  if (!Number.isFinite(e.open) || !Number.isFinite(e.close)) return;
+  if (typeof e.time !== 'number' || e.time <= 0) return;
 
-  // 1) si el archivo NO existe -> crear con header + fila
-  if (!fs.existsSync(filePath)) {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const header = 'timestamp,open,high,low,close,volume,vwap,source_transport,source_url\n';
-    const firstLine = serializeRow(row) + '\n';
-    fs.writeFileSync(filePath, header + firstLine);
-    return;
-  }
+  // 2) detectar timeframe por sufijo
+  //   SPY{=d,a=m} -> 1d
+  //   SPY{=h,tho=true,a=m} -> 1h (tu captura)
+  const tf = detectTimeframe(e.eventSymbol); // '1d' | '1h' | '5m' | '15m' | ...
 
-  // 2) si ya existe, leer y reemplazar/insertar por timestamp
-  const lines = fs.readFileSync(filePath, 'utf8').trim().split('\n');
-  const header = lines[0];
-  const body   = lines.slice(1);
+  const row = {
+    timestamp: e.time,
+    open: e.open,
+    high: e.high,
+    low: e.low,
+    close: e.close,
+    volume: e.volume,
+    vwap: e.vwap,
+    count: e.count,
+    imp_vol: e.impVolatility,
+    event_flags: e.eventFlags,
+    tf,
+    session: /tho=true/.test(e.eventSymbol) ? 'rth+eth' : 'rth',
+    source_transport: env.transport,
+    source_url: env.source,
+  };
 
-  const tsStr = String(row.timestamp);
-  let replaced = false;
+  const { dateStr } = splitUtcDate(e.time);
+  const filePath = `data/stock/SPY/${dateStr}/${tf}.csv`;
 
-  const newBody = body.map(line => {
-    const [ts] = line.split(',');
-    if (ts === tsStr) {
-      replaced = true;
-      return serializeRow(row); // reemplaza la fila corrupta
-    }
-    return line;
+  appendCsv(filePath, row, {
+    header: [
+      'timestamp','open','high','low','close',
+      'volume','vwap','count','imp_vol','event_flags',
+      'tf','session','source_transport','source_url',
+    ],
   });
-
-  if (!replaced) {
-    // Si no existía, añade y luego (opcional) reordena por timestamp
-    newBody.push(serializeRow(row));
-    newBody.sort((a, b) => Number(a.split(',')[0]) - Number(b.split(',')[0]));
-  }
-
-  fs.writeFileSync(filePath, [header, ...newBody].join('\n') + '\n');
-}
-
-function serializeRow(row: SpyCandleRow): string {
-  const { timestamp, open, high, low, close, volume, vwap, source_transport, source_url } = row;
-  return [
-    timestamp,
-    open,
-    high,
-    low,
-    close,
-    volume,
-    vwap ?? '',
-    source_transport,
-    source_url,
-  ].join(',');
 }
 ```
 
-> 🔹 Si llega un dato con **fecha anterior a todo lo que había**, `resolveSpyPath` generará una ruta de un día que no existe → `upsertSpyCandle` creará carpeta y CSV nuevos. Eso cumple tu requisito de backfill automático.
+> **Nota para tu comando de saneamiento de 5m/15m/1h**:
+> Este `handleSpyCandle` es el *input crudo* que luego usará `sanitizeSpyTfData('5m'|'15m'|'1h', ...)` para corregir huecos / valores raros. En ese comando simplemente vuelves a leer estos CSV por tf, comparas `timestamp` contra el grid de la temporalidad y parchas.
 
----
-
-## 8. Flujo completo del comando
+### c) Normalización Trade / TradeETH
 
 ```ts
-async function sanitizeSpyTf(opts: SanitizeSpyOptions) {
-  const timeframes = opts.tfs;
+function handleSpyTrade(env: Envelope, channel: number, e: TradeEvent | TradeEthEvent, session: 'rth' | 'eth') {
+  if (!Number.isFinite(e.price) || !Number.isFinite(e.dayVolume)) return;
 
-  for (const tf of timeframes) {
-    const url = SPY_TF_ENDPOINTS[tf]; // TODO: poner URLs reales
+  const row = {
+    timestamp: e.time,
+    price: e.price,
+    day_volume: e.dayVolume,
+    session,
+    source_transport: env.transport,
+    source_url: env.source,
+  };
 
-    const rawResponse = await fetch(url);
-    const json = await rawResponse.json();
+  const { dateStr } = splitUtcDate(e.time);
+  const filePath = `data/stock/SPY/${dateStr}/1sec_trades.csv`;
 
-    // aquí adaptas a cómo venga exactamente:
-    const rawCandles: RawSpyCandle[] = json.results ?? json.candles ?? [];
+  appendCsv(filePath, row, {
+    header: ['timestamp','price','day_volume','session','source_transport','source_url'],
+  });
+}
+```
 
-    for (const raw of rawCandles) {
-      if (!validateSpyCandle(raw, tf)) continue;
+### d) Normalización Quote → orderbook light
 
-      const row = normalizeSpyCandle(raw, tf, url);
-      await upsertSpyCandle(row);
-    }
-  }
+```ts
+function handleSpyQuote(env: Envelope, channel: number, e: QuoteEvent) {
+  if (!Number.isFinite(e.bidPrice) || !Number.isFinite(e.askPrice)) return;
+
+  const ts = Math.max(e.bidTime || 0, e.askTime || 0);
+
+  const row = {
+    timestamp: ts,
+    bid_price: e.bidPrice,
+    bid_size: e.bidSize,
+    ask_price: e.askPrice,
+    ask_size: e.askSize,
+    spread: e.askPrice - e.bidPrice,
+    mid: (e.askPrice + e.bidPrice) / 2,
+    source_transport: env.transport,
+    source_url: env.source,
+  };
+
+  const { dateStr } = splitUtcDate(ts);
+  const filePath = `data/stock/SPY/${dateStr}/orderbook.csv`;
+
+  appendCsv(filePath, row, {
+    header: [
+      'timestamp','bid_price','bid_size','ask_price','ask_size',
+      'spread','mid','source_transport','source_url',
+    ],
+  });
 }
 ```
 
 ---
 
-## 9. Resumen rápido de lo importante
+## 4. ¿Se guarda o no? ¿Cómo?
 
-* **Solo SPY**, hardcodeado en rutas.
-* **Temporalidades fijas:** `5m`, `15m`, `1h`.
-* **3 URLs configurables** (2 nuevas + la del módulo de velas avanzadas) dejadas con `TODO` en comentarios, como pediste.
-* **Middleware de validación**:
+Para este módulo **sí guardamos todo lo que sea de SPY**:
 
-  * tipos numéricos y OHL C lógicos;
-  * alineación exacta de timestamp a la temporalidad;
-  * opcional: dentro del horario de mercado.
-* **Saneamiento** = *upsert por timestamp*:
+* **Candles** (`eventType: "Candle"`):
 
-  * si existe → reemplaza fila “sucia”;
-  * si no existe → añade, creando fecha/archivo si hace falta.
+  * Archivo según `tf`:
 
-Cuando tengas las URLs reales del módulo avanzado y las nuevas temporalidades, solo tendrías que rellenar los `<<TODO_...>>` y este comando te sirve como “motor de saneamiento” de toda la data histórica e intradía de SPY para 5m, 15m y 1h.
+    * `data/stock/SPY/<YYYY-MM-DD>/1h.csv` para `{=h,...}`
+    * `data/stock/SPY/<YYYY-MM-DD>/1d.csv` para `{=d,...}`
+    * Más adelante, cuando añadas 5m/15m desde legend o desde las 2 URL nuevas, irán a `5m.csv` y `15m.csv` en el mismo layout.
+* **Trades / TradeETH**: `1sec_trades.csv` con columna `session` (`rth`/`eth`).
+* **Quote**: `orderbook.csv` con snapshots ligeros bid/ask.
 
+**No se guardan**:
+
+* Frames `FEED_CONFIG` (solo afectan parsing).
+* Cualquier `FEED_DATA` con parse fallido o valores `NaN` en precio/volumen (solo log).
+
+---
+
+### Comentario para el futuro (URL saneamiento 5m/15m/1h)
+
+En el comando `sanitizeSpyTfData` que ya definimos, agrega un comentario recordando que la **fuente original** viene de:
+
+```ts
+// Fuente cruda de velas SPY:
+//  - wss://api.robinhood.com/marketdata/streaming/legend/
+//  - <URL_HTTP_5m>, <URL_HTTP_15m>, <URL_HTTP_1h>  // TODO: completar cuando Amo pase las URLs
+```
 
 ---
