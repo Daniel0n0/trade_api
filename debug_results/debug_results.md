@@ -18,342 +18,235 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 28:
-¡Vamos a cerrar el loop con **quotes de cripto en Robinhood** y dejar listo el PnL intradía + valuaciones!
+PUNTO 29:
+¡Perfecto! Tomo esa **batch de quotes de futuros** y te dejo el módulo listo: esquema, normalización, derivados útiles (mid/spread, micro-movimientos), persistencia y cómo “joinear” con metadata del contrato para tener **ticks y notionals** cuando lo agregues.
 
----
+# 1) Payload → Campos (observados)
 
-# 1) Clasificación rápida
+Para cada instrumento (uno por `instrument_id`):
 
-* **Origen/Transporte**: `http` (JSON). Si más adelante activas WS privado, el mismo esquema aplica.
-* **Dominios**:
+* `symbol` → p.ej. `/CLZ25:XNYM`, `/GCZ25:XCEC`, `/RTYZ25:XCME`
+* `bid_price`, `bid_size`, `bid_venue_timestamp`
+* `ask_price`, `ask_size`, `ask_venue_timestamp`
+* `last_trade_price`, `last_trade_size`, `last_trade_venue_timestamp`
+* `state` (`active`, etc.)
+* `updated_at`
+* `out_of_band` (boolean)
 
-  * `crypto_quotes` (top-of-book y OHLC día)
-  * `crypto_pricebook` (profundidad nivel 1–N, opcional)
-* **Endpoints típicos (Robinhood)**
-  *(nombres canónicos; pueden variar levemente pero los normalizamos igual)*
+# 2) **Schema normalizado** (una fila por instrumento)
 
-  * **Quote puntual (top-of-book)**:
-    `GET https://api.robinhood.com/marketdata/crypto/quotes/{instrument_id}/?bounds=24_7`
-    o batch: `GET .../marketdata/crypto/quotes/?ids={id1,id2,...}&bounds=24_7`
-  * **Pricebook (order book snapshot)**:
-    `GET https://api.robinhood.com/marketdata/crypto/pricebook/snapshots/{instrument_id}/`
-  * **OHLC diario/resumen 24h** *(si aparece)*: embebido en quote o endpoint `historicals` 24/7.
-
----
-
-# 2) Esquema de la data (raw → tipos)
-
-### A) Quote (top-of-book)
+Archivo lógico: `futures_quotes_current`
 
 ```ts
-type CryptoQuoteRaw = {
-  instrument_id: string;           // == currency_pair_id en Nummus
-  symbol?: string;                 // 'BTCUSD' o 'BTC-USD' (si viene)
-  mark_price?: string;             // último/indicativo
-  last_trade_price?: string;       // a veces viene
-  bid_price?: string;
-  ask_price?: string;
-  bid_size?: string;               // unidades base
-  ask_size?: string;
-  open_24h?: string;               // opcional
-  high_24h?: string;
-  low_24h?: string;
-  volume_24h?: string;             // en base
-  updated_at?: string;             // ISO
-  state?: string;                  // 'active' | 'halted' | ...
-  // algunos payloads traen 'previous_close', 'session', etc.
-};
-```
-
-### B) Pricebook (snapshot)
-
-```ts
-type CryptoPricebookRaw = {
-  instrument_id: string;
-  symbol?: string;
-  bids: Array<{ price: string; size: string }>;
-  asks: Array<{ price: string; size: string }>;
-  updated_at?: string;
-};
-```
-
-> Si el payload real usa otras claves, las mapeamos a estas (estandarización).
-
----
-
-# 3) Normalización (schemas de salida)
-
-### A) **Quotes actuales** (una fila por instrumento)
-
-**Archivo lógico**: `crypto_quotes_current`
-
-```ts
-type CryptoQuote = {
-  ts: number;                      // epoch ms de ingestión
+type FuturesQuote = {
+  ts: number;                    // epoch ms de ingestión
   source_url: string;
+
   instrument_id: string;
-  symbol: string;                  // normalizado: p.ej. 'BTC-USD'
-  mark: string;                    // preferencia: mark_price || last_trade_price
-  bid: string;
-  ask: string;
-  bid_size: string;
-  ask_size: string;
-  mid: string;                     // (bid+ask)/2 si ambos existen
-  spread: string;                  // ask-bid
-  open_24h: string | null;
-  high_24h: string | null;
-  low_24h: string | null;
-  vol_24h: string | null;          // base
-  state: string | null;
+  symbol: string;                // ej: "/CLZ25:XNYM"
+  root: string;                  // "/CL"
+  expiry_code: string;           // "Z25" (derivado de symbol)
+  venue: string;                 // "XNYM" / "XCME" / "XCEC"...
+
+  bid_px: string;                // decimal string
+  bid_sz: string;                // contratos (int/decimal como string)
+  bid_ts: string;                // ISO
+
+  ask_px: string;
+  ask_sz: string;
+  ask_ts: string;
+
+  last_px: string;
+  last_sz: string;
+  last_ts: string;
+
+  state: string | null;          // 'active' | ...
   updated_at_iso: string | null;
+
+  // Derivados inmediatos
+  mid_px: string | null;         // (bid+ask)/2 si ambos
+  spread_px: string | null;      // ask - bid
+  spread_bps: string | null;     // (spread/mid)*10000 si mid>0
 };
 ```
 
-### B) **Pricebook L1–N** (opcional, útil para slippage/IMB)
+> Nota: `root`, `expiry_code` y `venue` salen de partir `symbol` por `:` y del mes/letra. Ej: `/GCZ25:XCEC` → `root="/GC"`, `expiry_code="Z25"`, `venue="XCEC"`.
 
-**Archivo lógico**: `crypto_pricebook_snapshot`
+# 3) Persistencia recomendada
 
-```ts
-type CryptoPricebook = {
-  ts: number; source_url: string;
-  instrument_id: string; symbol: string;
-  level: number;                   // 1..N
-  side: 'bid'|'ask';
-  price: string; size: string;
-};
-```
-
----
-
-# 4) ¿Cómo recibirla?
-
-* **Handler**: HTTP **polling** cada **5–10s** para símbolos con posición o en watchlist; cada **30–60s** para el resto.
-* **Batch-friendly**: usa endpoint por **ids** para minimizar latencia.
-* **Paginación**: no aplica; si hubiera `next`, seguirla.
-* **Bounds**: usa `bounds=24_7` para cripto (sin ventanas).
-* **Envelope** (igual que antes):
-
-```ts
-const env: Envelope = {
-  ts: Date.now(),
-  transport: 'http',
-  source: 'https://api.robinhood.com/marketdata/crypto/quotes/?ids=...',
-  topic: 'crypto_quotes',
-  payload: json
-};
-```
-
----
-
-# 5) Validaciones + derivados
-
-* **Validar** `instrument_id`/`symbol` no vacíos.
-* Precios/cantidades: strings decimales válidas (usa `Decimal`).
-* Derivados:
-
-  * `mark = mark_price ?? last_trade_price ?? mid`
-  * `mid = (bid+ask)/2` si ambos existen.
-  * `spread = ask - bid` si ambos existen.
-  * `state_normalized = state?.toLowerCase()`
-* **Coherencia**: si `bid > ask`, descartar frame y loggear (data de mala calidad).
-
----
-
-# 6) ¿Se guarda?
-
-Sí, en dos sabores:
-
-### (a) **Stream intradía (append)**
+* **Stream (append)** cada pull (Robinhood sugiere `x-poll-interval: 5`):
 
 ```
-data/marketdata/crypto/<SYMBOL>/<YYYY-MM-DD>/quotes.csv
+data/marketdata/futures/<ROOT>/<YYYY-MM-DD>/quotes.csv
 ```
 
 Columnas:
 
 ```
-ts,instrument_id,symbol,mark,bid,ask,bid_size,ask_size,mid,spread,open_24h,high_24h,low_24h,vol_24h,state,updated_at_iso,source_url
+ts,source_url,instrument_id,symbol,root,expiry_code,venue,
+bid_px,bid_sz,bid_ts,ask_px,ask_sz,ask_ts,last_px,last_sz,last_ts,
+state,updated_at_iso,mid_px,spread_px,spread_bps
 ```
 
-### (b) **Rolling “último”** (se sobreescribe)
+* **“Último”** (snapshot por instrumento, se sobreescribe):
 
 ```
-data/marketdata/crypto/<SYMBOL>/last_quote.csv
+data/marketdata/futures/<ROOT>/last_quote.csv
 ```
 
-### (c) **Pricebook** *(si activas)*
+# 4) Derivados opcionales (si añades metadata)
 
-```
-data/marketdata/crypto/<SYMBOL>/<YYYY-MM-DD>/pricebook.csv
-```
+Cuando integres **metadata del contrato** (tick size, tick value, multiplier, currency):
 
-Columnas:
-
-```
-ts,instrument_id,symbol,level,side,price,size,source_url
-```
-
----
-
-# 7) **Join con holdings** → valuación + PnL
-
-## A) Valuación instantánea (snapshot)
-
-Input:
-
-* `holdings_current` (del módulo anterior)
-* `last_quote.csv` (o el último `quotes.csv` por símbolo)
-
-Salida:
-
-```
-data/portfolio/valuations/crypto/<ACCOUNT_ID>/<YYYY-MM-DD>/valued_holdings.csv
+```ts
+type FuturesMeta = {
+  instrument_id: string;
+  root: string;         // "/CL"
+  multiplier: string;   // p.ej. 1000 (bbl), 100 (oz), 50 (mini índices)...
+  tick_size: string;    // p.ej. 0.01, 0.25, 0.005 ...
+  tick_value: string;   // $ por tick
+  quote_ccy: "USD";     // casi siempre USD en estos
+};
 ```
 
-Columnas (añadidos respecto a holdings):
+Entonces puedes agregar:
+
+* `spread_ticks = spread_px / tick_size`
+* `notional_mid = mid_px * multiplier`
+* `last_notional = last_px * multiplier`
+
+Guárdalos en un **archivo extendido**:
 
 ```
-mark_px_usd,mtm_value_usd,mid,spread,state,quote_ts
+data/marketdata/futures/<ROOT>/<YYYY-MM-DD>/quotes_enriched.csv
 ```
 
-**Cálculos**
-
-* `mark_px_usd = Decimal(quote.mark)`
-* `mtm_value_usd = Decimal(holding.qty) * mark_px_usd`
-
-## B) PnL intradía (time series)
-
-Cada vez que tengas un nuevo quote **material** (p.ej. cambio > 0.1% o cada 60s), escribe:
-
-```
-data/portfolio/pnl/crypto/<ACCOUNT_ID>/<YYYY-MM-DD>/unrealized_timeseries.csv
-```
-
-```
-ts,account_id,currency_code,qty,mark_px_usd,mtm_value_usd,mid,spread
-```
-
-> **Realizado (realized PnL)**: deriva de eventos de Δqty detectados entre snapshots de holdings (sección 8 del módulo anterior).
-> Escribe en:
-
-```
-data/portfolio/pnl/crypto/<ACCOUNT_ID>/<YYYY-MM-DD>/realized_events.csv
-```
-
-```
-ts,account_id,currency_code,event,delta_qty,execution_px_usd?,realized_pnl_usd
-```
-
-*(si no tienes `execution_px`, aprox. con `mark` del momento del evento; marca una columna `is_estimate`)*
-
----
-
-# 8) Alertas y monitores (recomendado)
-
-* **Spread amplio**: `spread / mid > 0.25%` → alerta slippage.
-* **Estado**: `state != 'active'` → alerta (posibles halts/errores).
-* **Movimiento**: `abs(mark - last_mark)/last_mark > X%` en 1m/5m.
-* **Volumen 24h**: si `Δvol_24h` cae bruscamente, posible baja de liquidez.
-
-Escribe alertas en:
-
-```
-data/alerts/crypto/<SYMBOL>/<YYYY-MM-DD>/alerts.csv
-```
-
-```
-ts,kind,symbol,detail,trigger_value,context,source_url
-```
-
----
-
-# 9) Pseudocódigo (TypeScript) — normalización y join
+# 5) Normalizador (TypeScript) — seguro con decimales
 
 ```ts
 import Decimal from 'decimal.js';
 
-function dec(s?: string | null) { return new Decimal(s ?? '0'); }
+const dec = (s?: any) => new Decimal(s ?? '0');
 
-function normaliseCryptoQuotes(env: Envelope): CryptoQuote[] {
-  const raw = Array.isArray(env.payload?.results) ? env.payload.results : (Array.isArray(env.payload) ? env.payload : [env.payload]);
-  const out: CryptoQuote[] = [];
+function parseSymbol(sym: string) {
+  const [left, venue] = sym.split(':');     // "/GCZ25" , "XCEC"
+  const root = left.replace(/[A-Z]\d{2}$/, (m) => '') // quita "Z25"
+                    .replace(/Z25|H26|[FGHJKMNQUVXZ]\d{2}$/, ''); // robusto
+  const expiry = left.substring(root.length); // "Z25"
+  return { root, expiry_code: expiry, venue };
+}
 
-  for (const q of raw) {
-    const bid = dec(q.bid_price?.toString());
-    const ask = dec(q.ask_price?.toString());
-    const hasBoth = bid.gt(0) && ask.gt(0);
-    const mid = hasBoth ? bid.plus(ask).div(2) : dec(q.mark_price ?? q.last_trade_price);
-    const mark = q.mark_price ?? q.last_trade_price ?? (hasBoth ? mid.toString() : null);
-    const spread = hasBoth ? ask.minus(bid) : new Decimal(0);
+function normaliseFuturesQuotes(env: { ts: number; source: string; payload: any }): FuturesQuote[] {
+  const arr = Array.isArray(env.payload?.data) ? env.payload.data : [];
+  const out: FuturesQuote[] = [];
+
+  for (const wrap of arr) {
+    if (wrap?.status !== 'SUCCESS') continue;
+    const q = wrap.data;
+
+    const bid = q.bid_price != null ? dec(q.bid_price) : null;
+    const ask = q.ask_price != null ? dec(q.ask_price) : null;
+
+    const hasBoth = !!(bid && ask);
+    const mid = hasBoth ? bid!.plus(ask!).div(2) : null;
+    const spread = hasBoth ? ask!.minus(bid!) : null;
+    const spread_bps = hasBoth && mid!.gt(0) ? spread!.div(mid!).mul(10000) : null;
+
+    const { root, expiry_code, venue } = parseSymbol(q.symbol);
 
     out.push({
       ts: env.ts,
       source_url: env.source,
+
       instrument_id: q.instrument_id,
-      symbol: normaliseSymbol(q.symbol), // 'BTC-USD'
-      mark: mark ?? '0',
-      bid: q.bid_price ?? '0',
-      ask: q.ask_price ?? '0',
-      bid_size: q.bid_size ?? '0',
-      ask_size: q.ask_size ?? '0',
-      mid: mid.toString(),
-      spread: spread.toString(),
-      open_24h: q.open_24h ?? null,
-      high_24h: q.high_24h ?? null,
-      low_24h: q.low_24h ?? null,
-      vol_24h: q.volume_24h ?? null,
+      symbol: q.symbol,
+      root, expiry_code, venue,
+
+      bid_px: q.bid_price ?? null,
+      bid_sz: (q.bid_size ?? '').toString(),
+      bid_ts: q.bid_venue_timestamp ?? null,
+
+      ask_px: q.ask_price ?? null,
+      ask_sz: (q.ask_size ?? '').toString(),
+      ask_ts: q.ask_venue_timestamp ?? null,
+
+      last_px: q.last_trade_price ?? null,
+      last_sz: (q.last_trade_size ?? '').toString(),
+      last_ts: q.last_trade_venue_timestamp ?? null,
+
       state: q.state ?? null,
-      updated_at_iso: q.updated_at ?? null
+      updated_at_iso: q.updated_at ?? null,
+
+      mid_px: mid?.toString() ?? null,
+      spread_px: spread?.toString() ?? null,
+      spread_bps: spread_bps?.toString() ?? null
     });
   }
   return out;
 }
-
-function valueHoldingsWithQuotes(holding: HoldingCurrent, quote: CryptoQuote) {
-  const mark = dec(quote.mark);
-  const qty = dec(holding.qty);
-  return {
-    ...holding,
-    mark_px_usd: mark.toString(),
-    mtm_value_usd: qty.mul(mark).toString(),
-    mid: quote.mid,
-    spread: quote.spread,
-    state: quote.state,
-    quote_ts: quote.ts
-  };
-}
 ```
 
----
+# 6) Reglas de calidad
 
-# 10) Reglas prácticas
+* **Descartar frame** si `bid_px > ask_px` (data inválida); loggear con `context`.
+* Si falta uno de los lados, setear `mid_px`/`spread_*` en `null`.
+* `Decimal` para todo cálculo; **nunca** `float`.
+* `symbol` y `instrument_id` **no vacíos**.
 
-* **Decimales**: siempre `Decimal`/`BigNumber` (evita `float` binario).
-* **Símbolo canónico**: usa `'BTC-USD'`, `'SOL-USD'`, etc.; mapea el que venga en el payload.
-* **Frecuencia**: 5–10s activos; 30–60s pasivos.
-* **Idempotencia**: clave `(ts_bucket_1s, instrument_id)` para quotes; para pricebook, `(ts, level, side)`.
-* **Privacidad**: no persistas headers/authorization.
+# 7) Alertas recomendadas (intradía)
 
----
+Escribe en `data/alerts/futures/<ROOT>/<YYYY-MM-DD>/alerts.csv`
 
-## Carpetas finales involucradas (resumen)
+```
+ts,kind,root,symbol,detail,trigger_value,context,source_url
+```
+
+Disparadores:
+
+* **Spread alto**: `spread_bps > 8–12 bps` (ajústalo por root; en FX/bonos será distinto).
+* **Liquidez**: `bid_sz==0 || ask_sz==0`.
+* **Estado**: `state != 'active'`.
+* **Stale**: si `now - max(bid_ts, ask_ts, last_ts) > 10s` (mercado 24h) o >60s (curb).
+* **Jump**: `abs(Δlast_px)/prev_last_px > 0.20%` en ≤1 min.
+
+# 8) Join con **metadata** para risk/notional
+
+Cuando tengas el catálogo por `instrument_id` (puede venir de tu módulo “instrumentos”), añade:
+
+* `tick_size`, `tick_value`, `multiplier` → calcula:
+
+  * `spread_ticks = spread_px / tick_size`
+  * `notional_mid = mid_px * multiplier`
+  * **Slippage estimado** por cruzar spread: `spread_ticks * tick_value`
+
+# 9) Ejemplo (a partir de tu payload)
+
+Para `/GCZ25:XCEC` (oro COMEX):
+
+* `bid_px=4115.9`, `ask_px=4116.1` → `mid=4116.0`, `spread=0.2`
+* `spread_bps ≈ (0.2 / 4116.0) * 10000 ≈ 4.86 bps`
+
+> Con metadata típica (ejemplo ilustrativo), si `tick_size=0.1` y `tick_value=$10`, `spread_ticks=2`, costo implícito≈ **$20/contrato** al cruzar.
+
+# 10) Carpetería final (resumen)
 
 ```
 data/
   marketdata/
-    crypto/<SYMBOL>/<YYYY-MM-DD>/quotes.csv
-    crypto/<SYMBOL>/last_quote.csv
-    crypto/<SYMBOL>/<YYYY-MM-DD>/pricebook.csv            (opcional)
-  portfolio/
-    holdings/crypto/<ACCOUNT_ID>/<YYYY-MM-DD>/holdings_current.csv
-    valuations/crypto/<ACCOUNT_ID>/<YYYY-MM-DD>/valued_holdings.csv
-    pnl/crypto/<ACCOUNT_ID>/<YYYY-MM-DD>/unrealized_timeseries.csv
-    pnl/crypto/<ACCOUNT_ID>/<YYYY-MM-DD>/realized_events.csv
+    futures/<ROOT>/<YYYY-MM-DD>/quotes.csv
+    futures/<ROOT>/last_quote.csv
+    futures/<ROOT>/<YYYY-MM-DD>/quotes_enriched.csv      (si tienes metadata)
   alerts/
-    crypto/<SYMBOL>/<YYYY-MM-DD>/alerts.csv
-  _raw/
-    crypto_quotes/<YYYY-MM-DD>/...jsonl                    (opcional)
+    futures/<ROOT>/<YYYY-MM-DD>/alerts.csv
 ```
+
+# 11) Checklist de implementación
+
+* [ ] Ingesta cada 5 s (usa `x-poll-interval` como hint).
+* [ ] Normalización → `quotes.csv` (append) + `last_quote.csv`.
+* [ ] Validaciones (bid>ask, stale, vacíos).
+* [ ] Cálculo `mid/spread/spread_bps`.
+* [ ] Alertas básicas.
+* [ ] (Luego) Join con **metadata** para ticks/notional.
 
 ---
