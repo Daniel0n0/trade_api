@@ -18,233 +18,195 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 37:
-Nice, ahora sí estamos entrando al corazón de la “metadata” del instrumento 🔧
+PUNTO 38:
 
-Esta petición es **clave** porque es la que te da el **instrument_id** de SPY y todo lo que Robinhood sabe está referenciado a ese `id`.
+Buenísima esta, aquí ya estás sacando **fundamentales de SPY como ETF**, no precio ni greeks. Esto te va a alimentar el módulo de *stats/fundamentals* y de *composición de portafolio*.
+
+Voy por partes como acordamos 👇
 
 ---
 
 ## 1. Clasificación rápida
 
-* **Endpoint:** `GET /instruments/?active_instruments_only=false&symbol=SPY`
+* **Endpoint:**
+  `GET https://bonfire.robinhood.com/instruments/{instrument_id}/etp-details/`
 * **Transporte:** `http`
-* **Dominio:** `instrument_metadata`
-* **Cardinalidad:** `results[]` (en este caso 1 solo instrumento)
-* **Uso principal en tu proyecto:**
+* **Dominio:** `etp_details` (fundamentales de ETF / ETP)
+* **Instrumento:**
 
-  * Resolver `symbol → instrument_id`.
-  * Saber si se puede operar (tradable, shortable, fractional, extended, etc).
-  * Saber en qué **market** está (para encajar con `/markets/.../hours/...`).
-  * Parametrizar riesgo: márgenes, day_trade_ratio, etc.
+  * `instrument_id: "8f92e76f-1e0e-4478-8580-16a6ffcfaef5"`
+  * `symbol: "SPY"`
 
-⚠️ Nota rápida de seguridad: no vuelvas a compartir tokens `Bearer` reales en texto plano (como el de este fetch); en tu código real deben ir en config segura / variables de entorno.
+Este endpoint **NO es intradía**, es más bien “semilento”: AUM, yield, performance a 1Y/3Y/5Y/10Y, sectores, holdings.
 
 ---
 
-## 2. Esquema de la respuesta (schema crudo)
+## 2. Schema del payload crudo
 
-La respuesta:
-
-```json
-{
-  "next": null,
-  "previous": null,
-  "results": [ { ...instrumento... } ]
-}
-```
-
-Schema del objeto en `results[0]`:
+Te lo dejo en TypeScript para que lo copies casi tal cual:
 
 ```ts
-type InstrumentResponse = {
-  id: string;                 // "8f92e76f-1e0e-4478-8580-16a6ffcfaef5"
-  url: string;                // https://api.robinhood.com/instruments/<id>/
-  quote: string;              // https://api.robinhood.com/quotes/SPY/
-  fundamentals: string;       // https://api.robinhood.com/fundamentals/SPY/
-  splits: string;             // https://api.robinhood.com/instruments/<id>/splits/
-  state: 'active' | string;   // estado del instrumento
+type EtpPerformanceBucket = {
+  "1Y": string;             // ej "21.398170"
+  "3Y": string;
+  "5Y": string;
+  "10Y": string;
+  since_inception: string;
+};
 
-  market: string;             // url de market, ej: https://api.robinhood.com/markets/ARCX/
-  simple_name: string | null; // "SPDR S&P 500 ETF"
-  name: string | null;        // "SPDR S&P 500 ETF Trust"
-  tradeable: boolean;
-  tradability: string;        // "tradable" | "untradable" | etc.
+type EtpDetailsResponse = {
+  instrument_id: string;     // id del ETF (SPY)
+  symbol: string;            // "SPY"
 
-  symbol: string;             // "SPY"
-  bloomberg_unique: string | null;
+  is_inverse: boolean;
+  is_leveraged: boolean;
+  is_volatility_linked: boolean;
+  is_crypto_futures: boolean;
 
-  margin_initial_ratio: string;   // "0.5000"
-  maintenance_ratio: string;      // "0.2500"
-  country: string;                // "US"
-  day_trade_ratio: string;        // "0.2500"
-  list_date: string | null;       // "1993-01-29"
-  min_tick_size: string | null;
+  aum: string;               // "702972487683.000000" (USD)
+  sec_yield: string;         // "1.030000" (% anualizada)
+  gross_expense_ratio: string;// "0.094500" (%)
 
-  type: string;                   // "etp" (ETF)
-  tradable_chain_id: string | null;
+  documents: {
+    prospectus?: string;     // URL del prospectus
+    [k: string]: string | undefined;
+  };
 
-  rhs_tradability: string;
-  affiliate_tradability: string;
-  fractional_tradability: string; // "tradable" / "untradable"
-  short_selling_tradability: string;
+  quarter_end_date: string;  // "2025-09-30"
+  quarter_end_performance: {
+    market: EtpPerformanceBucket;
+    nav: EtpPerformanceBucket;
+  };
 
-  default_collar_fraction: string; // "0.05"
+  month_end_date: string;    // "2025-10-31"
+  month_end_performance: {
+    market: EtpPerformanceBucket;
+    nav: EtpPerformanceBucket;
+  };
 
-  ipo_access_status: string | null;
-  ipo_access_cob_deadline: string | null;
-  ipo_s1_url: string | null;
-  ipo_roadshow_url: string | null;
+  inception_date: string;    // "1993-01-22"
+  index_tracked: string;     // "S&P 500 TR USD"
+  category: string;          // "Large Blend"
+  total_holdings: number;    // 504
+  is_actively_managed: boolean;
+  broad_category_group: string; // "equity"
 
-  is_spac: boolean;
-  is_test: boolean;
-  ipo_access_supports_dsp: boolean;
-
-  extended_hours_fractional_tradability: boolean;
-
-  internal_halt_reason: string;
-  internal_halt_details: string;
-  internal_halt_sessions: string | null;
-  internal_halt_start_time: string | null;
-  internal_halt_end_time: string | null;
-  internal_halt_source: string;
-
-  all_day_tradability: string;
-
-  notional_estimated_quantity_decimals: number;
-  tax_security_type: string;     // "etf"
-  reserved_buying_power_percent_queued: string;    // "0.10000000"
-  reserved_buying_power_percent_immediate: string; // "0.05000000"
-  otc_market_tier: string;
-  car_required: boolean;
-  high_risk_maintenance_ratio: string;
-  low_risk_maintenance_ratio: string;
-  default_preset_percent_limit: string;            // "0.02"
-  affiliate: string;                               // "rhf"
-
-  account_type_tradabilities: Array<{
-    account_type: string;               // "individual"
-    account_type_tradability: string;   // "tradable"
+  sectors_portfolio_date: string; // "2025-11-10"
+  sectors: Array<{
+    name: string;          // "Technology"
+    weight: string;        // "36.33" (%)
+    description: string;
+    color: {
+      light: string;       // "hydro-light"
+      dark: string;
+    };
   }>;
 
-  issuer_type: string;                  // "third_party"
+  holdings_portfolio_date: string; // "2025-11-10"
+  holdings: Array<{
+    name: string;          // "NVIDIA"
+    instrument_id: string; // del holding
+    symbol: string;        // "NVDA"
+    weight: string;        // "8.33" (%)
+    sector: string;        // "Technology"
+    description: string;   // texto largo
+    color: {
+      light: string;
+      dark: string;
+    };
+  }>;
+
+  show_holdings_visualization: boolean; // true
 };
 ```
 
-Wrapper de la página:
+Wrapper en tu Envelope:
 
 ```ts
-type InstrumentsPage = {
-  next: string | null;
-  previous: string | null;
-  results: InstrumentResponse[];
+type EtpDetailsEnvelope = Envelope & {
+  instrument_id: string;
+  symbol: string;
+  payload: EtpDetailsResponse;
 };
 ```
 
 ---
 
-## 3. Cómo recibirla (Envelope)
-
-Reutilizando tu envoltura estándar:
+## 3. Cómo recibirlo (handler)
 
 ```ts
-type InstrumentEnvelope = Envelope & {
-  symbol: string;   // "SPY" (del query, lo pones tú)
-};
-```
-
-Handler:
-
-```ts
-async function fetchInstrumentBySymbol(
+async function fetchEtpDetails(
   client: HttpClient,
+  instrumentId: string,
   symbol: string
-): Promise<InstrumentEnvelope> {
-  const url = `https://api.robinhood.com/instruments/?active_instruments_only=false&symbol=${encodeURIComponent(symbol)}`;
+): Promise<EtpDetailsEnvelope> {
+  const url = `https://bonfire.robinhood.com/instruments/${instrumentId}/etp-details/`;
   const text = await client.getText(url);
-  const page = safeJsonParse<InstrumentsPage>(text);
-
-  if (!page.results.length) {
-    throw new Error(`Instrument not found for symbol=${symbol}`);
-  }
+  const payload = safeJsonParse<EtpDetailsResponse>(text);
 
   return {
     ts: Date.now(),
     transport: 'http',
     source: url,
-    topic: 'instrument',
+    topic: 'etp_details',
     symbol,
-    payload: page,
+    payload,
+    // opcional:
+    // @ts-ignore
+    instrument_id: payload.instrument_id ?? instrumentId,
   };
 }
 ```
 
 ---
 
-## 4. Normalización: fila plana para tu “catálogo de instrumentos”
+## 4. Normalización: qué tablas/archivos salen de aquí
 
-Aquí sí tiene sentido guardar en una tabla **global de referencia**, porque:
+De este endpoint salen **4 piezas de información distintas**, con “granularidad” diferente:
 
-* `instrument_id` lo usarán muchos otros módulos,
-* los campos (ratios, tradability, etc.) cambian muy poco.
+1. Info “maestra” del ETF (estática/lenta): AUM, yield, gastos, categoría, índice.
+2. Performance agregada (1Y/3Y/5Y/10Y/since), por `market` y `nav`, y por corte `quarter_end` y `month_end`.
+3. Sector breakdown (% por sector).
+4. Holdings (composición por activo).
 
-### 4.1. Row normalizado
+Para que tu trade_api sea ordenado, yo lo separaría en **4 CSVs** bajo `data/meta/`:
+
+* `data/meta/etp_master.csv`
+* `data/meta/etp_performance.csv`
+* `data/meta/etp_sectors.csv`
+* `data/meta/etp_holdings.csv`
+
+### 4.1. Tabla 1 – ETP master (etp_master.csv)
+
+**Granularidad:** 1 fila por `instrument_id` (por ejemplo SPY), con timestamp de captura.
 
 ```ts
-type InstrumentRow = {
-  instrument_id: string;   // id
-  symbol: string;          // "SPY"
-  market_url: string;      // https://api.robinhood.com/markets/ARCX/
-  type: string;            // "etp"
-  tax_security_type: string; // "etf"
+type EtpMasterRow = {
+  instrument_id: string;
+  symbol: string;
 
-  state: string;           // "active"
-  tradeable: boolean;
-  tradability: string;
-  rhs_tradability: string;
-  affiliate_tradability: string;
-  fractional_tradability: string;
-  short_selling_tradability: string;
-  all_day_tradability: string;
+  is_inverse: boolean;
+  is_leveraged: boolean;
+  is_volatility_linked: boolean;
+  is_crypto_futures: boolean;
 
-  simple_name: string | null;
-  name: string | null;
-  country: string;
-  list_date: string | null;    // YYYY-MM-DD
+  aum_usd: number;                // Number(payload.aum)
+  sec_yield_pct: number;          // Number(sec_yield)
+  gross_expense_ratio_pct: number;// Number(gross_expense_ratio)
 
-  margin_initial_ratio: number;         // 0.5
-  maintenance_ratio: number;           // 0.25
-  high_risk_maintenance_ratio: number; // 0.25
-  low_risk_maintenance_ratio: number;  // 0.25
-  day_trade_ratio: number;             // 0.25
+  prospectus_url: string | null;
 
-  default_collar_fraction: number;           // 0.05
-  default_preset_percent_limit: number;      // 0.02
-  reserved_bp_percent_queued: number;        // 0.1
-  reserved_bp_percent_immediate: number;     // 0.05
+  inception_date: string;         // "YYYY-MM-DD"
+  index_tracked: string;
+  category: string;
+  total_holdings: number;
+  is_actively_managed: boolean;
+  broad_category_group: string;
 
-  extended_hours_fractional_tradability: boolean;
+  sectors_portfolio_date: string;
+  holdings_portfolio_date: string;
 
-  is_spac: boolean;
-  is_test: boolean;
-  issuer_type: string;       // "third_party"
-  affiliate: string;         // "rhf"
-
-  notional_qty_decimals: number;
-  min_tick_size: number | null;
-
-  bloomberg_unique: string | null;
-  otc_market_tier: string;
-
-  // info de halts internos
-  internal_halt_reason: string;
-  internal_halt_details: string;
-  internal_halt_sessions: string | null;
-  internal_halt_start_time: string | null;
-  internal_halt_end_time: string | null;
-  internal_halt_source: string;
-
-  account_type_tradabilities_json: string; // JSON string para no complicarte
+  show_holdings_visualization: boolean;
 
   fetched_ts: number;
   source_transport: 'http';
@@ -252,73 +214,41 @@ type InstrumentRow = {
 };
 ```
 
-Helper para convertir strings numéricas:
+Normalizador:
 
 ```ts
 const toNum = (s: string | null | undefined): number | null =>
   s != null ? Number(s) : null;
-```
 
-Normalizador:
-
-```ts
-function normaliseInstrument(env: InstrumentEnvelope): InstrumentRow {
-  const page = env.payload as InstrumentsPage;
-  const i = page.results[0];
+function normaliseEtpMaster(env: EtpDetailsEnvelope): EtpMasterRow {
+  const p = env.payload;
 
   return {
-    instrument_id: i.id,
-    symbol: i.symbol,
-    market_url: i.market,
-    type: i.type,
-    tax_security_type: i.tax_security_type,
+    instrument_id: p.instrument_id,
+    symbol: p.symbol,
 
-    state: i.state,
-    tradeable: i.tradeable,
-    tradability: i.tradability,
-    rhs_tradability: i.rhs_tradability,
-    affiliate_tradability: i.affiliate_tradability,
-    fractional_tradability: i.fractional_tradability,
-    short_selling_tradability: i.short_selling_tradability,
-    all_day_tradability: i.all_day_tradability,
+    is_inverse: p.is_inverse,
+    is_leveraged: p.is_leveraged,
+    is_volatility_linked: p.is_volatility_linked,
+    is_crypto_futures: p.is_crypto_futures,
 
-    simple_name: i.simple_name,
-    name: i.name,
-    country: i.country,
-    list_date: i.list_date,
+    aum_usd: toNum(p.aum) ?? 0,
+    sec_yield_pct: toNum(p.sec_yield) ?? 0,
+    gross_expense_ratio_pct: toNum(p.gross_expense_ratio) ?? 0,
 
-    margin_initial_ratio: toNum(i.margin_initial_ratio) ?? 0,
-    maintenance_ratio: toNum(i.maintenance_ratio) ?? 0,
-    high_risk_maintenance_ratio: toNum(i.high_risk_maintenance_ratio) ?? 0,
-    low_risk_maintenance_ratio: toNum(i.low_risk_maintenance_ratio) ?? 0,
-    day_trade_ratio: toNum(i.day_trade_ratio) ?? 0,
+    prospectus_url: p.documents?.prospectus ?? null,
 
-    default_collar_fraction: toNum(i.default_collar_fraction) ?? 0,
-    default_preset_percent_limit: toNum(i.default_preset_percent_limit) ?? 0,
-    reserved_bp_percent_queued: toNum(i.reserved_buying_power_percent_queued) ?? 0,
-    reserved_bp_percent_immediate: toNum(i.reserved_buying_power_percent_immediate) ?? 0,
+    inception_date: p.inception_date,
+    index_tracked: p.index_tracked,
+    category: p.category,
+    total_holdings: p.total_holdings,
+    is_actively_managed: p.is_actively_managed,
+    broad_category_group: p.broad_category_group,
 
-    extended_hours_fractional_tradability: i.extended_hours_fractional_tradability,
+    sectors_portfolio_date: p.sectors_portfolio_date,
+    holdings_portfolio_date: p.holdings_portfolio_date,
 
-    is_spac: i.is_spac,
-    is_test: i.is_test,
-    issuer_type: i.issuer_type,
-    affiliate: i.affiliate,
-
-    notional_qty_decimals: i.notional_estimated_quantity_decimals,
-    min_tick_size: toNum(i.min_tick_size),
-
-    bloomberg_unique: i.bloomberg_unique,
-    otc_market_tier: i.otc_market_tier,
-
-    internal_halt_reason: i.internal_halt_reason,
-    internal_halt_details: i.internal_halt_details,
-    internal_halt_sessions: i.internal_halt_sessions,
-    internal_halt_start_time: i.internal_halt_start_time,
-    internal_halt_end_time: i.internal_halt_end_time,
-    internal_halt_source: i.internal_halt_source,
-
-    account_type_tradabilities_json: JSON.stringify(i.account_type_tradabilities ?? []),
+    show_holdings_visualization: p.show_holdings_visualization,
 
     fetched_ts: env.ts,
     source_transport: env.transport,
@@ -327,104 +257,326 @@ function normaliseInstrument(env: InstrumentEnvelope): InstrumentRow {
 }
 ```
 
+**Archivo:** `data/meta/etp_master.csv`
+**PK lógica:** `instrument_id` (upsert, te quedas con el último `fetched_ts`).
+
 ---
 
-## 5. ¿Se guarda o no? y ¿cómo? 📦
+### 4.2. Tabla 2 – Performance (etp_performance.csv)
 
-### ¿Conviene guardar?
+En el payload vienen **dos bloques**:
 
-**Sí, 100%.** Este endpoint es:
+* `quarter_end_performance` con fecha `quarter_end_date`
+* `month_end_performance` con fecha `month_end_date`
 
-* La **tabla de dimensiones / catálogo de instrumentos**.
-* Poco volumen (tienes miles de símbolos como mucho; esto es muy pequeño comparado con ticks).
-* Referencia central para saber:
+Cada bloque tiene:
 
-  * El `instrument_id` que otros endpoints usan,
-  * Parámetros de margen / riesgo,
-  * Si se permite short, fractional, extended, etc.
+* `market: {1Y,3Y,5Y,10Y,since_inception}`
+* `nav: {…}`
 
-### Dónde y formato
+Yo lo normalizaría en formato **“largo/tidy”**:
+**Una fila por combinación:**
 
-Yo lo metería en algo así como:
+* `instrument_id`
+* `symbol`
+* `as_of_date` (quarter_end_date o month_end_date)
+* `period` ∈ {`"1Y","3Y","5Y","10Y","since_inception"`}
+* `basis` ∈ {`"market","nav"`}
+* `time_scope` ∈ {`"quarter_end","month_end"`}
+* `return_pct` (número)
 
-* Carpeta de metadatos:
+```ts
+type EtpPerformanceRow = {
+  instrument_id: string;
+  symbol: string;
+  as_of_date: string;     // "YYYY-MM-DD"
+  time_scope: 'quarter_end' | 'month_end';
+  basis: 'market' | 'nav';// NAV vs market price
+  period: '1Y' | '3Y' | '5Y' | '10Y' | 'since_inception';
+  return_pct: number;     // ej 21.39817
+  fetched_ts: number;
+  source_url: string;
+};
+```
 
-  ```text
-  data/meta/instruments.csv
-  ```
+Helper para “desenrollar” un bucket:
 
-* Una sola tabla para **todos los símbolos**.
+```ts
+function explodePerf(
+  instrument_id: string,
+  symbol: string,
+  as_of_date: string,
+  time_scope: 'quarter_end' | 'month_end',
+  basis: 'market' | 'nav',
+  bucket: EtpPerformanceBucket,
+  fetched_ts: number,
+  source_url: string
+): EtpPerformanceRow[] {
+  const entries: Array<[EtpPerformanceRow['period'], string]> = [
+    ['1Y', bucket["1Y"]],
+    ['3Y', bucket["3Y"]],
+    ['5Y', bucket["5Y"]],
+    ['10Y', bucket["10Y"]],
+    ['since_inception', bucket.since_inception],
+  ];
+
+  return entries.map(([period, val]) => ({
+    instrument_id,
+    symbol,
+    as_of_date,
+    time_scope,
+    basis,
+    period,
+    return_pct: Number(val),
+    fetched_ts,
+    source_url,
+  }));
+}
+```
+
+Y luego:
+
+```ts
+function normaliseEtpPerformance(env: EtpDetailsEnvelope): EtpPerformanceRow[] {
+  const p = env.payload;
+  const rows: EtpPerformanceRow[] = [];
+
+  rows.push(
+    ...explodePerf(
+      p.instrument_id, p.symbol,
+      p.quarter_end_date, 'quarter_end', 'market',
+      p.quarter_end_performance.market,
+      env.ts, env.source
+    ),
+    ...explodePerf(
+      p.instrument_id, p.symbol,
+      p.quarter_end_date, 'quarter_end', 'nav',
+      p.quarter_end_performance.nav,
+      env.ts, env.source
+    ),
+    ...explodePerf(
+      p.instrument_id, p.symbol,
+      p.month_end_date, 'month_end', 'market',
+      p.month_end_performance.market,
+      env.ts, env.source
+    ),
+    ...explodePerf(
+      p.instrument_id, p.symbol,
+      p.month_end_date, 'month_end', 'nav',
+      p.month_end_performance.nav,
+      env.ts, env.source
+    ),
+  );
+
+  return rows;
+}
+```
+
+**Archivo:** `data/meta/etp_performance.csv`
 
 Encabezado sugerido:
 
 ```csv
-instrument_id,symbol,market_url,type,tax_security_type,state,tradeable,tradability,rhs_tradability,affiliate_tradability,fractional_tradability,short_selling_tradability,all_day_tradability,simple_name,name,country,list_date,margin_initial_ratio,maintenance_ratio,high_risk_maintenance_ratio,low_risk_maintenance_ratio,day_trade_ratio,default_collar_fraction,default_preset_percent_limit,reserved_bp_percent_queued,reserved_bp_percent_immediate,extended_hours_fractional_tradability,is_spac,is_test,issuer_type,affiliate,notional_qty_decimals,min_tick_size,bloomberg_unique,otc_market_tier,internal_halt_reason,internal_halt_details,internal_halt_sessions,internal_halt_start_time,internal_halt_end_time,internal_halt_source,account_type_tradabilities_json,fetched_ts,source_transport,source_url
+instrument_id,symbol,as_of_date,time_scope,basis,period,return_pct,fetched_ts,source_url
 ```
 
-### Estrategia de escritura
+---
 
-* Si usas **CSV plano**:
+### 4.3. Tabla 3 – Sectores (etp_sectors.csv)
 
-  * Hacer **append** y luego un proceso de deduplicación (quedarte con el último `fetched_ts` por `instrument_id`).
-* Si usas DB / SQLite:
+**Granularidad:** 1 fila por sector del ETF y fecha de cartera de sectores.
 
-  * Tabla `instruments` con:
+```ts
+type EtpSectorRow = {
+  instrument_id: string;
+  symbol: string;
+  as_of_date: string;       // sectors_portfolio_date
 
-    * PK: `instrument_id`,
-    * Índice secundario: `symbol`,
-    * `ON CONFLICT(instrument_id) DO UPDATE` para mantenerlo fresco.
+  sector_name: string;      // "Technology"
+  weight_pct: number;       // 36.33
+  description: string;      // texto que puedes truncar si quieres
+  color_light: string;
+  color_dark: string;
+
+  fetched_ts: number;
+  source_url: string;
+};
+```
+
+Normalizador:
+
+```ts
+function normaliseEtpSectors(env: EtpDetailsEnvelope): EtpSectorRow[] {
+  const p = env.payload;
+  return p.sectors.map(s => ({
+    instrument_id: p.instrument_id,
+    symbol: p.symbol,
+    as_of_date: p.sectors_portfolio_date,
+    sector_name: s.name,
+    weight_pct: Number(s.weight),
+    description: s.description,
+    color_light: s.color.light,
+    color_dark: s.color.dark,
+    fetched_ts: env.ts,
+    source_url: env.source,
+  }));
+}
+```
+
+**Archivo:** `data/meta/etp_sectors.csv`
+
+Encabezado:
+
+```csv
+instrument_id,symbol,as_of_date,sector_name,weight_pct,description,color_light,color_dark,fetched_ts,source_url
+```
 
 ---
 
-## 6. Cómo lo usan otros módulos de tu trade_api
+### 4.4. Tabla 4 – Holdings (etp_holdings.csv)
 
-Este módulo de `instrument` se convierte en una especie de “DNS” de trading:
+**Granularidad:** 1 fila por holding (por ejemplo, NVDA dentro de SPY) y fecha de cartera de holdings.
 
-1. **Módulo de quotes / candles:**
+Ojo: la descripción es enorme, quizá quieras:
 
-   * Puede construir URLs usando `quote`, `fundamentals`, `market`.
-   * Si en el futuro Robinhood te exige `instrument_id` en algún endpoint específico, ya lo tienes.
+* Guardar solo **top N holdings** (top 10) o
+* Guardar la descripción truncada a X caracteres (ej 512).
 
-2. **Módulo de opciones / greeks:**
+```ts
+type EtpHoldingRow = {
+  etp_instrument_id: string;   // SPY
+  etp_symbol: string;          // "SPY"
 
-   * Necesita saber si el subyacente:
+  as_of_date: string;          // holdings_portfolio_date
 
-     * Es shorteable,
-     * Se puede operar en extended,
-     * Tiene restricciones de margen altas (`high_risk_maintenance_ratio`).
+  holding_instrument_id: string;
+  holding_symbol: string;
+  holding_name: string;
+  holding_sector: string;
+  weight_pct: number;
 
-3. **Módulo de risk / position sizing:**
+  // optional: descripción truncada 
+  description: string;
 
-   * Usa `margin_initial_ratio`, `maintenance_ratio`, `day_trade_ratio`.
-   * `default_collar_fraction` y `default_preset_percent_limit` te pueden servir como **heurísticas** para sugerir stops/limits iniciales (opcional).
+  color_light: string;
+  color_dark: string;
 
-4. **Módulo de reglas de operación:**
+  fetched_ts: number;
+  source_url: string;
+};
+```
 
-   * Si `is_test` es true → ignorar en producción.
-   * Si `state !== 'active'` o `tradeable === false` → no permitir señales ni órdenes.
+Normalizador:
 
-5. **Integración con market hours:**
+```ts
+function normaliseEtpHoldings(
+  env: EtpDetailsEnvelope,
+  opts?: { maxHoldings?: number; truncateDescriptionAt?: number }
+): EtpHoldingRow[] {
+  const p = env.payload;
+  const maxHoldings = opts?.maxHoldings ?? Infinity;
+  const truncateAt = opts?.truncateDescriptionAt ?? 512;
 
-   * `market_url` te dice el mercado real (`ARCX`), que conectas con los endpoints de `/markets/{MIC}/hours/...`.
+  return p.holdings.slice(0, maxHoldings).map(h => ({
+    etp_instrument_id: p.instrument_id,
+    etp_symbol: p.symbol,
+    as_of_date: p.holdings_portfolio_date,
+    holding_instrument_id: h.instrument_id,
+    holding_symbol: h.symbol,
+    holding_name: h.name,
+    holding_sector: h.sector,
+    weight_pct: Number(h.weight),
+    description: h.description.length > truncateAt
+      ? h.description.slice(0, truncateAt) + '…'
+      : h.description,
+    color_light: h.color.light,
+    color_dark: h.color.dark,
+    fetched_ts: env.ts,
+    source_url: env.source,
+  }));
+}
+```
+
+**Archivo:** `data/meta/etp_holdings.csv`
+
+Encabezado:
+
+```csv
+etp_instrument_id,etp_symbol,as_of_date,holding_instrument_id,holding_symbol,holding_name,holding_sector,weight_pct,description,color_light,color_dark,fetched_ts,source_url
+```
 
 ---
 
-## 7. Resumen para esta petición
+## 5. ¿Se guarda o no?
 
-Para:
-`GET /instruments/?active_instruments_only=false&symbol=SPY`
+### EtpMaster (info general)
 
-1. **Recibir:** HTTP → JSON → `InstrumentsPage`.
-2. **Envolver:** `InstrumentEnvelope` con `topic='instrument'` y `symbol='SPY'`.
-3. **Normalizar:** generar un `InstrumentRow`:
+✅ **Sí, siempre.** Es tu “ficha técnica” del ETF:
 
-   * Convertir ratios string → `number`,
-   * Aplanar info importante de tradability y margen,
-   * Guardar `account_type_tradabilities` como JSON string.
-4. **Guardar:**
+* AUM, yield, expense ratio, categoría,
+* Si es inverso, leveraged, volatilidad,
+* Indice que sigue.
 
-   * En `data/meta/instruments.csv` (o tabla `instruments` en DB).
-   * 1 fila por `instrument_id`, upsert por id.
-5. **Uso práctico:** resolver symbol→id, parámetros de riesgo y compatibilidad de trading para SPY y resto de símbolos.
+### Performance
+
+✅ **Sí, altamente recomendado.**
+Te sirve para:
+
+* Mostrar métricas de rendimiento en tu módulo,
+* Comparar ETFs en algún screener,
+* Hacer filtros (ej. “solo ETFs con >15% 3Y nav”).
+
+### Sectores
+
+✅ **Sí.**
+Te da la radiografía sectorial, útil para:
+
+* Ver exposición del portafolio total por sector,
+* Construir dashboards (pasteles, barras).
+
+### Holdings
+
+✅ **Sí**, pero puedes limitar:
+
+* Guardar todo, o
+* Guardar top 10–20 por ETF para no inflar demasiado los archivos.
+
+---
+
+## 6. Cómo encaja este módulo en tu trade_api
+
+Este endpoint pertenece claramente al módulo de **fundamentales/ETF**:
+
+* `etp_master` → ficha de SPY.
+* `etp_performance` → stats de rendimiento medio/largo plazo para SPY.
+* `etp_sectors` → exposición sectorial de SPY.
+* `etp_holdings` → top posiciones.
+
+Luego otros módulos consumen esto:
+
+* **Módulo de “stats del día” de SPY:**
+
+  * Puede mostrar AUM, expense ratio, yield junto con el precio actual.
+* **Módulo de gestión de riesgo a nivel portafolio:**
+
+  * Usa `etp_sectors` y `etp_holdings` para ver cuánto tienes en Tech, etc.
+* **Screener / ranking de ETFs:**
+
+  * Usa `etp_performance` para ordenar por mejores 3Y, 5Y, etc.
+
+---
+
+## 7. Resumen corto
+
+Para `GET bonfire.robinhood.com/.../etp-details/`:
+
+1. **Recibir** → `EtpDetailsEnvelope` (`topic='etp_details'`).
+2. **Procesar** en 4 sets de filas:
+
+   * `EtpMasterRow` → `data/meta/etp_master.csv`
+   * `EtpPerformanceRow[]` → `data/meta/etp_performance.csv`
+   * `EtpSectorRow[]` → `data/meta/etp_sectors.csv`
+   * `EtpHoldingRow[]` → `data/meta/etp_holdings.csv`
+3. **Guardar siempre**, con `upsert` por `instrument_id` en master y append en las otras (eventualmente deduplicando por `instrument_id + as_of_date + sector/holding/period/basis`).
 
 ---
