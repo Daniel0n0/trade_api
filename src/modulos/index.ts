@@ -9,11 +9,13 @@ import { runStockDailyGreeksModule } from './stock-daily-greeks.js';
 import { runStockDailyNewsModule } from './stock-daily-news.js';
 import { runStockDailyOrderbookModule } from './stock-daily-orderbook.js';
 import { runStockDailyStatsModule } from './stock-daily-stats.js';
+import { runSpyGreeksStatsModule } from './stock-spy-greeks-stats.js';
 import { runStocksGenericChartModule } from './stocks-generic-chart.js';
 
 export const MODULE_RUNNERS: Record<string, ModuleRunner> = {
   'spy-5m-1m': runSpy5m1mModule,
   'spy-options-chain': runSpyOptionsChainModule,
+  'spy-greeks-stats': runSpyGreeksStatsModule,
   'spx-options-chain': runSpxOptionsChainModule,
   'stocks-generic-chart': runStocksGenericChartModule,
   'options-generic': runOptionsGenericModule,
