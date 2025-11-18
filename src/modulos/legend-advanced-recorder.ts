@@ -23,7 +23,16 @@ const LEGEND_WS_URL = 'wss://api.robinhood.com/marketdata/streaming/legend/';
 const NORMALIZED_LEGEND_URL = normalizeLegendUrl(LEGEND_WS_URL);
 const KEEPALIVE_HEADER = 'ts_ms,date_utc,ws_url,channel,type';
 const DEFAULT_SYMBOL = 'GENERAL';
-const DEFAULT_ASSET_CLASS = 'stock';
+const DEFAULT_ASSET_CLASS = 'stocks';
+const ASSET_CLASS_ALIASES: Record<string, string> = {
+  stock: 'stocks',
+  stocks: 'stocks',
+  equity: 'stocks',
+  option: 'stocks',
+  options: 'stocks',
+  future: 'futures',
+  futures: 'futures',
+};
 const LEGEND_PRIMARY_SYMBOL_FALLBACK = process.env.LEGEND_PRIMARY_SYMBOL ?? 'SPY';
 
 export type LegendHeaderEntry = { readonly name: string; readonly value: string };
@@ -105,24 +114,11 @@ const normalizeAssetClass = (hint: string | undefined): string => {
   if (!hint) {
     return DEFAULT_ASSET_CLASS;
   }
-  const trimmed = hint.trim();
-  if (!trimmed) {
+  const sanitized = hint.trim().toLowerCase();
+  if (!sanitized) {
     return DEFAULT_ASSET_CLASS;
   }
-  const lowered = trimmed.toLowerCase();
-  if (lowered.startsWith('future')) {
-    return 'futures';
-  }
-  if (lowered.startsWith('crypto')) {
-    return 'crypto';
-  }
-  if (lowered.startsWith('option')) {
-    return 'stock';
-  }
-  if (lowered.startsWith('stock') || lowered.startsWith('equity')) {
-    return 'stock';
-  }
-  return DEFAULT_ASSET_CLASS;
+  return ASSET_CLASS_ALIASES[sanitized] ?? sanitized;
 };
 
 const resolvePrimarySymbol = (symbols: readonly string[] | undefined): string => {
