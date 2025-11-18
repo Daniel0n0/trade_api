@@ -421,7 +421,7 @@ const persistSpyCandle = (params: {
     typeof params.entry.eventFlags === 'number' || typeof params.entry.eventFlags === 'string'
       ? params.entry.eventFlags
       : '';
-  const session = toStringValue(params.entry.session);
+  const session = /\btho=true\b/i.test(params.eventSymbol) ? 'rth+eth' : 'rth';
   const tf = resolveSpyTimeframe(params.eventSymbol);
 
   if (
