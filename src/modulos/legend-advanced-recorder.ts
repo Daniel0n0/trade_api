@@ -76,6 +76,15 @@ const contextCache = new Map<string, LegendDateContext>();
 
 const LEGEND_TRADE_TYPES = new Set(['Trade', 'TradeETH'] as const);
 
+const SPY_SYMBOL = 'SPY';
+const SPY_ASSET_CLASS = 'stocks';
+const SPY_SOURCE_TRANSPORT = 'ws';
+const SPY_CANDLE_HEADER =
+  'timestamp,open,high,low,close,volume,vwap,count,imp_vol,event_flags,tf,session,source_transport,source_url';
+const SPY_TRADE_HEADER = 'timestamp,price,day_volume,session,source_transport,source_url';
+const SPY_ORDERBOOK_HEADER =
+  'timestamp,bid_price,bid_size,ask_price,ask_size,spread,mid,source_transport,source_url';
+
 type LegendTradeType = 'Trade' | 'TradeETH';
 
 type LegendTradeRecord = {
@@ -234,6 +243,62 @@ const createAppendStream = (filePath: string, header?: string): WriteStream => {
   return stream;
 };
 
+const spyCsvWriterCache = new Map<string, WriteStream>();
+
+const getSpyCsvWriter = (filePath: string, header: string): WriteStream => {
+  const existing = spyCsvWriterCache.get(filePath);
+  if (existing) {
+    return existing;
+  }
+  const writer = createAppendStream(filePath, header);
+  spyCsvWriterCache.set(filePath, writer);
+  return writer;
+};
+
+const appendSpyCsvRow = (
+  filePath: string,
+  header: string,
+  values: readonly (string | number | undefined | null)[],
+): void => {
+  const writer = getSpyCsvWriter(filePath, header);
+  const line = values
+    .map((value) => {
+      if (value === undefined || value === null) {
+        return '';
+      }
+      if (typeof value === 'number') {
+        return Number.isFinite(value) ? String(value) : '';
+      }
+      if (typeof value === 'string') {
+        return value.replace(/\r?\n/gu, ' ');
+      }
+      return '';
+    })
+    .join(',');
+  writer.write(`${line}\n`);
+};
+
+const isSpyEventSymbol = (value: string): boolean => value.trim().toUpperCase().startsWith(SPY_SYMBOL);
+
+const SPY_TIMEFRAME_TOKEN_MAP: Record<string, string> = {
+  d: '1d',
+  h: '1h',
+  '15': '15m',
+  '5': '5m',
+};
+
+const resolveSpyTimeframe = (eventSymbol: string): string | undefined => {
+  const match = /=([0-9a-z]+)/iu.exec(eventSymbol);
+  if (!match) {
+    return undefined;
+  }
+  const token = match[1].toLowerCase();
+  return SPY_TIMEFRAME_TOKEN_MAP[token];
+};
+
+const ensureSpyDateDir = (timestampMs: number): string =>
+  ensureSymbolDateDir({ assetClass: SPY_ASSET_CLASS, symbol: SPY_SYMBOL, date: formatUtcDate(timestampMs) });
+
 const resolveOptionsWriterKey = (eventType: unknown): LegendOptionsWriterKey | undefined => {
   if (typeof eventType !== 'string') {
     return undefined;
@@ -329,6 +394,127 @@ const resolveTradeRecord = (
   };
 };
 
+const toStringValue = (value: unknown): string | undefined => {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed || undefined;
+};
+
+const persistSpyCandle = (params: {
+  entry: Record<string, unknown>;
+  eventSymbol: string;
+  sourceUrl: string;
+}): void => {
+  const timestamp = resolveNumber(params.entry.time);
+  const open = resolveNumber(params.entry.open);
+  const high = resolveNumber(params.entry.high);
+  const low = resolveNumber(params.entry.low);
+  const close = resolveNumber(params.entry.close);
+  const volume = resolveNumber(params.entry.volume);
+  const vwap = resolveNumber(params.entry.vwap);
+  const count = resolveNumber(params.entry.count);
+  const impVol = resolveNumber(params.entry.impVol);
+  const eventFlags =
+    typeof params.entry.eventFlags === 'number' || typeof params.entry.eventFlags === 'string'
+      ? params.entry.eventFlags
+      : '';
+  const session = toStringValue(params.entry.session);
+  const tf = resolveSpyTimeframe(params.eventSymbol);
+
+  if (
+    tf === undefined ||
+    timestamp === undefined ||
+    open === undefined ||
+    high === undefined ||
+    low === undefined ||
+    close === undefined ||
+    volume === undefined
+  ) {
+    return;
+  }
+
+  const filePath = path.join(ensureSpyDateDir(timestamp), `${tf}.csv`);
+  appendSpyCsvRow(filePath, SPY_CANDLE_HEADER, [
+    timestamp,
+    open,
+    high,
+    low,
+    close,
+    volume,
+    vwap,
+    count,
+    impVol,
+    eventFlags,
+    tf,
+    session,
+    SPY_SOURCE_TRANSPORT,
+    params.sourceUrl,
+  ]);
+};
+
+const persistSpyTradeCsv = (params: {
+  entry: Record<string, unknown>;
+  eventType: LegendTradeType;
+  sourceUrl: string;
+}): void => {
+  const price = resolveNumber(params.entry.price);
+  const dayVolume = resolveNumber(params.entry.dayVolume);
+  const timestamp = resolveNumber(params.entry.time);
+  if (price === undefined || dayVolume === undefined || timestamp === undefined) {
+    return;
+  }
+
+  const session = params.eventType === 'TradeETH' ? 'eth' : 'rth';
+  const filePath = path.join(ensureSpyDateDir(timestamp), '1sec_trades.csv');
+  appendSpyCsvRow(filePath, SPY_TRADE_HEADER, [
+    timestamp,
+    price,
+    dayVolume,
+    session,
+    SPY_SOURCE_TRANSPORT,
+    params.sourceUrl,
+  ]);
+};
+
+const persistSpyQuote = (params: { entry: Record<string, unknown>; sourceUrl: string }): void => {
+  const bidPrice = resolveNumber(params.entry.bidPrice);
+  const askPrice = resolveNumber(params.entry.askPrice);
+  const bidSize = resolveNumber(params.entry.bidSize);
+  const askSize = resolveNumber(params.entry.askSize);
+  const bidTime = resolveNumber(params.entry.bidTime);
+  const askTime = resolveNumber(params.entry.askTime);
+  const fallbackTime = resolveNumber(params.entry.time);
+
+  if (bidPrice === undefined || askPrice === undefined) {
+    return;
+  }
+
+  const timestampCandidates = [bidTime, askTime, fallbackTime].filter((value): value is number =>
+    typeof value === 'number' && Number.isFinite(value),
+  );
+  const timestamp = timestampCandidates.length ? Math.max(...timestampCandidates) : undefined;
+  if (timestamp === undefined) {
+    return;
+  }
+
+  const filePath = path.join(ensureSpyDateDir(timestamp), 'orderbook.csv');
+  const spread = askPrice - bidPrice;
+  const mid = (askPrice + bidPrice) / 2;
+  appendSpyCsvRow(filePath, SPY_ORDERBOOK_HEADER, [
+    timestamp,
+    bidPrice,
+    bidSize,
+    askPrice,
+    askSize,
+    spread,
+    mid,
+    SPY_SOURCE_TRANSPORT,
+    params.sourceUrl,
+  ]);
+};
+
 const formatHeadersBlock = (entries: readonly LegendHeaderEntry[], options: { omitAuthorization?: boolean } = {}): string => {
   if (!entries.length) {
     return '';
@@ -400,6 +586,10 @@ export function onLegendFrame(params: LegendFrameParams): void {
     return;
   }
 
+  if (typeValue === 'FEED_CONFIG') {
+    return;
+  }
+
   if (typeValue === 'FEED_DATA') {
     const channel = resolveChannel(params.payload.channel);
     const rawData = (params.payload as { data?: unknown }).data;
@@ -422,6 +612,21 @@ export function onLegendFrame(params: LegendFrameParams): void {
           timestampMs: timestampForOptions,
         });
         continue;
+      }
+      if (isSpyEventSymbol(eventSymbolValue)) {
+        const eventType = typeof entry.eventType === 'string' ? entry.eventType.trim() : '';
+        if (eventType === 'Candle') {
+          persistSpyCandle({ entry, eventSymbol: eventSymbolValue, sourceUrl: params.url });
+          continue;
+        }
+        if (eventType === 'Trade' || eventType === 'TradeETH') {
+          persistSpyTradeCsv({ entry, eventType: eventType as LegendTradeType, sourceUrl: params.url });
+          continue;
+        }
+        if (eventType === 'Quote') {
+          persistSpyQuote({ entry, sourceUrl: params.url });
+          continue;
+        }
       }
       const trade = resolveTradeRecord(entry, channel);
       if (!trade) {
