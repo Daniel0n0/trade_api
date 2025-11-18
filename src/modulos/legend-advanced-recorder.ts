@@ -415,6 +415,7 @@ const persistSpyCandle = (params: {
   const volume = resolveNumber(params.entry.volume);
   const vwap = resolveNumber(params.entry.vwap);
   const count = resolveNumber(params.entry.count);
+  const impVolatility = resolveNumber(params.entry.impVolatility);
   const impVol = resolveNumber(params.entry.impVol);
   const eventFlags =
     typeof params.entry.eventFlags === 'number' || typeof params.entry.eventFlags === 'string'
@@ -445,7 +446,7 @@ const persistSpyCandle = (params: {
     volume,
     vwap,
     count,
-    impVol,
+    impVolatility ?? impVol,
     eventFlags,
     tf,
     session,
