@@ -303,3 +303,4 @@ En el comando `sanitizeSpyTfData` que ya definimos, agrega un comentario recorda
 ```
 
 Con esto dejas este módulo de `legend` totalmente encajado en la ORDEN DEL MOMENTO y preparado para que el saneamiento de SPY por temporalidad sea consistente.
+cls
