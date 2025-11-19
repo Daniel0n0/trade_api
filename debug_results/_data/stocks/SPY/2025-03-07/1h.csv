@@ -1,0 +1,8 @@
+timestamp,open,high,low,close,volume,vwap,count,imp_vol,event_flags,tf,session,source_transport,source_url
+1741377600000,575.17,577.39,572.81,575.85,9218723,575.48324221396,48872,0.2262,0,1h,rth+eth,ws,wss://api.robinhood.com/marketdata/streaming/legend/
+1741374000000,575.27,577.31,574.13,575.1735,6239002,575.879798260844,30990,0.2327,0,1h,rth+eth,ws,wss://api.robinhood.com/marketdata/streaming/legend/
+1741370400000,570.19,575.3,570.13,575.24,5693188,573.550538113549,30434,0.2351,0,1h,rth+eth,ws,wss://api.robinhood.com/marketdata/streaming/legend/
+1741366800000,567.12,573.08,565.8,570.185,8619135,569.170429944153,46506,0.2452,0,1h,rth+eth,ws,wss://api.robinhood.com/marketdata/streaming/legend/
+1741363200000,570.92,571.26,565.63,567.1,6615307,567.766530778012,35063,0.2523,0,1h,rth+eth,ws,wss://api.robinhood.com/marketdata/streaming/legend/
+1741359600000,573.95,575.069,568.4281,570.91,9122041,571.307803138815,47994,0.241,0,1h,rth+eth,ws,wss://api.robinhood.com/marketdata/streaming/legend/
+1741356000000,570.9,576.0679,570.8,573.95,4875529,573.530794536983,25539,0.2339,0,1h,rth+eth,ws,wss://api.robinhood.com/marketdata/streaming/legend/
