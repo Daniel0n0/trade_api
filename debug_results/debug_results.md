@@ -18,9 +18,6 @@ data/stocks/<NOMBRE_DEL_STOCK>/<fecha>/options/in_the_future/<fecha>/  (datos de
 
 
 
-PUNTO 41:
-
-
 Perfecto, aplico la **ORDEN DEL MOMENTO** a *esta misma petición de `legend`* pensando ya en que es la **fuente maestra** para sanear SPY y alimentar tus 5m/15m/1h. 
 
 ---
@@ -305,4 +302,4 @@ En el comando `sanitizeSpyTfData` que ya definimos, agrega un comentario recorda
 //  - <URL_HTTP_5m>, <URL_HTTP_15m>, <URL_HTTP_1h>  // TODO: completar cuando Amo pase las URLs
 ```
 
----
+Con esto dejas este módulo de `legend` totalmente encajado en la ORDEN DEL MOMENTO y preparado para que el saneamiento de SPY por temporalidad sea consistente.
