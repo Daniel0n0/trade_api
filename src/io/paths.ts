@@ -55,7 +55,7 @@ const ASSET_CLASS_ALIASES: Record<string, string> = {
   futures: 'futures',
 };
 
-const sanitizeAssetClass = (input: string | undefined): string => {
+export const sanitizeAssetClass = (input: string | undefined): string => {
   const sanitized = sanitizeSegment(input).toLowerCase();
   const normalized = sanitized || DEFAULT_ASSET_CLASS;
   return ASSET_CLASS_ALIASES[normalized] ?? normalized;

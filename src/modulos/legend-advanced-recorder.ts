@@ -3,7 +3,7 @@ import { closeSync, createWriteStream, existsSync, openSync, statSync, type Writ
 import { writeFile } from 'node:fs/promises';
 
 import { ensureDirectorySync, ensureDirectoryForFileSync } from '../io/dir.js';
-import { ensureSymbolDateDir } from '../io/paths.js';
+import { ensureSymbolDateDir, sanitizeAssetClass } from '../io/paths.js';
 
 const normalizeLegendUrl = (url: string): string => {
   if (!url) {
@@ -24,15 +24,6 @@ const NORMALIZED_LEGEND_URL = normalizeLegendUrl(LEGEND_WS_URL);
 const KEEPALIVE_HEADER = 'ts_ms,date_utc,ws_url,channel,type';
 const DEFAULT_SYMBOL = 'GENERAL';
 const DEFAULT_ASSET_CLASS = 'stocks';
-const ASSET_CLASS_ALIASES: Record<string, string> = {
-  stock: 'stocks',
-  stocks: 'stocks',
-  equity: 'stocks',
-  option: 'stocks',
-  options: 'stocks',
-  future: 'futures',
-  futures: 'futures',
-};
 const LEGEND_PRIMARY_SYMBOL_FALLBACK = process.env.LEGEND_PRIMARY_SYMBOL ?? 'SPY';
 
 export type LegendHeaderEntry = { readonly name: string; readonly value: string };
@@ -119,16 +110,7 @@ const sanitizeSymbol = (input: string | undefined): string => {
   return sanitized || DEFAULT_SYMBOL;
 };
 
-const normalizeAssetClass = (hint: string | undefined): string => {
-  if (!hint) {
-    return DEFAULT_ASSET_CLASS;
-  }
-  const sanitized = hint.trim().toLowerCase();
-  if (!sanitized) {
-    return DEFAULT_ASSET_CLASS;
-  }
-  return ASSET_CLASS_ALIASES[sanitized] ?? sanitized;
-};
+const normalizeAssetClass = (hint: string | undefined): string => sanitizeAssetClass(hint) || DEFAULT_ASSET_CLASS;
 
 const resolvePrimarySymbol = (symbols: readonly string[] | undefined): string => {
   if (!symbols || symbols.length === 0) {

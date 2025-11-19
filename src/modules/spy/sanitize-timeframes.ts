@@ -32,6 +32,9 @@ export type SpyCandleRow = {
   readonly source_url: string;
 };
 
+// Fuente cruda de velas SPY:
+//  - wss://api.robinhood.com/marketdata/streaming/legend/
+//  - <<TODO_URL_5M_SPY>>, <<TODO_URL_15M_SPY>>, <<TODO_URL_1H_SPY>>  // HTTP fallback por tf
 export const SPY_TF_ENDPOINTS: Record<Timeframe, string> = {
   '5m': '<<TODO_URL_5M_SPY>>',
   '15m': '<<TODO_URL_15M_SPY>>',
@@ -60,7 +63,7 @@ export function resolveSpyPath(row: Pick<SpyCandleRow, 'timestamp' | 'tf'>): str
   const dd = String(date.getUTCDate()).padStart(2, '0');
 
   const dateStr = `${yyyy}-${mm}-${dd}`;
-  return path.join(process.cwd(), 'data', 'stock', 'SPY', dateStr, `${row.tf}.csv`);
+  return path.join(process.cwd(), 'data', 'stocks', 'SPY', dateStr, `${row.tf}.csv`);
 }
 
 export async function upsertSpyCandle(row: SpyCandleRow): Promise<void> {
