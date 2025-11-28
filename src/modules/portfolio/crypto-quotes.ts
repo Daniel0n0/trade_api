@@ -1,7 +1,7 @@
 import path from 'node:path';
 
 import Decimal from 'decimal.js';
-import type { Decimal as DecimalType } from 'decimal.js';
+import type { Decimal as DecimalNamespace } from 'decimal.js';
 
 import { marketDataPath } from '../../io/paths.js';
 import type { CsvRowInput } from '../../io/upsertCsv.js';
@@ -76,11 +76,12 @@ export type CryptoQuoteEnvelope = {
 
 const UNKNOWN_SYMBOL = 'UNKNOWN-CRYPTO';
 
-type DecimalConstructor = typeof import('decimal.js').default;
+type DecimalType = DecimalNamespace;
+type DecimalValue = DecimalNamespace.Value;
 
-const DecimalCtor: DecimalConstructor = Decimal as DecimalConstructor;
+const DecimalCtor = Decimal as DecimalNamespace.Constructor;
 
-const dec = (value?: string | null): DecimalType => new DecimalCtor(value ?? '0');
+const dec = (value?: DecimalValue | null): DecimalType => new DecimalCtor(value ?? '0');
 
 const normaliseSymbol = (input: unknown): string => {
   if (typeof input === 'string' && input.trim()) {
@@ -186,7 +187,7 @@ const toQuoteRows = (envelope: CryptoQuoteEnvelope): CryptoQuoteRow[] => {
       vol_24h: typeof quote.volume_24h === 'string' ? quote.volume_24h : quote.volume_24h?.toString(),
       state: typeof quote.state === 'string' ? quote.state : undefined,
       updated_at_iso: resolveUpdatedAt(quote.updated_at),
-    });
+    } satisfies CryptoQuoteRow);
   }
 
   return rows;
@@ -236,7 +237,7 @@ const toPricebookRows = (envelope: CryptoQuoteEnvelope): CryptoPricebookRow[] =>
           price: typeof level.price === 'string' ? level.price : level.price?.toString(),
           size: typeof level.size === 'string' ? level.size : level.size?.toString(),
           updated_at_iso: updatedAtIso,
-        });
+        } satisfies CryptoPricebookRow);
       }
     };
 
