@@ -1,2 +1,0 @@
-timestamp,open,high,low,close,volume,vwap,count,imp_vol,event_flags,tf,session,source_transport,source_url
-1408060800000,196.47,196.65,194.31,195.72,139950670,,0,,0,1d,rth,ws,wss://api.robinhood.com/marketdata/streaming/legend/

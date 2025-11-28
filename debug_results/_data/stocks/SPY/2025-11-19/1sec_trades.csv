@@ -1,2 +1,0 @@
-timestamp,price,day_volume,session,source_transport,source_url
-1763524494644,659.58,27575,eth,ws,wss://api.robinhood.com/marketdata/streaming/legend/

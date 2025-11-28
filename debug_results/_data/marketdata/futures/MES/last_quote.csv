@@ -1,2 +1,0 @@
-ts,source_url,instrument_id,symbol,root,expiry_code,venue,bid_px,bid_sz,bid_ts,ask_px,ask_sz,ask_ts,last_px,last_sz,last_ts,state,updated_at_iso,mid_px,spread_px,spread_bps
-1763524518569,https://api.robinhood.com/marketdata/futures/quotes/v1/?ids=c4021dc3-bc5c-4252-a5b9-209572a1cb78,C4021DC3-BC5C-4252-A5B9-209572A1CB78,/MESZ25:XCME,/MES,Z25,XCME,6630.75,9,2025-11-19T03:55:18.256Z,6631,15,2025-11-19T03:55:18.256Z,6631,2,2025-11-19T03:55:18.004Z,active,2025-11-19T03:55:18.256Z,6630.875,0.25,0.37702414839670480894
