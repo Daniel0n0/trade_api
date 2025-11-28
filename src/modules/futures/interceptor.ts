@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { Page, Response } from 'playwright';
 import { DateTime } from 'luxon';
 import Decimal from 'decimal.js';
+import type { Decimal as DecimalType } from 'decimal.js';
 
 import { ensureDirectoryForFileSync } from '../../io/dir.js';
 import { getCsvWriter } from '../../io/csvWriter.js';
@@ -21,6 +22,10 @@ export const FUTURES_CONTRACTS_BY_SYMBOL_PATTERN = /arsenal\/v1\/futures\/contra
 export const FUTURES_CONTRACTS_PATTERN = /arsenal\/v1\/futures\/contracts(?!\/symbol)/i;
 export const FUTURES_TRADING_SESSIONS_PATTERN = /arsenal\/v1\/futures\/trading_sessions/i;
 export const FUTURES_INBOX_THREADS_PATTERN = /inbox\/threads/i;
+
+type DecimalConstructor = typeof import('decimal.js').default;
+
+const DecimalCtor: DecimalConstructor = Decimal as DecimalConstructor;
 
 export const FUTURES_BARS_HEADER = [
   'beginsAt',
@@ -474,9 +479,9 @@ const parseFuturesSymbol = (
   };
 };
 
-const dec = (value: unknown): Decimal | null => {
+const dec = (value: unknown): DecimalType | null => {
   try {
-    const decimal = new Decimal(value as Decimal.Value);
+    const decimal = new DecimalCtor(value as DecimalType.Value);
     if (!decimal.isFinite() || decimal.isNaN()) {
       return null;
     }

@@ -2,6 +2,7 @@ import path from 'node:path';
 import { writeFile } from 'node:fs/promises';
 
 import Decimal from 'decimal.js';
+import type { Decimal as DecimalType } from 'decimal.js';
 
 import { ensureDirectory, ensureDirectoryForFile } from '../../io/dir.js';
 import { getDataRoot } from '../../io/paths.js';
@@ -10,6 +11,10 @@ import type { CsvRowInput } from '../../io/upsertCsv.js';
 
 const DEFAULT_SOURCE_URL = 'https://nummus.robinhood.com/holdings/';
 const DEFAULT_ACCOUNT_SEGMENT = 'UNKNOWN-ACCOUNT';
+
+type DecimalConstructor = typeof import('decimal.js').default;
+
+const DecimalCtor: DecimalConstructor = Decimal as DecimalConstructor;
 
 export const HOLDINGS_CURRENT_HEADER = [
   'ts',
@@ -233,7 +238,7 @@ type SnapshotMapEntry = {
   readonly raw: HoldingRaw[];
 };
 
-const ZERO = new Decimal(0);
+const ZERO = new DecimalCtor(0);
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
@@ -252,22 +257,22 @@ const toTrimmedString = (value: unknown): string | undefined => {
   return undefined;
 };
 
-const decimalFrom = (value: unknown): Decimal => {
-  if (value instanceof Decimal) {
-    return value;
+const decimalFrom = (value: unknown): DecimalType => {
+  if (value instanceof DecimalCtor) {
+    return value as DecimalType;
   }
   if (typeof value === 'number' && Number.isFinite(value)) {
-    return new Decimal(value);
+    return new DecimalCtor(value);
   }
   if (typeof value === 'bigint') {
-    return new Decimal(value.toString());
+    return new DecimalCtor(value.toString());
   }
   const candidate = typeof value === 'string' ? value.trim() : undefined;
   if (!candidate) {
     return ZERO;
   }
   try {
-    return new Decimal(candidate);
+    return new DecimalCtor(candidate);
   } catch {
     return ZERO;
   }
@@ -317,7 +322,22 @@ const writeCsvSnapshot = async <T extends readonly string[]>(
   await ensureDirectoryForFile(filePath);
   const lines: string[] = [header.join(',')];
   for (const row of rows) {
-    lines.push(toCsvLine(header, row as Record<string, unknown>));
+    const formattedRow: Partial<Record<T[number], string | number | undefined>> = {};
+    for (const key of header) {
+      const typedKey = key as T[number];
+      const value = row[typedKey];
+      if (value === null || value === undefined) {
+        continue;
+      }
+      if (typeof value === 'boolean') {
+        formattedRow[typedKey] = value ? 1 : 0;
+        continue;
+      }
+      if (typeof value === 'number' || typeof value === 'string') {
+        formattedRow[typedKey] = value;
+      }
+    }
+    lines.push(toCsvLine(header, formattedRow));
   }
   if (lines.length === 1) {
     lines.push('');
@@ -430,16 +450,16 @@ const aggregateCostBases = (costBases: readonly ParsedCostBasis[]): AggregatedCo
   let markedCost = ZERO;
 
   for (const cb of costBases) {
-    directQty = directQty.plus(new Decimal(cb.directQty));
-    directCost = directCost.plus(new Decimal(cb.directCost));
-    rewardQty = rewardQty.plus(new Decimal(cb.rewardQty));
-    rewardCost = rewardCost.plus(new Decimal(cb.rewardCost));
-    transferQty = transferQty.plus(new Decimal(cb.transferQty));
-    transferCost = transferCost.plus(new Decimal(cb.transferCost));
-    intradayQty = intradayQty.plus(new Decimal(cb.intradayQty));
-    intradayCost = intradayCost.plus(new Decimal(cb.intradayCost));
-    markedQty = markedQty.plus(new Decimal(cb.markedQty));
-    markedCost = markedCost.plus(new Decimal(cb.markedCost));
+    directQty = directQty.plus(new DecimalCtor(cb.directQty));
+    directCost = directCost.plus(new DecimalCtor(cb.directCost));
+    rewardQty = rewardQty.plus(new DecimalCtor(cb.rewardQty));
+    rewardCost = rewardCost.plus(new DecimalCtor(cb.rewardCost));
+    transferQty = transferQty.plus(new DecimalCtor(cb.transferQty));
+    transferCost = transferCost.plus(new DecimalCtor(cb.transferCost));
+    intradayQty = intradayQty.plus(new DecimalCtor(cb.intradayQty));
+    intradayCost = intradayCost.plus(new DecimalCtor(cb.intradayCost));
+    markedQty = markedQty.plus(new DecimalCtor(cb.markedQty));
+    markedCost = markedCost.plus(new DecimalCtor(cb.markedCost));
   }
 
   return {

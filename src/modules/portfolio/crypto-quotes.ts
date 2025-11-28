@@ -1,6 +1,7 @@
 import path from 'node:path';
 
 import Decimal from 'decimal.js';
+import type { Decimal as DecimalType } from 'decimal.js';
 
 import { marketDataPath } from '../../io/paths.js';
 import type { CsvRowInput } from '../../io/upsertCsv.js';
@@ -75,7 +76,11 @@ export type CryptoQuoteEnvelope = {
 
 const UNKNOWN_SYMBOL = 'UNKNOWN-CRYPTO';
 
-const dec = (value?: string | null): Decimal => new Decimal(value ?? '0');
+type DecimalConstructor = typeof import('decimal.js').default;
+
+const DecimalCtor: DecimalConstructor = Decimal as DecimalConstructor;
+
+const dec = (value?: string | null): DecimalType => new DecimalCtor(value ?? '0');
 
 const normaliseSymbol = (input: unknown): string => {
   if (typeof input === 'string' && input.trim()) {
@@ -108,7 +113,7 @@ const resolveUpdatedAt = (value: unknown): string | null => {
   return null;
 };
 
-const midFromPrices = (bid: Decimal, ask: Decimal, fallback: Decimal): Decimal => {
+const midFromPrices = (bid: DecimalType, ask: DecimalType, fallback: DecimalType): DecimalType => {
   const hasBoth = bid.gt(0) && ask.gt(0);
   if (hasBoth) {
     return bid.plus(ask).div(2);
@@ -116,10 +121,10 @@ const midFromPrices = (bid: Decimal, ask: Decimal, fallback: Decimal): Decimal =
   return fallback;
 };
 
-const spreadFromPrices = (bid: Decimal, ask: Decimal): Decimal => {
+const spreadFromPrices = (bid: DecimalType, ask: DecimalType): DecimalType => {
   const hasBoth = bid.gt(0) && ask.gt(0);
   if (!hasBoth) {
-    return new Decimal(0);
+    return new DecimalCtor(0);
   }
   return ask.minus(bid);
 };
