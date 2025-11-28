@@ -1402,7 +1402,19 @@ export function normalizeFuturesTradingSessions(
         duration: number;
         isTrading: boolean;
         sessionType: 'REGULAR' | 'NO_TRADING' | 'OTHER';
-      } => Boolean(session));
+      } =>
+        Boolean(
+          session &&
+            session.tradingDate &&
+            session.startIso &&
+            session.endIso &&
+            typeof session.startTs === 'number' &&
+            Number.isFinite(session.startTs) &&
+            typeof session.endTs === 'number' &&
+            Number.isFinite(session.endTs) &&
+            typeof session.duration === 'number' &&
+            Number.isFinite(session.duration),
+        ));
 
     normalizedSessions.sort((a, b) => a.startTs - b.startTs);
 
