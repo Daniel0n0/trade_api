@@ -123,7 +123,7 @@ export type EtpMasterRow = {
   readonly show_holdings_visualization: boolean;
 
   readonly fetched_ts: number;
-  readonly source_transport: 'http';
+  readonly source_transport: Envelope['transport'];
   readonly source_url: string;
 };
 
