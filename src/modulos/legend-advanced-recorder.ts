@@ -518,6 +518,13 @@ export const shouldProcessLegendWS = (url: string): boolean => {
   return normalizeLegendUrl(url) === NORMALIZED_LEGEND_URL;
 };
 
+export const shouldProcessLegendWSStrict = (url: string): boolean => {
+  if (!shouldProcessLegendWS(url)) {
+    return false;
+  }
+  return url.trim().toLowerCase() === LEGEND_WS_URL;
+};
+
 export async function onLegendOpen(params: LegendOpenParams): Promise<void> {
   if (!shouldProcessLegendWS(params.url)) {
     return;
