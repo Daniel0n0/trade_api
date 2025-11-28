@@ -2,12 +2,20 @@ import process from 'node:process';
 
 import type { Command } from 'commander';
 
-import type { ProcessManager } from '../../orchestrator/processManager.js';
+import type { EventEmitter } from 'node:events';
 
-export type ProcessManagerLike = Pick<
-  ProcessManager,
-  'startRunner' | 'stop' | 'list' | 'broadcast' | 'on' | 'off' | 'once'
->;
+import type { ModuleArgs, ParentToChild } from '../../orchestrator/messages.js';
+import type { ChildRef, ProcessSnapshot } from '../../orchestrator/processManager.js';
+
+export type ProcessManagerLike = {
+  startRunner(args: ModuleArgs): ChildRef;
+  stop(ctxId: string): boolean;
+  list(): ProcessSnapshot[];
+  broadcast(message: ParentToChild): void;
+  on: EventEmitter['on'];
+  off: EventEmitter['off'];
+  once: EventEmitter['once'];
+};
 
 export type GlobalOptions = { json: boolean; dryRun: boolean };
 
