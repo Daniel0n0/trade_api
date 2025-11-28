@@ -4,6 +4,7 @@ import { writeFile } from 'node:fs/promises';
 import Decimal from 'decimal.js';
 
 import { ensureDirectory, ensureDirectoryForFile } from '../../io/dir.js';
+import { getDataRoot } from '../../io/paths.js';
 import { toCsvLine } from '../../io/row.js';
 import type { CsvRowInput } from '../../io/upsertCsv.js';
 
@@ -642,7 +643,7 @@ export async function persistCryptoHoldingsSnapshot(
   snapshot: CryptoHoldingsSnapshot,
   options?: { readonly baseDir?: string },
 ): Promise<PersistHoldingsResult> {
-  const baseDir = options?.baseDir ?? path.join(process.cwd(), 'data');
+  const baseDir = options?.baseDir ?? getDataRoot();
   const { date, timestamp } = formatDateFolder(snapshot.ts);
   const rawPath = await writeRawSnapshot(baseDir, snapshot.accountId, timestamp, snapshot.holdings, snapshot.ts, snapshot.sourceUrl);
   const csvPaths = await writeHoldingsCsvs(

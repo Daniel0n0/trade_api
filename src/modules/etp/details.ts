@@ -1,5 +1,6 @@
 import path from 'node:path';
 
+import { getDataRoot } from '../../io/paths.js';
 import { upsertCsv } from '../../io/upsertCsv.js';
 import { safeJsonParse } from '../../utils/payload.js';
 import type { HttpClient } from '../instrument/index.js';
@@ -425,7 +426,7 @@ async function persistMaster(rows: readonly EtpMasterRow[]): Promise<void> {
     return;
   }
 
-  const filePath = path.join(process.cwd(), 'data', 'meta', 'etp_master.csv');
+  const filePath = path.join(getDataRoot(), 'meta', 'etp_master.csv');
   await upsertCsv(filePath, ETP_MASTER_HEADER, rows, (row) => String(row.instrument_id));
 }
 
@@ -434,7 +435,7 @@ async function persistPerformance(rows: readonly EtpPerformanceRow[]): Promise<v
     return;
   }
 
-  const filePath = path.join(process.cwd(), 'data', 'meta', 'etp_performance.csv');
+  const filePath = path.join(getDataRoot(), 'meta', 'etp_performance.csv');
   await upsertCsv(filePath, ETP_PERFORMANCE_HEADER, rows, (row) =>
     [row.instrument_id, row.as_of_date, row.time_scope, row.basis, row.period].join('|'),
   );
@@ -456,7 +457,7 @@ async function persistHoldings(rows: readonly EtpHoldingRow[]): Promise<void> {
     return;
   }
 
-  const filePath = path.join(process.cwd(), 'data', 'meta', 'etp_holdings.csv');
+  const filePath = path.join(getDataRoot(), 'meta', 'etp_holdings.csv');
   await upsertCsv(filePath, ETP_HOLDINGS_HEADER, rows, (row) =>
     [row.etp_instrument_id, row.as_of_date, row.holding_instrument_id].join('|'),
   );

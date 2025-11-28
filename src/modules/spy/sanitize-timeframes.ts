@@ -2,6 +2,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { ensureDirectoryForFile } from '../../io/dir.js';
+import { getDataRoot } from '../../io/paths.js';
 import { safeJsonParse } from '../../utils/payload.js';
 import type { HttpClient } from '../instrument/index.js';
 
@@ -63,7 +64,7 @@ export function resolveSpyPath(row: Pick<SpyCandleRow, 'timestamp' | 'tf'>): str
   const dd = String(date.getUTCDate()).padStart(2, '0');
 
   const dateStr = `${yyyy}-${mm}-${dd}`;
-  return path.join(process.cwd(), 'data', 'stocks', 'SPY', dateStr, `${row.tf}.csv`);
+  return path.join(getDataRoot(), 'stocks', 'SPY', dateStr, `${row.tf}.csv`);
 }
 
 export async function upsertSpyCandle(row: SpyCandleRow): Promise<void> {

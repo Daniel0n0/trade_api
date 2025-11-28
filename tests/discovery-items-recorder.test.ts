@@ -10,10 +10,11 @@ import {
   persistDiscoveryItemsPayload,
   persistDiscoveryItemsRawArtifacts,
 } from '../src/modules/discovery/discovery-items-recorder.js';
+import { getDataRoot } from '../src/io/paths.js';
 
 describe('discovery items recorder', () => {
   beforeEach(async () => {
-    await rm(path.join(process.cwd(), 'data'), { recursive: true, force: true });
+    await rm(getDataRoot(), { recursive: true, force: true });
   });
 
   it('detecta la URL de discovery items', () => {
@@ -68,8 +69,7 @@ describe('discovery items recorder', () => {
     await persistDiscoveryItemsPayload({ ...baseParams, payload });
 
     const baseDir = path.join(
-      process.cwd(),
-      'data',
+      getDataRoot(),
       'stocks',
       symbol,
       '2024-01-15',
@@ -139,8 +139,7 @@ describe('discovery items recorder', () => {
     await persistDiscoveryItemsPayload({ ...baseParams, payload });
 
     const summaryPath = path.join(
-      process.cwd(),
-      'data',
+      getDataRoot(),
       'stocks',
       symbol,
       '2024-03-10',
@@ -179,8 +178,7 @@ describe('discovery items recorder', () => {
     await persistDiscoveryItemsPayload({ ...baseParams, payload });
 
     const itemsPath = path.join(
-      process.cwd(),
-      'data',
+      getDataRoot(),
       'stocks',
       symbol,
       '2024-08-05',
@@ -214,16 +212,7 @@ describe('discovery items recorder', () => {
     };
     await persistDiscoveryItemsRawArtifacts(baseParams);
 
-    const baseDir = path.join(
-      process.cwd(),
-      'data',
-      'stocks',
-      symbol,
-      '2024-06-01',
-      'discovery',
-      'lists',
-      listId,
-    );
+    const baseDir = path.join(getDataRoot(), 'stocks', symbol, '2024-06-01', 'discovery', 'lists', listId);
     const rawPath = path.join(baseDir, 'raw', `response_${snapshotId}.json`);
     const metaPath = path.join(baseDir, `request_meta_${snapshotId}.txt`);
     const summaryPath = path.join(baseDir, 'summary.json');
@@ -239,16 +228,7 @@ describe('discovery items recorder', () => {
     const listId = 'list-unique';
     const ownerType = 'robinhood';
     const symbol = 'SPY';
-    const baseDir = path.join(
-      process.cwd(),
-      'data',
-      'stocks',
-      symbol,
-      '2024-04-01',
-      'discovery',
-      'lists',
-      listId,
-    );
+    const baseDir = path.join(getDataRoot(), 'stocks', symbol, '2024-04-01', 'discovery', 'lists', listId);
 
     const firstId = createDiscoverySnapshotId();
     const secondId = createDiscoverySnapshotId();

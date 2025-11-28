@@ -7,7 +7,7 @@ import Decimal from 'decimal.js';
 
 import { ensureDirectoryForFileSync } from '../../io/dir.js';
 import { getCsvWriter } from '../../io/csvWriter.js';
-import { dataPath, marketDataPath } from '../../io/paths.js';
+import { dataPath, getDataRoot, marketDataPath } from '../../io/paths.js';
 import { toCsvLine } from '../../io/row.js';
 import { upsertCsv } from '../../io/upsertCsv.js';
 import { safeJsonParse } from '../../utils/payload.js';
@@ -1617,7 +1617,7 @@ const isJsonContentType = (headers: Record<string, string | undefined>): boolean
 
 const persistInboxThreadsSnapshot = async (payload: string): Promise<void> => {
   const date = DateTime.now().toISODate();
-  const filePath = path.join(process.cwd(), 'data', '_raw', 'inbox', `${date}.jsonl`);
+  const filePath = path.join(getDataRoot(), '_raw', 'inbox', `${date}.jsonl`);
 
   ensureDirectoryForFileSync(filePath);
 

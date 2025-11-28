@@ -23,7 +23,7 @@ import {
   toCsvLine,
   toMsUtc,
 } from '../io/row.js';
-import { dataPath, ensureSymbolDateDir } from '../io/paths.js';
+import { dataPath, ensureSymbolDateDir, getDataRoot } from '../io/paths.js';
 import {
   onLegendFrame,
   onLegendOpen,
@@ -175,7 +175,7 @@ const normalizeTelemetryDate = (input: string | null | undefined): string => {
 
 const ensureOrderTelemetryDir = (date: string): { baseDir: string; rawDir: string } => {
   const normalized = normalizeTelemetryDate(date);
-  const baseDir = path.join(process.cwd(), 'data', 'app', 'streams', 'orders', normalized);
+  const baseDir = path.join(getDataRoot(), 'app', 'streams', 'orders', normalized);
   ensureDirectorySync(baseDir);
   const rawDir = path.join(baseDir, 'raw');
   ensureDirectorySync(rawDir);

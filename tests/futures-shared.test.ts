@@ -6,7 +6,7 @@ import path from 'node:path';
 
 import type { BrowserContext, Page, Response } from 'playwright';
 import { DateTime } from 'luxon';
-import { dataPath } from '../src/io/paths.js';
+import { dataPath, getDataRoot } from '../src/io/paths.js';
 
 const originalCwd = process.cwd();
 const tempDir = await mkdtemp(path.join(os.tmpdir(), 'futures-shared-tests-'));
@@ -155,7 +155,7 @@ const waitForCacheFile = async (filePath: string, retries = 20, delayMs = 10): P
 describe('futures shared helpers', () => {
   beforeEach(async () => {
     await resetFuturesContractCacheForTesting();
-    await rm(path.join(process.cwd(), 'data'), { recursive: true, force: true });
+    await rm(getDataRoot(), { recursive: true, force: true });
   });
 
   after(async () => {

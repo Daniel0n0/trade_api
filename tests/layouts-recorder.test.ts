@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { test } from 'node:test';
 
 import { __test__ } from '../src/modules/layouts/layouts-recorder.js';
+import { getDataRoot } from '../src/io/paths.js';
 
 const { toLayoutsIndexRows, toWidgetRows, processLayoutsPayload } = __test__;
 
@@ -107,7 +108,7 @@ test('processLayoutsPayload writes all expected artifacts', async () => {
     assert.equal(result?.layoutCount, 1);
     assert.equal(result?.widgetCount, 2);
 
-    const basePath = path.join(workspace, 'data', 'app', 'layouts', '2024-07-16');
+    const basePath = path.join(getDataRoot(workspace), 'app', 'layouts', '2024-07-16');
     const rawFile = path.join(basePath, 'raw', `hippo_bw_layouts_${result?.snapshot.snapshotTsMs}.json`);
     const jsonlFile = path.join(basePath, 'layouts.jsonl');
     const layoutsIndex = path.join(basePath, 'layouts_index.csv');

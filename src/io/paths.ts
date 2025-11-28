@@ -1,3 +1,4 @@
+import { existsSync, renameSync } from 'node:fs';
 import path from 'node:path';
 import {
   ensureDirectoryForFileSync,
@@ -20,6 +21,37 @@ export type AssetPathInput =
 type AppPathInput = { readonly kind: 'app'; readonly segments?: readonly string[] };
 
 type DataPathInput = AssetPathInput | AppPathInput;
+
+const resolveDataRoot = (baseDir: string): string => {
+  const override = process.env.DATA_ROOT?.trim();
+  if (override) {
+    const absolute = path.isAbsolute(override) ? override : path.resolve(baseDir, override);
+    ensureDirectorySync(absolute);
+    return absolute;
+  }
+
+  const target = path.join(baseDir, 'debug_results', 'data');
+  const legacyRoots = [path.join(baseDir, 'debug_results', '_data'), path.join(baseDir, 'data')];
+
+  if (!existsSync(target)) {
+    for (const legacy of legacyRoots) {
+      if (legacy === target || !existsSync(legacy)) {
+        continue;
+      }
+      try {
+        renameSync(legacy, target);
+        break;
+      } catch {
+        return legacy;
+      }
+    }
+  }
+
+  ensureDirectorySync(target);
+  return target;
+};
+
+export const getDataRoot = (baseDir: string = process.cwd()): string => resolveDataRoot(baseDir);
 
 const sanitizeSegment = (input: string | undefined): string => {
   if (!input) {
@@ -56,8 +88,11 @@ const ASSET_CLASS_ALIASES: Record<string, string> = {
 };
 
 export const sanitizeAssetClass = (input: string | undefined): string => {
-  const sanitized = sanitizeSegment(input).toLowerCase();
-  const normalized = sanitized || DEFAULT_ASSET_CLASS;
+  const sanitized = sanitizeSegment(input);
+  if (input === undefined || sanitized === DEFAULT_SYMBOL) {
+    return DEFAULT_ASSET_CLASS;
+  }
+  const normalized = sanitized.toLowerCase() || DEFAULT_ASSET_CLASS;
   return ASSET_CLASS_ALIASES[normalized] ?? normalized;
 };
 
@@ -120,14 +155,14 @@ const sanitizeAppSegments = (segments: readonly string[] | undefined): string[] 
 };
 
 const ensureAppDir = (segments: readonly string[]): string => {
-  const baseDir = path.join(process.cwd(), 'data', 'app', ...segments);
+  const baseDir = path.join(getDataRoot(), 'app', ...segments);
   ensureDirectorySync(baseDir);
   return baseDir;
 };
 
 export function ensureSymbolDateDir(input?: AssetPathInput): string {
   const { assetClass, symbol, date } = normalizeAssetPathInput(input);
-  const base = path.join(process.cwd(), 'data', assetClass, symbol, date);
+  const base = path.join(getDataRoot(), assetClass, symbol, date);
   ensureDirectorySync(base);
   return base;
 }
@@ -154,7 +189,7 @@ export function dataPath(input: DataPathInput, ...segments: string[]): string {
 
 export function marketDataPath(input: AssetPathInput, ...segments: string[]): string {
   const { assetClass, symbol, date } = normalizeAssetPathInput(input);
-  const baseDir = path.join(process.cwd(), 'data', 'marketdata', assetClass, symbol, date);
+  const baseDir = path.join(getDataRoot(), 'marketdata', assetClass, symbol, date);
 
   if (segments.length === 0) {
     ensureDirectorySync(baseDir);

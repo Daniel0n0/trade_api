@@ -9,6 +9,7 @@ import {
   onLegendOpen,
   shouldProcessLegendWS,
 } from '../src/modulos/legend-advanced-recorder.js';
+import { getDataRoot } from '../src/io/paths.js';
 
 const LEGEND_URL = 'wss://api.robinhood.com/marketdata/streaming/legend/';
 
@@ -41,6 +42,7 @@ test('shouldProcessLegendWS enforces the legend streaming url', () => {
 
 test('legend recorder persists handshake, keepalive and trade frames', async () => {
   await withTempCwd(async (cwd) => {
+    const dataRoot = getDataRoot(cwd);
     const handshakeTs = Date.UTC(2024, 0, 2, 12, 30, 0);
     await onLegendOpen({
       url: LEGEND_URL,
@@ -105,8 +107,7 @@ test('legend recorder persists handshake, keepalive and trade frames', async () 
     });
 
     const handshakePath = path.join(
-      cwd,
-      'data',
+      dataRoot,
       'stocks',
       'SPY',
       '2024-01-02',
@@ -119,7 +120,7 @@ test('legend recorder persists handshake, keepalive and trade frames', async () 
     assert.ok(!handshake.includes('Authorization:'));
     assert.ok(handshake.includes('RESPONSE 101 Switching Protocols'));
 
-    const keepalivePath = path.join(cwd, 'data', 'stocks', 'SPY', '2024-01-02', 'legend', 'keepalive.csv');
+    const keepalivePath = path.join(dataRoot, 'stocks', 'SPY', '2024-01-02', 'legend', 'keepalive.csv');
     const keepalive = await readFile(keepalivePath, 'utf8');
     assert.ok(
       keepalive
@@ -127,48 +128,26 @@ test('legend recorder persists handshake, keepalive and trade frames', async () 
         .endsWith(`${handshakeTs},2024-01-02,${LEGEND_URL},0,KEEPALIVE`),
     );
 
-    const tradesPath = path.join(cwd, 'data', 'stocks', 'SPY', '2024-01-03', 'legend', 'trades.jsonl');
+    const tradesPath = path.join(dataRoot, 'stocks', 'SPY', '2024-01-03', '1sec_trades.csv');
     const trades = await readFile(tradesPath, 'utf8');
-    assert.deepEqual(
-      trades
-        .trim()
-        .split('\n')
-        .map((line) => JSON.parse(line)),
-      [
-        {
-          channel: 1,
-          eventSymbol: 'SPY',
-          eventType: 'Trade',
-          price: 480.12,
-          dayVolume: 2500,
-          time: tradeTs,
-        },
-      ],
+    const tradeLines = trades
+      .trim()
+      .split('\n')
+      .filter(Boolean);
+    assert.equal(
+      tradeLines[0],
+      'timestamp,price,day_volume,session,source_transport,source_url',
     );
-
-    const tradesEthPath = path.join(cwd, 'data', 'stocks', 'SPY', '2024-01-03', 'legend', 'trades_eth.jsonl');
-    const tradesEth = await readFile(tradesEthPath, 'utf8');
-    assert.deepEqual(
-      tradesEth
-        .trim()
-        .split('\n')
-        .map((line) => JSON.parse(line)),
-      [
-        {
-          channel: 3,
-          eventSymbol: 'SPY',
-          eventType: 'TradeETH',
-          price: 480.35,
-          dayVolume: 2500,
-          time: tradeTs,
-        },
-      ],
-    );
+    assert.deepEqual(tradeLines.slice(1), [
+      `${tradeTs},480.12,2500,rth,ws,${LEGEND_URL}`,
+      `${tradeTs},480.35,2500,eth,ws,${LEGEND_URL}`,
+    ]);    
   });
 });
 
 test('legend recorder persists options payloads', async () => {
   await withTempCwd(async (cwd) => {
+    const dataRoot = getDataRoot(cwd);
     const optionSymbol = '.SPY250118C00470000';
     const optionTs = Date.UTC(2024, 0, 3, 14, 45, 0);
     onLegendFrame({
@@ -226,7 +205,7 @@ test('legend recorder persists options payloads', async () => {
       },
     });
 
-    const baseDir = path.join(cwd, 'data', 'stocks', 'SPY', '2024-01-03');
+    const baseDir = path.join(dataRoot, 'stocks', 'SPY', '2024-01-03');
     const legendDir = path.join(baseDir, 'legend');
     const optionSymbolDir = path.join(baseDir, 'options', 'by_symbol', optionSymbol);
 

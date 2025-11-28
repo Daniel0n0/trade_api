@@ -16,7 +16,7 @@ import {
   isValidOptionRow,
   readLastTimestamp,
 } from '../src/modules/options/interceptor.js';
-import { dataPath } from '../src/io/paths.js';
+import { dataPath, getDataRoot } from '../src/io/paths.js';
 
 const samplePayload = {
   data: {
@@ -188,7 +188,7 @@ test('resolveWriter consolida strikes/tipos y respeta horizonte futuro', async (
     'source',
   ].join(',');
 
-  const dataRoot = path.join(process.cwd(), 'data');
+ const dataRoot = getDataRoot();
   t.after(() => {
     fs.rmSync(dataRoot, { recursive: true, force: true });
   });
@@ -204,7 +204,7 @@ test('resolveWriter consolida strikes/tipos y respeta horizonte futuro', async (
 
   assert.ok(
     nearPath.startsWith(
-      path.join(process.cwd(), 'data', 'stocks', 'SPY', '2024-05-10'),
+      path.join(getDataRoot(), 'stocks', 'SPY', '2024-05-10'),
     ),
     `unexpected base path ${nearPath}`,
   );

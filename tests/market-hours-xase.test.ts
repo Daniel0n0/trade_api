@@ -5,6 +5,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import { MARKET_HOURS_HEADER, normalizeMarketHoursXase, syncMarketHoursXase } from '../src/modules/market-hours/xase.js';
+import { getDataRoot } from '../src/io/paths.js';
 
 describe('market hours XASE module', () => {
   const samplePayload = {
@@ -66,12 +67,13 @@ describe('market hours XASE module', () => {
       baseDir: tmpDir,
     });
 
-    const dayFile = path.join(tmpDir, 'data', 'system', 'market_hours', 'XASE', '2025.csv');
+    const dataRoot = getDataRoot(tmpDir);
+    const dayFile = path.join(dataRoot, 'system', 'market_hours', 'XASE', '2025.csv');
     const dayContent = await readFile(dayFile, 'utf8');
     assert.match(dayContent, /date/);
     assert.match(dayContent, /2025-11-11/);
 
-    const rawFile = path.join(tmpDir, 'data', 'system', 'market_hours', '_raw', 'XASE', '2025-11-11.json');
+    const rawFile = path.join(dataRoot, 'system', 'market_hours', '_raw', 'XASE', '2025-11-11.json');
     const rawContent = await readFile(rawFile, 'utf8');
     const parsed = JSON.parse(rawContent);
     assert.equal(parsed.date, '2025-11-11');

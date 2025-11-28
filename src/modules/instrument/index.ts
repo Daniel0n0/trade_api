@@ -1,5 +1,6 @@
 import path from 'node:path';
 
+import { getDataRoot } from '../../io/paths.js';
 import { upsertCsv, type CsvRowInput } from '../../io/upsertCsv.js';
 import { safeJsonParse } from '../../utils/payload.js';
 
@@ -272,7 +273,7 @@ export async function persistInstrumentRows(rows: readonly InstrumentRow[]): Pro
     return;
   }
 
-  const filePath = path.join(process.cwd(), 'data', 'meta', 'instruments.csv');
+  const filePath = path.join(getDataRoot(), 'meta', 'instruments.csv');
   await upsertCsv(filePath, INSTRUMENTS_HEADER, rows, (row) => String(row.instrument_id));
 }
 

@@ -2,6 +2,7 @@ import path from 'node:path';
 import { writeFile } from 'node:fs/promises';
 
 import { ensureDirectoryForFileSync } from '../../io/dir.js';
+import { getDataRoot } from '../../io/paths.js';
 import { upsertCsv, type CsvRowInput } from '../../io/upsertCsv.js';
 
 const EXCHANGE_CODE = 'XASE' as const;
@@ -230,12 +231,12 @@ const sanitizeDateInput = (value: string | undefined): string => {
 
 const persistNormalized = async (row: MarketHoursRow, rawPayload: unknown, baseDir?: string): Promise<void> => {
   const [year] = row.date.split('-');
-  const base = baseDir ?? process.cwd();
-  const csvFile = path.join(base, 'data', 'system', 'market_hours', row.market ?? EXCHANGE_CODE, `${year}.csv`);
+  const base = getDataRoot(baseDir ?? process.cwd());
+  const csvFile = path.join(base, 'system', 'market_hours', row.market ?? EXCHANGE_CODE, `${year}.csv`);
 
   await upsertCsv(csvFile, MARKET_HOURS_HEADER, [row], (r) => `${r.date}-${r.market}`);
 
-  const rawFile = path.join(base, 'data', 'system', 'market_hours', '_raw', row.market ?? EXCHANGE_CODE, `${row.date}.json`);
+  const rawFile = path.join(base, 'system', 'market_hours', '_raw', row.market ?? EXCHANGE_CODE, `${row.date}.json`);
   ensureDirectoryForFileSync(rawFile);
   await writeFile(rawFile, `${JSON.stringify(rawPayload, null, 2)}\n`, 'utf8');
 };
