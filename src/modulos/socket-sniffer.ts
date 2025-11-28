@@ -28,6 +28,7 @@ import {
   onLegendFrame,
   onLegendOpen,
   shouldProcessLegendWS,
+  shouldProcessLegendWSStrict,
 } from './legend-advanced-recorder.js';
 import { ensureDirectoryForFileSync, ensureDirectorySync } from '../io/dir.js';
 import { BaseEvent } from '../io/schemas.js';
