@@ -24,6 +24,21 @@ class FakeManager extends EventEmitter {
   private readonly knownCtx = new Set<string>();
   private counter = 0;
 
+  public override on(eventName: string | symbol, listener: (...args: unknown[]) => void): this {
+    super.on(eventName, listener);
+    return this;
+  }
+
+  public override once(eventName: string | symbol, listener: (...args: unknown[]) => void): this {
+    super.once(eventName, listener);
+    return this;
+  }
+
+  public override off(eventName: string | symbol, listener: (...args: unknown[]) => void): this {
+    super.off(eventName, listener);
+    return this;
+  }
+
   public startRunner(args: ModuleArgs): ChildRef {
     this.counter += 1;
     const ctxId = `ctx-${this.counter}`;
