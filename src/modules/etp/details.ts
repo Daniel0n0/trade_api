@@ -7,7 +7,7 @@ import type { HttpClient } from '../instrument/index.js';
 
 type Envelope = {
   readonly ts: number;
-  readonly transport: 'http' | 'ws' | string;
+  readonly transport: 'http';
   readonly source: string;
   readonly payload: unknown;
 };
@@ -150,7 +150,7 @@ export const ETP_MASTER_HEADER = [
   'fetched_ts',
   'source_transport',
   'source_url',
-] as const;
+] as const satisfies readonly (keyof EtpMasterRow)[];
 
 export type EtpPerformanceRow = {
   readonly instrument_id: string;
