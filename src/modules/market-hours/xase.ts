@@ -33,7 +33,33 @@ export const MARKET_HOURS_HEADER = [
   'source_url',
 ] as const;
 
-export type MarketHoursRow = CsvRowInput<typeof MARKET_HOURS_HEADER>;
+type MarketHoursRowBase = CsvRowInput<typeof MARKET_HOURS_HEADER>;
+
+export type MarketHoursRow = MarketHoursRowBase & {
+  date: string;
+  market: string;
+  is_open?: boolean;
+  opens_at: number | null;
+  closes_at: number | null;
+  late_option_closes_at: number | null;
+  extended_opens_at: number | null;
+  extended_closes_at: number | null;
+  all_day_opens_at: number | null;
+  all_day_closes_at: number | null;
+  index_option_0dte_closes_at: number | null;
+  index_option_non_0dte_closes_at: number | null;
+  index_curb_opens_at: number | null;
+  index_curb_closes_at: number | null;
+  fx_is_open?: boolean;
+  fx_opens_at: number | null;
+  fx_closes_at: number | null;
+  fx_next_open_hours: number | null;
+  previous_open_hours_url?: string;
+  next_open_hours_url?: string;
+  fetched_ts: number;
+  source_transport: string;
+  source_url?: string;
+};
 
 type FetchLike = typeof fetch;
 
