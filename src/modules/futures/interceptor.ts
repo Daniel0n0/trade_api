@@ -1365,7 +1365,14 @@ export function normalizeFuturesTradingSessions(
         const startTs = toEpochMilliseconds(startIso);
         const endTs = toEpochMilliseconds(endIso);
         const duration = calculateDurationMinutes(startTs, endTs);
-        if (duration === undefined || startTs === undefined || endTs === undefined) {
+        if (
+          tradingDate === undefined ||
+          startIso === undefined ||
+          endIso === undefined ||
+          duration === undefined ||
+          startTs === undefined ||
+          endTs === undefined
+        ) {
           return undefined;
         }
         const isTrading = pickBoolean(sessionRecord, ['is_trading', 'isTrading', 'trading']) ?? false;
@@ -1382,7 +1389,7 @@ export function normalizeFuturesTradingSessions(
         };
       })
       .filter((session): session is {
-        tradingDate?: string;
+        tradingDate: string;
         startIso: string;
         endIso: string;
         startTs: number;
