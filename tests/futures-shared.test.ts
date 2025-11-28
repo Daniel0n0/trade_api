@@ -40,17 +40,19 @@ class FakePage implements Pick<Page, 'on' | 'off' | 'waitForResponse'> {
   private readonly listeners = new Set<ResponseListener>();
   private readonly waiters: ResponseWaiter[] = [];
 
-  on(event: 'response', listener: ResponseListener): void {
+  on: Page['on'] = ((event, listener) => {
     if (event === 'response') {
-      this.listeners.add(listener);
+      this.listeners.add(listener as ResponseListener);
     }
-  }
+    return this as unknown as Page;
+  }) as Page['on'];
 
-  off(event: 'response', listener: ResponseListener): void {
+  off: Page['off'] = ((event, listener) => {
     if (event === 'response') {
-      this.listeners.delete(listener);
+      this.listeners.delete(listener as ResponseListener);
     }
-  }
+    return this as unknown as Page;
+  }) as Page['off'];
 
   waitForResponse(
     predicate: WaitForResponsePredicate,
