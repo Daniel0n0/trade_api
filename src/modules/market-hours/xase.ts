@@ -33,9 +33,27 @@ export const MARKET_HOURS_HEADER = [
   'source_url',
 ] as const;
 
-type MarketHoursRowBase = CsvRowInput<typeof MARKET_HOURS_HEADER>;
+type MarketHoursCsvRow = Omit<
+  CsvRowInput<typeof MARKET_HOURS_HEADER>,
+  | 'opens_at'
+  | 'closes_at'
+  | 'late_option_closes_at'
+  | 'extended_opens_at'
+  | 'extended_closes_at'
+  | 'all_day_opens_at'
+  | 'all_day_closes_at'
+  | 'index_option_0dte_closes_at'
+  | 'index_option_non_0dte_closes_at'
+  | 'index_curb_opens_at'
+  | 'index_curb_closes_at'
+  | 'fx_opens_at'
+  | 'fx_closes_at'
+  | 'fx_next_open_hours'
+  | 'is_open'
+  | 'fx_is_open'
+>;
 
-export type MarketHoursRow = MarketHoursRowBase & {
+export type MarketHoursRow = MarketHoursCsvRow & {
   date: string;
   market: string;
   is_open?: boolean;
