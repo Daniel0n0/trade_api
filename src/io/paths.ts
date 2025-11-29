@@ -1,4 +1,4 @@
-import { existsSync, renameSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import {
   ensureDirectoryForFileSync,
@@ -33,18 +33,16 @@ const resolveDataRoot = (baseDir: string): string => {
   const target = path.join(baseDir, 'debug_results', 'data');
   const legacyRoots = [path.join(baseDir, 'debug_results', '_data'), path.join(baseDir, 'data')];
 
-  if (!existsSync(target)) {
-    for (const legacy of legacyRoots) {
-      if (legacy === target || !existsSync(legacy)) {
-        continue;
-      }
-      try {
-        renameSync(legacy, target);
-        break;
-      } catch {
-        return legacy;
-      }
-    }
+  // Legacy locations must be manually cleared to avoid mixing sessions.
+  const foundLegacyRoots = legacyRoots.filter((legacy) => legacy !== target && existsSync(legacy));
+  if (foundLegacyRoots.length > 0) {
+    throw new Error(
+      [
+        'Legacy data directories detected. Please delete or archive them before starting a new session.',
+        `Found: ${foundLegacyRoots.join(', ')}`,
+        `Expected clean data root at: ${target}`,
+      ].join('\n'),
+    );
   }
 
   ensureDirectorySync(target);
