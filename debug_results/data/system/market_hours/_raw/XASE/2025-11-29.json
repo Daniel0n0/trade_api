@@ -1,0 +1,20 @@
+{
+  "date": "2025-11-29",
+  "is_open": false,
+  "opens_at": null,
+  "closes_at": null,
+  "late_option_closes_at": null,
+  "extended_opens_at": null,
+  "extended_closes_at": null,
+  "all_day_opens_at": null,
+  "all_day_closes_at": null,
+  "previous_open_hours": "https://api.robinhood.com/markets/XASE/hours/2025-11-28/",
+  "next_open_hours": "https://api.robinhood.com/markets/XASE/hours/2025-12-01/",
+  "index_option_0dte_closes_at": null,
+  "index_option_non_0dte_closes_at": null,
+  "index_options_extended_hours": null,
+  "fx_opens_at": null,
+  "fx_closes_at": null,
+  "fx_is_open": false,
+  "fx_next_open_hours": "2025-11-30T22:00:00Z"
+}

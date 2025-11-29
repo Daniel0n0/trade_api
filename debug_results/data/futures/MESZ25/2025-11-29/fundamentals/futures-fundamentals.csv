@@ -1,0 +1,2 @@
+symbol,instrumentId,productId,rootSymbol,contractType,tradeable,state,open,high,low,volume,previousClose,multiplier,tickSize,initialMargin,maintenanceMargin,overnightMaintenance,listingDate,expirationDate,settlementDate,lastTradeDate,createdAt,updatedAt
+MESZ25,C4021DC3-BC5C-4252-A5B9-209572A1CB78,,,,,,,,,,6828,,,,,,,,,,,MESZ25,C4021DC3-BC5C-4252-A5B9-209572A1CB78,,,,,,,,,,6828,,,,,,,,,,,

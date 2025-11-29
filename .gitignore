@@ -9,4 +9,4 @@ test-results/
 logs/
 creds/
 state/
-data/
+# data/
