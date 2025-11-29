@@ -1,7 +1,8 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 
 import { ensureDirectoryForFileSync } from './dir.js';
 import { toCsvLine } from './row.js';
+import { writeFileAtomic } from './writeFileAtomic.js';
 
 type CsvValue = string | number | boolean | null | undefined;
 
@@ -124,7 +125,7 @@ export async function upsertCsv<T extends readonly string[]>(
     }
 
     const payload = formatRows(header, order, rowMap);
-    await writeFile(filePath, payload);
+    await writeFileAtomic(filePath, payload);
   });
 
   csvLocks.set(filePath, task.catch(() => {}));
