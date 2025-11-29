@@ -15,7 +15,8 @@
     "lint": "eslint \"src/**/*.ts\" \"scripts/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/row.test.ts tests/cli.normalize.test.ts tests/cli.commands.test.ts tests/socket-sniffer.test.ts tests/csv-writer.test.ts tests/options-interceptor.test.ts tests/options-orders-recorder.test.ts tests/futures-routes.test.ts tests/futures-interceptor.test.ts tests/futures-shared.test.ts tests/futures-quotes.test.ts tests/config.daily-modules.test.ts tests/stock-daily-news.test.ts tests/stock-daily-greeks.test.ts tests/stock-daily-runner-news.test.ts tests/stock-daily-runner-greeks.test.ts tests/stock-daily-filters.test.ts tests/legend-advanced-recorder.test.ts tests/legend-advanced-session.test.ts tests/layouts-recorder.test.ts tests/discovery-items-recorder.test.ts tests/market-hours-xase.test.ts tests/crypto-holdings.test.ts",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    "test:upserts": "tsx --test tests/upsert-files.test.ts"
   },
   "dependencies": {
     "commander": "^12.1.0",

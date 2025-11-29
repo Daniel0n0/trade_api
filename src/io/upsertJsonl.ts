@@ -1,6 +1,7 @@
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 
 import { ensureDirectoryForFileSync } from './dir.js';
+import { writeFileAtomic } from './writeFileAtomic.js';
 
 type JsonlUpsertEntry = {
   readonly key: string;
@@ -90,7 +91,7 @@ export async function upsertJsonl(filePath: string, entries: readonly JsonlUpser
     }
 
     const payload = formatLines(order, rows);
-    await writeFile(filePath, payload);
+    await writeFileAtomic(filePath, payload);
 
     return operations;
   });
