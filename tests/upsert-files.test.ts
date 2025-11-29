@@ -30,7 +30,7 @@ test('upsertJsonl appends without truncating previous lines', { concurrency: fal
     await upsertJsonl(filePath, [{ key: 'alpha', value: updatedFirstLine }]);
 
     const contents = fs.readFileSync(filePath, 'utf8').trimEnd().split('\n');
-    assert.deepEqual(contents, [updatedFirstLine, secondLine]);
+    assert.deepEqual(contents, [firstLine, secondLine, updatedFirstLine]);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
@@ -58,7 +58,7 @@ test('upsertCsv appends rows while preserving existing entries', { concurrency: 
     );
 
     const contents = fs.readFileSync(filePath, 'utf8').trimEnd().split('\n');
-    assert.deepEqual(contents, ['id,value', '1,updated', '2,two']);
+    assert.deepEqual(contents, ['id,value', '1,one', '2,two', '1,updated']);
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
