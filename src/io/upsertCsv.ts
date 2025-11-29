@@ -1,8 +1,7 @@
-import { readFile } from 'node:fs/promises';
+import { appendFile, readFile } from 'node:fs/promises';
 
 import { ensureDirectoryForFileSync } from './dir.js';
 import { toCsvLine } from './row.js';
-import { writeFileAtomic } from './writeFileAtomic.js';
 
 type CsvValue = string | number | boolean | null | undefined;
 
@@ -54,11 +53,10 @@ const readExistingRows = async <T extends readonly string[]>(
   filePath: string,
   header: T,
   keyFn: (row: CsvRowInput<T>) => string,
-): Promise<{ order: string[]; rows: Map<string, CsvRowInput<T>> }> => {
+): Promise<{ rows: Map<string, CsvRowInput<T>>; content: string }> => {
   try {
     const content = await readFile(filePath, 'utf8');
     const lines = content.split(/\r?\n/);
-    const order: string[] = [];
     const rows = new Map<string, CsvRowInput<T>>();
     for (let index = 1; index < lines.length; index += 1) {
       const rawLine = lines[index];
@@ -72,31 +70,15 @@ const readExistingRows = async <T extends readonly string[]>(
       const values = parseCsvLine(line);
       const row = buildRowFromValues(header, values);
       const key = keyFn(row);
-      if (!rows.has(key)) {
-        order.push(key);
-      }
       rows.set(key, row);
     }
-    return { order, rows };
+    return { rows, content };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { order: [], rows: new Map() };
+      return { rows: new Map(), content: '' };
     }
     throw error;
   }
-};
-
-const formatRows = <T extends readonly string[]>(
-  header: T,
-  order: readonly string[],
-  rows: Map<string, CsvRowInput<T>>,
-): string => {
-  const lines: string[] = [header.join(',')];
-  for (const key of order) {
-    const row = rows.get(key) ?? {};
-    lines.push(toCsvLine(header, row));
-  }
-  return `${lines.join('\n')}\n`;
 };
 
 export async function upsertCsv<T extends readonly string[]>(
@@ -112,20 +94,32 @@ export async function upsertCsv<T extends readonly string[]>(
   const previous = csvLocks.get(filePath) ?? Promise.resolve();
   const task = previous.then(async () => {
     ensureDirectoryForFileSync(filePath);
-    const existing = await readExistingRows(filePath, header, keyFn);
-    const order = existing.order;
-    const rowMap = existing.rows;
+    const { rows: existingRows, content } = await readExistingRows(filePath, header, keyFn);
+
+    const newLines: string[] = [];
+    const headerLine = header.join(',');
+    const hasContent = content.length > 0;
+
+    if (!hasContent) {
+      newLines.push(headerLine);
+    }
 
     for (const row of rows) {
       const key = keyFn(row);
-      if (!rowMap.has(key)) {
-        order.push(key);
+      const previousRow = existingRows.get(key);
+      if (!previousRow || toCsvLine(header, previousRow) !== toCsvLine(header, row)) {
+        newLines.push(toCsvLine(header, row));
       }
-      rowMap.set(key, row);
+      existingRows.set(key, row);
     }
 
-    const payload = formatRows(header, order, rowMap);
-    await writeFileAtomic(filePath, payload);
+    if (!newLines.length) {
+      return;
+    }
+
+    const needsNewline = hasContent && !content.endsWith('\n');
+    const payload = `${needsNewline ? '\n' : ''}${newLines.join('\n')}\n`;
+    await appendFile(filePath, payload, 'utf8');
   });
 
   csvLocks.set(filePath, task.catch(() => {}));

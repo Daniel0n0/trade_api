@@ -1,7 +1,6 @@
-import { readFile } from 'node:fs/promises';
+import { appendFile, readFile } from 'node:fs/promises';
 
 import { ensureDirectoryForFileSync } from './dir.js';
-import { writeFileAtomic } from './writeFileAtomic.js';
 
 type JsonlUpsertEntry = {
   readonly key: string;
@@ -27,11 +26,12 @@ const extractOrderIdFromLine = (line: string): string | null => {
   return null;
 };
 
-const readExistingEntries = async (filePath: string): Promise<{ order: string[]; rows: Map<string, string> }> => {
+const readExistingEntries = async (
+  filePath: string,
+): Promise<{ rows: Map<string, string>; content: string }> => {
   try {
     const content = await readFile(filePath, 'utf8');
     const lines = content.split(/\r?\n/);
-    const order: string[] = [];
     const rows = new Map<string, string>();
     for (const rawLine of lines) {
       const line = rawLine.trim();
@@ -42,30 +42,15 @@ const readExistingEntries = async (filePath: string): Promise<{ order: string[];
       if (!key) {
         continue;
       }
-      if (!rows.has(key)) {
-        order.push(key);
-      }
       rows.set(key, line);
     }
-    return { order, rows };
+    return { rows, content };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-      return { order: [], rows: new Map() };
+      return { rows: new Map(), content: '' };
     }
     throw error;
   }
-};
-
-const formatLines = (order: readonly string[], rows: Map<string, string>): string => {
-  const lines: string[] = [];
-  for (const key of order) {
-    const line = rows.get(key);
-    if (!line) {
-      continue;
-    }
-    lines.push(line);
-  }
-  return lines.length ? `${lines.join('\n')}\n` : '';
 };
 
 export async function upsertJsonl(filePath: string, entries: readonly JsonlUpsertEntry[]): Promise<JsonlUpsertResult> {
@@ -76,22 +61,29 @@ export async function upsertJsonl(filePath: string, entries: readonly JsonlUpser
   const previous = jsonlLocks.get(filePath) ?? Promise.resolve();
   const task = previous.then(async () => {
     ensureDirectoryForFileSync(filePath);
-    const { order, rows } = await readExistingEntries(filePath);
+    const { rows, content } = await readExistingEntries(filePath);
     const operations: JsonlUpsertResult = new Map();
+
+    const linesToAppend: string[] = [];
 
     for (const entry of entries) {
       const { key, value } = entry;
       if (!rows.has(key)) {
-        order.push(key);
         operations.set(key, 'insert');
-      } else {
+      } else if (rows.get(key) !== value) {
         operations.set(key, 'update');
       }
       rows.set(key, value);
+      linesToAppend.push(value);
     }
 
-    const payload = formatLines(order, rows);
-    await writeFileAtomic(filePath, payload);
+    if (!linesToAppend.length) {
+      return operations;
+    }
+
+    const needsNewline = content.length > 0 && !content.endsWith('\n');
+    const payload = `${needsNewline ? '\n' : ''}${linesToAppend.join('\n')}\n`;
+    await appendFile(filePath, payload, 'utf8');
 
     return operations;
   });
